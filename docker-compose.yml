@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres  # Using a recent version of Postgres
+    container_name: ipfs_substrate_db
+    restart: always
+    environment:
+      POSTGRES_USER: user       # Replace with your desired username
+      POSTGRES_PASSWORD: password # Replace with a strong password
+      POSTGRES_DB: ipfs_substrate_indexer # Replace with your desired database name
+    ports:
+      - "5432:5432" # Exposes Postgres on the host machine's port 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data: # Persists data even if the container is stopped/removed 

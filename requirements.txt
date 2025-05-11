@@ -1,0 +1,8 @@
+substrate-interface
+SQLAlchemy
+asyncpg
+python-dotenv
+fastapi
+uvicorn[standard]
+aiohttp
+greenlet 
