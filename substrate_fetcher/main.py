@@ -7,7 +7,6 @@ from . import storage_fetcher
 from . import config
 
 # _fetcher_task = None # No longer a thread, but an asyncio task
-
 async def application_main_loop():
     """The main application logic running in asyncio."""
     print("Starting Substrate Storage Fetcher Application (Async)...")

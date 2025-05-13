@@ -101,7 +101,9 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                     )
                     print(f"Inserted new ExecutionUnit metrics for node_id: {node_id}")
 
-async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, List[int]], miner_profiles: Dict[str, str]):
+# substrate_fetcher/utils.py (replace the existing save_miners_data function)
+
+async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], miner_profiles: Dict[str, Any]):
     """
     Saves BlockNumbers and MinerProfile data into the miners table.
     Deletes previous data for these fields (but preserves ExecutionUnit metrics).
@@ -119,14 +121,22 @@ async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, List[int
             )
             print("Cleared previous BlockNumbers and MinerProfile data from miners table.")
 
-            # Step 2: Batch insert or update BlockNumbers and MinerProfile data
-            inserts = []
-            for node_id in set(list(block_numbers.keys()) + list(miner_profiles.keys())):
-                last_online_block = block_numbers.get(node_id, [None])[0] if node_id in block_numbers else None
+            # Step 2: Batch insert or update BlockNumbers and MinerProfile data sequentially
+            node_ids = set(list(block_numbers.keys()) + list(miner_profiles.keys()))
+            for node_id in node_ids:
+                last_online_block = None
+                if node_id in block_numbers:
+                    value = block_numbers[node_id]
+                    if isinstance(value, list) and value:
+                        last_online_block = value[0]  # Take the first block number if it's a list
+                    elif isinstance(value, (int, str)):  # Handle single value or unexpected type
+                        last_online_block = int(value) if isinstance(value, str) else value
+                    else:
+                        print(f"Unexpected block_numbers value for {node_id}: {value}")
                 miner_profile_cid = miner_profiles.get(node_id, None)
 
-                inserts.append(
-                    conn.execute(
+                try:
+                    await conn.execute(
                         """
                         INSERT INTO miners (node_id, last_online_block, miner_profile_cid)
                         VALUES ($1, $2, $3)
@@ -137,12 +147,9 @@ async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, List[int
                         """,
                         node_id, last_online_block, miner_profile_cid
                     )
-                )
-                print(f"Inserted/Updated miners data for node_id: {node_id}")
-
-            # Execute all inserts concurrently
-            if inserts:
-                await asyncio.gather(*inserts)
+                    print(f"Inserted/Updated miners data for node_id: {node_id}")
+                except Exception as e:
+                    print(f"Error inserting/updating miners data for node_id {node_id}: {e}")
                 
 async def save_registration_data(pool: asyncpg.Pool, node_registration: Dict, coldkey_registration: Dict):
     """Saves NodeRegistration and ColdkeyNodeRegistration data into the registration table."""

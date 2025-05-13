@@ -101,6 +101,7 @@ async def _execute_query_async(query_fn, *args, **kwargs):
             _get_substrate_interface(force_reconnect=True)
         return None
 
+# substrate_fetcher/substrate_fetcher.py (replace the existing fetch_all_chain_data function)
 async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
     """Fetches all configured storage items and maps for the given block, then saves to DB."""
     try:
@@ -233,7 +234,12 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
             if not block_numbers and not miner_profiles:
                 print("Warning: Both BlockNumbers and MinerProfile data are empty. Skipping save_miners_data.")
             else:
-                await utils.save_miners_data(config.db_pool, block_numbers, miner_profiles)
+                try:
+                    await utils.save_miners_data(config.db_pool, block_numbers, miner_profiles)
+                    print("Successfully saved miners data to database.")
+                except Exception as e:
+                    print(f"Error saving miners data: {e}")
+                    raise
 
             # Handle Registration data
             node_registration = {}
@@ -252,19 +258,20 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
             print(f"Coldkey registration data: {coldkey_registration}")
             await utils.save_registration_data(config.db_pool, node_registration, coldkey_registration)
 
-        # # 4. Queue changed CIDs for IPFS content fetch
-        # global _previous_ipfs_profiles
-        # ipfs_profiles = {}
-        # miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
-        # if miner_profile_result is not None:
-        #     for key_storage_obj, value_storage_obj in miner_profile_result:
-        #         entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
-        #         ipfs_profiles[entry_key_param_str] = value_storage_obj.value
-        # user_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "UserProfile", block_hash=block_hash)
-        # if user_profile_result is not None:
-        #     for key_storage_obj, value_storage_obj in user_profile_result:
-        #         entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
-        #         ipfs_profiles[entry_key_param_str] = value_storage_obj.value
+        # 4. Queue changed CIDs for IPFS content fetch (temporarily disabled)
+        """
+        global _previous_ipfs_profiles
+        ipfs_profiles = {}
+        miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
+        if miner_profile_result is not None:
+            for key_storage_obj, value_storage_obj in miner_profile_result:
+                entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                ipfs_profiles[entry_key_param_str] = value_storage_obj.value
+        user_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "UserProfile", block_hash=block_hash)
+        if user_profile_result is not None:
+            for key_storage_obj, value_storage_obj in user_profile_result:
+                entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                ipfs_profiles[entry_key_param_str] = value_storage_obj.value
 
         # Identify changed CIDs
         changed_cids = []
@@ -279,6 +286,8 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
             _ipfs_fetch_queue.put((changed_cids, set(ipfs_profiles.keys())))
         else:
             print("No changes in CIDs, skipping IPFS content fetch")
+        """
+        print("IPFS content fetch temporarily disabled for performance testing.")
 
     except Exception as e:
         print(f"Critical error in fetch_all_chain_data: {e} (Type: {type(e).__name__})")
