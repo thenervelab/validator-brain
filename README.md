@@ -48,7 +48,7 @@ docker run -d --name postgres-substrate \
   -e POSTGRES_PASSWORD=password \
   -e POSTGRES_DB=substrate_fetcher \
   -p 5432:5432 \
-  postgres:15
+  postgres:17
 ```
 
 Verify the container is running:

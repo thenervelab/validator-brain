@@ -101,7 +101,6 @@ async def _execute_query_async(query_fn, *args, **kwargs):
             _get_substrate_interface(force_reconnect=True)
         return None
 
-# substrate_fetcher/substrate_fetcher.py (replace the existing fetch_all_chain_data function)
 async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
     """Fetches all configured storage items and maps for the given block, then saves to DB."""
     try:
@@ -256,7 +255,12 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
                     coldkey_registration[entry_key_param_str] = value_storage_obj.value
             print(f"Node registration data: {node_registration}")
             print(f"Coldkey registration data: {coldkey_registration}")
-            await utils.save_registration_data(config.db_pool, node_registration, coldkey_registration)
+            try:
+                await utils.save_registration_data(config.db_pool, node_registration, coldkey_registration)
+                print("Successfully saved registration data to database.")
+            except Exception as e:
+                print(f"Error saving registration data: {e}")
+                raise
 
         # 4. Queue changed CIDs for IPFS content fetch (temporarily disabled)
         """

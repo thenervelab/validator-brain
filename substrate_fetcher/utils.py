@@ -40,7 +40,7 @@ async def init_db(pool: asyncpg.Pool):
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS registration (
                 node_id VARCHAR(100) PRIMARY KEY,
-                ipfs_node_id VARCHAR(54) NOT NULL,
+                ipfs_node_id VARCHAR(100) NOT NULL,
                 node_type VARCHAR(50) NOT NULL,
                 owner VARCHAR(50) NOT NULL,
                 registered_at INTEGER NOT NULL,
@@ -101,8 +101,6 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                     )
                     print(f"Inserted new ExecutionUnit metrics for node_id: {node_id}")
 
-# substrate_fetcher/utils.py (replace the existing save_miners_data function)
-
 async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], miner_profiles: Dict[str, Any]):
     """
     Saves BlockNumbers and MinerProfile data into the miners table.
@@ -150,20 +148,30 @@ async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], mi
                     print(f"Inserted/Updated miners data for node_id: {node_id}")
                 except Exception as e:
                     print(f"Error inserting/updating miners data for node_id {node_id}: {e}")
-                
+
 async def save_registration_data(pool: asyncpg.Pool, node_registration: Dict, coldkey_registration: Dict):
     """Saves NodeRegistration and ColdkeyNodeRegistration data into the registration table."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Step 1: Clear previous registration data
-            await clear_table(pool, "registration")
-
-            # Step 2: Combine both registration datasets
+            # Combine both registration datasets
             all_registrations = {**node_registration, **coldkey_registration}
 
-            # Step 3: Insert new registration data
+            # Step 1: Process each registration entry
             for node_id, data in all_registrations.items():
                 try:
+                    # Validate required fields
+                    required_fields = ["ipfs_node_id", "node_type", "owner", "registered_at", "status"]
+                    if not all(field in data for field in required_fields):
+                        missing = [f for f in required_fields if f not in data]
+                        print(f"Skipping node_id {node_id}: Missing fields {missing}")
+                        continue
+
+                    ipfs_node_id = data["ipfs_node_id"]
+                    node_type = data["node_type"]
+                    owner = data["owner"]
+                    registered_at = data["registered_at"]
+                    status = data["status"]
+
                     await conn.execute(
                         """
                         INSERT INTO registration (node_id, ipfs_node_id, node_type, owner, registered_at, status)
@@ -176,16 +184,15 @@ async def save_registration_data(pool: asyncpg.Pool, node_registration: Dict, co
                             status = EXCLUDED.status,
                             updated_at = CURRENT_TIMESTAMP;
                         """,
-                        node_id,
-                        data["ipfs_node_id"],
-                        data["node_type"],
-                        data["owner"],
-                        data["registered_at"],
-                        data["status"]
+                        node_id, ipfs_node_id, node_type, owner, registered_at, status
                     )
                     print(f"Saved registration data for node_id: {node_id}")
+                except asyncpg.exceptions.PostgresError as e:
+                    print(f"Database error saving registration data for node_id {node_id}: {e}")
+                    raise
                 except Exception as e:
                     print(f"Error saving registration data for node_id {node_id}: {e}")
+                    raise
 
 # --- IPFS Fetch Worker ---
 def ipfs_fetch_worker(queue: Any, shared_content: Any):
