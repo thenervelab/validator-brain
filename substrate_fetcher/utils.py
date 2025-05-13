@@ -1,5 +1,4 @@
 # substrate_fetcher/utils.py
-
 import asyncio
 import asyncpg
 import json
@@ -17,7 +16,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Use regular import
-import config
+from . import config
 
 # --- Database Configuration ---
 async def create_db_pool():

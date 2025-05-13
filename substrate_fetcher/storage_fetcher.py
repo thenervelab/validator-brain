@@ -1,5 +1,4 @@
 # substrate_fetcher/substrate_fetcher.py
-
 import asyncio
 import multiprocessing as mp
 from substrateinterface import SubstrateInterface
@@ -16,9 +15,9 @@ parent_dir = os.path.dirname(script_path)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Use regular imports
-import config
-import utils
+from . import config
+from . import utils
+
 # from substrateinterface import SubstrateInterface, Keypair # Already imported in utils
 
 # --- Module-level state ---
