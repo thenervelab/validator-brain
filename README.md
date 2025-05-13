@@ -1,78 +1,165 @@
-Goal:
+# Substrate Storage Fetcher
 
-- substrate chain
-- ipfs network
+A Python-based service that fetches and indexes storage items from a Substrate-based blockchain (e.g., Hippius Network) and stores them in a PostgreSQL database. It includes features for handling IPFS content and maintaining state across finalized blocks.
 
-what we need in the database :
-- representation of a miner ( each pinned file he handle )
-- list of all the cid in the network 
-- list of all users profiles 
+## Features
 
+- Real-time subscription to finalized block headers
+- Configurable storage item and map fetching
+- PostgreSQL integration for persistent storage
+- IPFS content fetching support
+- Automatic reconnection handling
+- Error resilience and graceful shutdown
 
+## Prerequisites
 
+- Python 3.8 or newer
+- Docker (for PostgreSQL)
+- IPFS Node (optional, for CID content fetching)
+- Access to a Substrate node (e.g., `wss://rpc.hippius.network`)
 
+## Setup
 
-- keep a db of a mapping between cid and miners profiles and user profile
-- listen to miner profile change at each block and update database accordingly
+### 1. Clone the Repository
 
-- we need to assign an IPFS file with the correct replicas to available miners for that we need:
-    1) fetch the request from the chain and mark it as in progress
-    2) request miner locks
-    3) download the pining request from the ipfs network and check each file size
-    4) find available miners based on available space
-    5) shuffle and distribute the replicas to the miners 
-    6) pin the miners profile and update chain with new profiles
-    5) update the chain with the new pinning request as resolved
-    6) mark the pinning request as completed
+```bash
+git clone https://github.com/yourusername/substrate-storage-fetcher.git
+cd substrate-storage-fetcher
+```
 
-- rebalance request ( when a miner come offline redistribute the file )
-  1) check all the miners and discover the one offline
-  2) get the cid that need to be rebalanced and fill it in the same process than pinning request 
+### 2. Create Virtual Environment
 
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-- check if a miner is offline (ping test )
-- check if miner is really storing the file (ipfs dag get with random block)
+### 3. Install Dependencies
 
+```bash
+pip install -r requirements.txt
+```
 
-- handle unpin request (when a user want to unpin a file)
-  1) fetch the request from the chain and mark it as in progress
-  2) request miner locks
-  3) remove the file from all miners profiles
-  4) pin the miners profile and update chain with new profiles
+### 4. PostgreSQL Setup with Docker
 
+```bash
+docker run -d --name postgres-substrate \
+  -e POSTGRES_USER=user \
+  -e POSTGRES_PASSWORD=password \
+  -e POSTGRES_DB=substrate_fetcher \
+  -p 5432:5432 \
+  postgres:15
+```
 
+Verify the container is running:
+```bash
+docker ps
+```
 
+### 5. Configuration
 
+Edit `substrate_fetcher/config.py` to set:
 
+- **Node Connection:**
+  ```python
+  NODE_URL = "wss://rpc.hippius.network"  # Your Substrate node WebSocket URL
+  ```
 
+- **Storage Items to Fetch:**
+  ```python
+  STORAGE_ITEMS_TO_FETCH = [
+      ("Timestamp", "Now"),  # Simple storage item
+      ("System", "Account", ["5GrwvaEF..."]),  # Storage map with key
+  ]
+  ```
 
-Flow with Python (e.g., FastAPI):
-- Chain Interaction: Use py-substrate-interface to listen for events or poll for new requests.
-- API Endpoints (FastAPI): Define endpoints for your core logic.
-- IPFS Interaction: Use ipfshttpclient (potentially wrapped in asyncio.to_thread if using FastAPI to avoid blocking the event loop for synchronous calls).
-- Database: Use SQLAlchemy with an async driver like asyncpg or use its standard synchronous API within thread pool executors.
-- Background Workers (Celery/Dramatiq):
-- Miner health checks (ping, storage proof).
-- Rebalancing logic.
-- Processing steps of a pinning request that can be done asynchronously.
+- **Storage Maps to Fetch:**
+  ```python
+  STORAGE_MAPS_TO_FETCH_ALL = [
+      ("Registration", "NodeRegistration"),
+      ("Registration", "ColdkeyNodeRegistration"),
+  ]
+  ```
 
-SQLAlchemy , asyncpg, postgres
+- **Database Settings:**
+  ```python
+  POSTGRES_USER = "user"
+  POSTGRES_PASSWORD = "password"
+  POSTGRES_DB = "substrate_fetcher"
+  POSTGRES_HOST = "localhost"
+  POSTGRES_PORT = "5432"
+  ```
 
+## Running the Application
 
-Challange:
+1. **Ensure PostgreSQL Container is Running:**
+   ```bash
+   docker start postgres-substrate  # If not already running
+   ```
 
-- check all the miners for each epoch
-- check if a miner is offline
-- check if a miner is storing the correct file
-- rebalance the file across the miners
-- handle both ipfs cid format
+2. **Start the Fetcher:**
+   ```bash
+   python run_fetcher.py
+   ```
 
+The application will:
+- Connect to the Substrate node
+- Initialize the PostgreSQL database
+- Subscribe to finalized blocks
+- Begin fetching and storing data
 
-all that in a given timeframe of 2 hours, we actually have 600 nodes.
+## Database Schema
 
+### Miners Table
+```sql
+CREATE TABLE miners (
+    node_id VARCHAR PRIMARY KEY,
+    ipfs_storage_max BIGINT,
+    ipfs_zfs_pool_size BIGINT,
+    last_online_block INTEGER,
+    miner_profile_cid VARCHAR,
+    updated_at TIMESTAMP
+);
+```
 
+### Registration Table
+```sql
+CREATE TABLE registration (
+    node_id VARCHAR PRIMARY KEY,
+    ipfs_node_id VARCHAR,
+    node_type VARCHAR,
+    owner VARCHAR,
+    registered_at INTEGER,
+    status VARCHAR,
+    updated_at TIMESTAMP
+);
+```
 
+## Project Structure
 
+- `run_fetcher.py` - Main entry point
+- `substrate_fetcher/`
+  - `config.py` - Configuration settings
+  - `storage_fetcher.py` - Core fetching logic
+  - `main.py` - Application initialization
+  - `utils.py` - Helper functions
 
+## Error Handling
 
+The service includes:
+- Automatic reconnection to the Substrate node
+- Transaction rollback on database errors
+- Graceful shutdown on CTRL+C
+- Detailed error logging
 
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
