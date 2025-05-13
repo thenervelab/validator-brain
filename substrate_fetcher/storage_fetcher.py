@@ -263,7 +263,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
                 raise
 
         # 4. Queue changed CIDs for IPFS content fetch (temporarily disabled)
-        """
+        
         global _previous_ipfs_profiles
         ipfs_profiles = {}
         miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
@@ -290,8 +290,8 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
             _ipfs_fetch_queue.put((changed_cids, set(ipfs_profiles.keys())))
         else:
             print("No changes in CIDs, skipping IPFS content fetch")
-        """
-        print("IPFS content fetch temporarily disabled for performance testing.")
+        
+        # print("IPFS content fetch temporarily disabled for performance testing.")
 
     except Exception as e:
         print(f"Critical error in fetch_all_chain_data: {e} (Type: {type(e).__name__})")
@@ -410,8 +410,8 @@ async def start_fetching_loop_async():
     manager = mp.Manager()
     _ipfs_fetch_queue = manager.Queue()
     _ipfs_content = manager.dict()
-    # _ipfs_fetch_process = mp.Process(target=utils.ipfs_fetch_worker, args=(_ipfs_fetch_queue, _ipfs_content))
-    # _ipfs_fetch_process.start()
+    _ipfs_fetch_process = mp.Process(target=utils.ipfs_fetch_worker, args=(_ipfs_fetch_queue, _ipfs_content))
+    _ipfs_fetch_process.start()
     print("Started IPFS fetch worker process")
 
     subscription_active = False
@@ -509,17 +509,17 @@ async def start_fetching_loop_async():
                     subscription_active = False
                     _get_substrate_interface(force_reconnect=True)
 
-    # # Cleanup
-    # if _ipfs_fetch_process:
-    #     print("Stopping IPFS fetch worker process...")
-    #     if _ipfs_fetch_queue:
-    #         _ipfs_fetch_queue.put(None)  # Send sentinel to stop the worker
-    #     _ipfs_fetch_process.join(timeout=5)
-    #     if _ipfs_fetch_process.is_alive():
-    #         print("Forcing IPFS fetch worker process termination...")
-    #         _ipfs_fetch_process.terminate()
-    #         _ipfs_fetch_process.join()
-    #     print("IPFS fetch worker process stopped")
+    # Cleanup
+    if _ipfs_fetch_process:
+        print("Stopping IPFS fetch worker process...")
+        if _ipfs_fetch_queue:
+            _ipfs_fetch_queue.put(None)  # Send sentinel to stop the worker
+        _ipfs_fetch_process.join(timeout=5)
+        if _ipfs_fetch_process.is_alive():
+            print("Forcing IPFS fetch worker process termination...")
+            _ipfs_fetch_process.terminate()
+            _ipfs_fetch_process.join()
+        print("IPFS fetch worker process stopped")
 
     substrate = _get_substrate_interface()
     if substrate:
