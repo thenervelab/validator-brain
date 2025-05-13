@@ -2,7 +2,7 @@
 import os
 
 # --- Connection Configuration ---
-NODE_URL = "wss://rpc.hippius.network"  # CHANGE THIS TO YOUR NODE
+NODE_URL = "ws://127.0.0.1:9944"  # CHANGE THIS TO YOUR NODE
 
 # --- Storage Items Configuration ---
 # For single storage items or specific keys in a map

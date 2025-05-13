@@ -1,15 +1,38 @@
 # substrate_fetcher/main.py
 import asyncio
 import time
-# Removed threading import as we're using asyncio now
+import os
+import sys
 
-from . import storage_fetcher
-from . import config
+# Add parent directory to path so imports work regardless of where script is run from
+script_path = os.path.abspath(os.path.dirname(__file__))
+parent_dir = os.path.dirname(script_path)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# Use regular imports with sys.path manipulation
+import storage_fetcher
+import config
+from substrate_fetcher import utils # Import utils
 
 # _fetcher_task = None # No longer a thread, but an asyncio task
 async def application_main_loop():
     """The main application logic running in asyncio."""
     print("Starting Substrate Storage Fetcher Application (Async)...")
+
+    # Initialize database pool
+    try:
+        config.db_pool = await utils.create_db_pool()
+        if config.db_pool:
+            await utils.init_db(config.db_pool) # Initialize tables
+        else:
+            print("Failed to initialize database pool. Certain features might not work.")
+            # Decide if you want to exit or continue without DB
+            # For now, we'll let it continue and potentially fail later if DB is strictly needed
+    except Exception as e:
+        print(f"Database initialization failed: {e}. Exiting.")
+        return # Exit if DB init fails critically
+
     print(f"Monitoring node: {config.NODE_URL}")
     print(f"Fetching items on new blocks (see config for specifics).")
     print("Press Ctrl+C to exit.")
@@ -26,7 +49,11 @@ async def application_main_loop():
 
             if current_data and current_data.get("block_number", -1) > last_printed_block:
                 print(f"\n--- Main App: Processed Block #{current_data['block_number']} ---")
-                print(f"--- Data saved to {config.OUTPUT_JSON_FILE} (Status: {current_status}) ---")
+                # Assuming OUTPUT_JSON_FILE is still relevant or handled if DB is primary
+                if hasattr(config, 'OUTPUT_JSON_FILE'):
+                    print(f"--- Data saved to {config.OUTPUT_JSON_FILE} (Status: {current_status}) ---")
+                else:
+                    print(f"--- Status: {current_status} ---")
                 last_printed_block = current_data["block_number"]
             elif not current_data and last_printed_block == -1:
                 pass # print(f"Status: {current_status}", end='\r') # Optional status print
@@ -52,6 +79,13 @@ async def application_main_loop():
                     print("Fetcher task cancelled successfully.")
             except Exception as e:
                 print(f"Error during fetcher task shutdown: {e}")
+        
+        # Close the database pool
+        if config.db_pool:
+            print("Closing database connection pool...")
+            await config.db_pool.close()
+            print("Database connection pool closed.")
+            
         print("Application shut down.")
 
 def run_application():
@@ -62,3 +96,6 @@ def run_application():
         print("\nCtrl+C received by run_application. asyncio loop should handle shutdown.")
     # The asyncio.run() should handle KeyboardInterrupt by cancelling tasks.
     # If tasks don't handle CancelledError properly, they might not clean up.
+
+if __name__ == "__main__":
+    run_application()

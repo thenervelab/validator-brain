@@ -4,11 +4,20 @@ import asyncio
 import asyncpg
 import json
 import multiprocessing as mp
-import queue  # Import the queue module for QueueEmpty exception
+from queue import Empty as QueueEmptyException # Import Empty directly for the worker
 import signal
 import sys
+import os
 from typing import Any, Dict, List, Tuple
-from . import config
+
+# Ensure parent directory is in path so imports work from anywhere
+script_path = os.path.abspath(os.path.dirname(__file__))
+parent_dir = os.path.dirname(script_path)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# Use regular import
+import config
 
 # --- Database Configuration ---
 async def create_db_pool():
@@ -41,8 +50,8 @@ async def init_db(pool: asyncpg.Pool):
             CREATE TABLE IF NOT EXISTS registration (
                 node_id VARCHAR(100) PRIMARY KEY,
                 ipfs_node_id VARCHAR(100) NOT NULL,
-                node_type VARCHAR(50) NOT NULL,
-                owner VARCHAR(50) NOT NULL,
+                node_type VARCHAR(100) NOT NULL,
+                owner VARCHAR(100) NOT NULL,
                 registered_at INTEGER NOT NULL,
                 status VARCHAR(20) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -195,7 +204,7 @@ async def save_registration_data(pool: asyncpg.Pool, node_registration: Dict, co
                     raise
 
 # --- IPFS Fetch Worker ---
-def ipfs_fetch_worker(queue: Any, shared_content: Any):
+def ipfs_fetch_worker(queue_obj: Any, shared_content: Any): # Renamed queue to queue_obj to avoid conflict
     """Worker process to fetch IPFS content for CIDs."""
     import requests
 
@@ -208,7 +217,7 @@ def ipfs_fetch_worker(queue: Any, shared_content: Any):
 
     while True:
         try:
-            item = queue.get(timeout=10)  # Add timeout to prevent hanging
+            item = queue_obj.get(timeout=10)  # Use renamed queue_obj
             if item is None:  # Sentinel value to stop the worker
                 print("IPFS fetch worker received stop signal.")
                 break
@@ -254,7 +263,7 @@ def ipfs_fetch_worker(queue: Any, shared_content: Any):
                     print(f"Error fetching CID {cid} for node_id {node_id}: {e}")
                     shared_content[node_id] = None
 
-        except queue.Empty:  # Correct exception for queue timeout
+        except QueueEmptyException:  # Use the imported QueueEmptyException
             print("IPFS fetch worker queue empty, waiting...")
             continue
         except BrokenPipeError as e:

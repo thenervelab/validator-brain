@@ -5,8 +5,21 @@ import multiprocessing as mp
 from substrateinterface import SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
 from typing import Any
-from . import config
-from . import utils
+import logging
+import os
+import sys
+import time
+
+# Ensure parent directory is in path so imports work from anywhere
+script_path = os.path.abspath(os.path.dirname(__file__))
+parent_dir = os.path.dirname(script_path)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# Use regular imports
+import config
+import utils
+# from substrateinterface import SubstrateInterface, Keypair # Already imported in utils
 
 # --- Module-level state ---
 _substrate_instance: SubstrateInterface | None = None
@@ -18,6 +31,7 @@ _ipfs_fetch_process = None
 _ipfs_fetch_queue = None
 _ipfs_content = None
 _previous_ipfs_profiles = {}
+_latest_data = None  # Store latest block data
 
 # --- Helper Functions ---
 def get_status():
@@ -25,6 +39,10 @@ def get_status():
 
 def is_stopping():
     return _exit_event.is_set()
+
+def get_latest_data():
+    """Returns the latest block data."""
+    return _latest_data
 
 def _update_status(new_status: str):
     global _current_status
@@ -299,6 +317,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None):
 
 async def _handle_new_block_data(header_data, update_nr, subscription_id):
     """Async callback for new blocks, fetches data and processes it."""
+    global _latest_data
     try:
         substrate = _get_substrate_interface()
         if _exit_event.is_set() or not substrate:
@@ -321,6 +340,14 @@ async def _handle_new_block_data(header_data, update_nr, subscription_id):
 
         await fetch_all_chain_data(substrate, block_hash=block_hash_hex, block_number=block_number)
         print(f"Successfully processed data for block #{block_number}.")
+        
+        # Update the latest data with this block's info
+        _latest_data = {
+            "block_number": block_number,
+            "block_hash": block_hash_hex,
+            "timestamp": time.time()
+        }
+        
         _update_status(f"Connected (Last fetch: Block #{block_number})")
 
     except Exception as e:
