@@ -2,10 +2,10 @@
 import os
 
 # --- Connection Configuration ---
-NODE_URL = "ws://rpc.dubs.rs"  # CHANGE THIS TO YOUR NODE
+NODE_URL = "wss://hippius-testnet.starkleytech.com"  # CHANGE THIS TO YOUR NODE
 
 STORAGE_ITEMS_TO_FETCH = [
-    # ("IpfsPallet", "CurrentEpochValidator"),
+    ("IpfsPallet", "CurrentEpochValidator"),
 ]
 
 # For fetching all entries of a StorageMap

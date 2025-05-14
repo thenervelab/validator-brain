@@ -135,25 +135,50 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
         # 1. Fetch individual storage items
         if config.STORAGE_ITEMS_TO_FETCH:
             logger.info(f"Fetching individual items at block: {block_hash or 'latest'}")
-            multi_query_params = []
-            for item_config in config.STORAGE_ITEMS_TO_FETCH:
-                if len(item_config) in (2, 3):
-                    module, item = item_config[:2]
-                    params = item_config[2] if len(item_config) == 3 else None
-                    if params and isinstance(params, str):
-                        if params.startswith('0x'):
-                            try:
-                                params = bytes.fromhex(params[2:])
-                            except ValueError:
-                                logger.error(f"Invalid hex string for params in {module}.{item}: {params}")
-                                params = None
-                        else:
-                            logger.warning(f"Params for {module}.{item} is a string ({params}), treating as literal.")
-                    if params:
-                        multi_query_params.append((module, item, params))
+            
+            # Special handling for CurrentEpochValidator
+            if ("IpfsPallet", "CurrentEpochValidator") in config.STORAGE_ITEMS_TO_FETCH:
+                try:
+                    # Fetch CurrentEpochValidator separately
+                    result = await _execute_query_async(
+                        substrate.query,
+                        "IpfsPallet",
+                        "CurrentEpochValidator",
+                        block_hash=block_hash
+                    )
+                    
+                    if result is not None:
+                        value = result.value
+                        account_id = None
+                        block_num = None
+                        
+                        if value is not None and value != "None":
+                            if isinstance(value, (tuple, list)) and len(value) == 2:
+                                account_id, block_num = value
+                            elif isinstance(value, dict):
+                                account_id = value.get('account_id')
+                                block_num = value.get('block_number')
+                            
+                        await utils.save_current_epoch_validator(
+                            config.db_pool,
+                            str(account_id) if account_id is not None else None,
+                            int(block_num) if block_num is not None else None
+                        )
+                        logger.info("Successfully processed CurrentEpochValidator")
                     else:
-                        multi_query_params.append((module, item))
-
+                        logger.error("Failed to fetch CurrentEpochValidator")
+                        await utils.save_current_epoch_validator(config.db_pool, None, None)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing CurrentEpochValidator: {e}")
+                    await utils.save_current_epoch_validator(config.db_pool, None, None)
+            
+            # Process other storage items (original code)
+            multi_query_params = [
+                item for item in config.STORAGE_ITEMS_TO_FETCH 
+                if item != ("IpfsPallet", "CurrentEpochValidator")
+            ]
+            
             if multi_query_params:
                 logger.info(f"Query multi params: {multi_query_params}")
                 try:
@@ -161,33 +186,92 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                     if results is not None:
                         for i, item_config_tuple in enumerate(multi_query_params):
                             storage_key_name = utils.get_storage_key_string(
-                                item_config_tuple[0], item_config_tuple[1],
-                                item_config_tuple[2] if len(item_config_tuple) == 3 else None
+                                item_config_tuple[0], item_config_tuple[1]
                             )
                             if i < len(results) and results[i] is not None:
-                                pass  # No need to store in memory since we're using DB
+                                logger.debug(f"Storage item {storage_key_name}: {results[i].value}")
                             else:
                                 logger.error(f"Failed to fetch {storage_key_name}")
                     else:
                         logger.error("query_multi returned None or failed.")
                 except Exception as e:
                     logger.error(f"Error during query_multi: {e}")
-                    for item_config_tuple in multi_query_params:
-                        module, item = item_config_tuple[:2]
-                        params = item_config_tuple[2] if len(item_config_tuple) == 3 else None
-                        storage_key_name = utils.get_storage_key_string(module, item, params)
-                        try:
-                            if params:
-                                result = await _execute_query_async(substrate.query, module, item, params=params, block_hash=block_hash)
-                            else:
-                                result = await _execute_query_async(substrate.query, module, item, block_hash=block_hash)
-                            if result is not None:
-                                pass  # No need to store in memory
-                            else:
-                                logger.error(f"Failed to fetch {storage_key_name}")
-                        except Exception as e:
-                            logger.error(f"Error during individual query for {storage_key_name}: {e}")
 
+        if multi_query_params:
+                        logger.info(f"Query multi params: {multi_query_params}")
+                        try:
+                            results = await _execute_query_async(substrate.query_multi, multi_query_params, block_hash=block_hash)
+                            logger.debug(f"Raw query_multi results: {results}")
+                            if results is not None:
+                                for i, item_config_tuple in enumerate(multi_query_params):
+                                    storage_key_name = utils.get_storage_key_string(
+                                        item_config_tuple[0], item_config_tuple[1],
+                                        item_config_tuple[2] if len(item_config_tuple) == 3 else None
+                                    )
+                                    if i < len(results) and results[i] is not None:
+                                        if item_config_tuple[0] == "IpfsPallet" and item_config_tuple[1] == "CurrentEpochValidator":
+                                            value = results[i].value if hasattr(results[i], 'value') else results[i]
+                                            logger.debug(f"CurrentEpochValidator raw value: {value}")
+                                            try:
+                                                if value is not None:
+                                                    if isinstance(value, (tuple, list)) and len(value) == 2:
+                                                        account_id, block_num = value
+                                                        await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                                    elif isinstance(value, dict) and "account_id" in value and "block_number" in value:
+                                                        account_id = value["account_id"]
+                                                        block_num = value["block_number"]
+                                                        await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                                    else:
+                                                        logger.warning(f"Unexpected CurrentEpochValidator value format: {value}")
+                                                        await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                                else:
+                                                    await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                            except Exception as e:
+                                                logger.error(f"Error processing CurrentEpochValidator value {value}: {e}")
+                                                await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                    else:
+                                        logger.error(f"Failed to fetch {storage_key_name}")
+                            else:
+                                logger.error("query_multi returned None or failed.")
+                        except Exception as e:
+                            logger.error(f"Error during query_multi: {e} (Type: {type(e).__name__})\n{traceback.format_exc()}")
+                            # Fallback to individual queries
+                            for item_config_tuple in multi_query_params:
+                                module, item = item_config_tuple[:2]
+                                params = item_config_tuple[2] if len(item_config_tuple) == 3 else None
+                                storage_key_name = utils.get_storage_key_string(module, item, params)
+                                try:
+                                    if params:
+                                        result = await _execute_query_async(substrate.query, module, item, params=params, block_hash=block_hash)
+                                    else:
+                                        result = await _execute_query_async(substrate.query, module, item, block_hash=block_hash)
+                                    logger.debug(f"Individual query result for {storage_key_name}: {result}")
+                                    if result is not None:
+                                        if module == "IpfsPallet" and item == "CurrentEpochValidator":
+                                            value = result.value if hasattr(result, 'value') else result
+                                            logger.debug(f"CurrentEpochValidator individual query value: {value}")
+                                            try:
+                                                if value is not None:
+                                                    if isinstance(value, (tuple, list)) and len(value) == 2:
+                                                        account_id, block_num = value
+                                                        await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                                    elif isinstance(value, dict) and "account_id" in value and "block_number" in value:
+                                                        account_id = value["account_id"]
+                                                        block_num = value["block_number"]
+                                                        await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                                    else:
+                                                        logger.warning(f"Unexpected CurrentEpochValidator value format: {value}")
+                                                        await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                                else:
+                                                    await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                            except Exception as e:
+                                                logger.error(f"Error processing CurrentEpochValidator individual query value {value}: {e}")
+                                                await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                    else:
+                                        logger.error(f"Failed to fetch {storage_key_name}")
+                                except Exception as e:
+                                    logger.error(f"Error during individual query for {storage_key_name}: {e}\n{traceback.format_exc()}")
+                            
         # 2. Fetch all entries for specified StorageMaps
         if config.STORAGE_MAPS_TO_FETCH_ALL:
             logger.info(f"Fetching storage maps at block: {block_hash or 'latest'} (Block number: {block_number})")
@@ -493,6 +577,7 @@ async def start_fetching_loop_async():
                     async def sync_subscription_handler(header_obj, update_nr, subscription_id):
                         logger.info(f"Received subscription update: Update #{update_nr}, Subscription ID: {subscription_id}")
                         asyncio.create_task(block_queue.put(header_obj))
+
 
                     sub_id = await _execute_query_async(substrate.subscribe_block_headers, sync_subscription_handler, finalized_only=True)
                     if sub_id:

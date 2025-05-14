@@ -14,6 +14,7 @@ import aiohttp
 from multiprocessing import Queue as MPQueue
 import os
 import psutil
+import time
 
 # Ensure parent directory is in path so imports work from anywhere
 script_path = os.path.abspath(os.path.dirname(__file__))
@@ -584,4 +585,23 @@ def get_storage_key_string(module: str, storage_item: str, params: Any = None) -
         return f"{module}.{storage_item}({params_str})"
     return f"{module}.{storage_item}({str(params)})"
 
-import time  # Added for sleep in worker
+async def save_current_epoch_validator(db_pool, account_id, block_number):
+    """Saves or updates the current epoch validator in database."""
+    async with db_pool.acquire() as conn:
+        try:
+            await conn.execute(
+                """
+                INSERT INTO current_epoch_validator (account_id, block_number, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (id) DO UPDATE 
+                SET account_id = EXCLUDED.account_id,
+                    block_number = EXCLUDED.block_number,
+                    updated_at = NOW()
+                """,
+                account_id,
+                block_number
+            )
+            logger.info(f"Updated CurrentEpochValidator: {account_id} at block {block_number}")
+        except Exception as e:
+            logger.error(f"Error saving CurrentEpochValidator: {e}")
+            raise
