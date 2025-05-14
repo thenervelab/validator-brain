@@ -15,6 +15,8 @@ TYPE_REGISTRY = {
         "BoundedVec<u8, 350>": "Vec<u8>",
         "BoundedVec<u8, 64>": "Vec<u8>",
         "BoundedVec<u8, ConstU32<64>>": "Vec<u8>",
+        "BlockNumbers": "Vec<u32>",
+        "MinerProfile": "BoundedVec<u8, ConstU32<64>>",
         "StorageRequest<AccountId, BlockNumber>": {
             "type": "struct",
             "type_mapping": [

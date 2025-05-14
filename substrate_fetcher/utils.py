@@ -198,7 +198,7 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                         miner_total_files_size, miner_total_files_pinned
                     )
                     print(f"Inserted new metrics for node_id: {node_id}")
-                    
+
 async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], miner_profiles: Dict[str, Any]):
     """
     Saves BlockNumbers and MinerProfile data into the miners table.
@@ -225,7 +225,7 @@ async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], mi
                     value = block_numbers[node_id]
                     if isinstance(value, list) and value:
                         last_online_block = value[0]  # Take the first block number if it's a list
-                    elif isinstance(value, (int, str)):  # Handle single value or unexpected type
+                    elif isinstance(value, (int, str)):
                         last_online_block = int(value) if isinstance(value, str) else value
                     else:
                         print(f"Unexpected block_numbers value for {node_id}: {value}")

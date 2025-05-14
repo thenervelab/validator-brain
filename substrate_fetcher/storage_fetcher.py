@@ -235,7 +235,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             user_storage_requests = {}  # Store UserStorageRequests data
             for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL:
                 # Skip ExecutionUnit.NodeMetrics unless block_number is a multiple of 300
-                if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number is not None and block_number % 2 != 0:
+                if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number is not None and block_number % 300 != 0:
                     logger.info(f"Skipping ExecutionUnit.NodeMetrics at block {block_number} (not a multiple of 300)")
                     continue
 
@@ -273,7 +273,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             # Initialize metrics_data as an empty dict by default
             metrics_data = {}
             # Handle ExecutionUnit.NodeMetrics (update, don't delete) only every 300th block
-            if any(module == "ExecutionUnit" and map_name == "NodeMetrics" for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL) and block_number % 2 == 0:
+            if any(module == "ExecutionUnit" and map_name == "NodeMetrics" for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL) and block_number % 300 == 0:
                 map_entries_raw = await _execute_query_async(substrate.query_map, "ExecutionUnit", "NodeMetrics", block_hash=block_hash)
                 if map_entries_raw is not None:
                     for key_storage_obj, value_storage_obj in map_entries_raw:
@@ -316,6 +316,48 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                 }
             await utils.update_execution_unit_metrics(config.db_pool, all_metrics_data)
 
+            # Fetch and handle BlockNumbers and MinerProfile for saving to miners table
+            block_numbers_data = {}
+            miner_profile_data = {}
+            block_numbers_result = await _execute_query_async(substrate.query_map, "ExecutionUnit", "BlockNumbers", block_hash=block_hash)
+            if block_numbers_result is not None:
+                for key_storage_obj, value_storage_obj in block_numbers_result:
+                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
+                    logger.debug(f"BlockNumbers for node {entry_key_param_str}: {value_storage_obj.value}")
+                    # BlockNumbers might return a list or a single integer
+                    block_value = value_storage_obj.value
+                    if isinstance(block_value, list) and block_value:
+                        block_numbers_data[entry_key_param_str] = block_value[0]  # Take the first block number
+                    else:
+                        block_numbers_data[entry_key_param_str] = block_value if isinstance(block_value, (int, str)) else None
+            else:
+                logger.warning("BlockNumbers query returned None")
+
+            miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
+            if miner_profile_result is not None:
+                for key_storage_obj, value_storage_obj in miner_profile_result:
+                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
+                    logger.debug(f"MinerProfile for node {entry_key_param_str}: {value_storage_obj.value}")
+                    # MinerProfile should be a BoundedVec<u8, ConstU32<255>>, decode to string
+                    profile_value = value_storage_obj.value
+                    if isinstance(profile_value, (list, bytes)):
+                        profile_value = utils.bounded_vec_to_string(profile_value)
+                    miner_profile_data[entry_key_param_str] = profile_value if isinstance(profile_value, str) else None
+            else:
+                logger.warning("MinerProfile query returned None")
+
+            # Save BlockNumbers and MinerProfile data to the miners table
+            if block_numbers_data or miner_profile_data:
+                try:
+                    logger.info(f"Saving BlockNumbers and MinerProfile data for {len(block_numbers_data)} nodes (BlockNumbers) and {len(miner_profile_data)} nodes (MinerProfile)")
+                    await utils.save_miners_data(config.db_pool, block_numbers_data, miner_profile_data)
+                    logger.info("Successfully saved miners data (BlockNumbers and MinerProfile) to database.")
+                except Exception as e:
+                    logger.error(f"Error saving miners data: {e}")
+                    raise
+            else:
+                logger.warning("No BlockNumbers or MinerProfile data to save.")
+
         # 4. Queue changed CIDs for IPFS content fetch
         global _previous_ipfs_profiles
         ipfs_profiles = {}
@@ -323,12 +365,18 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
         if miner_profile_result is not None:
             for key_storage_obj, value_storage_obj in miner_profile_result:
                 entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                ipfs_profiles[entry_key_param_str] = value_storage_obj.value
+                profile_value = value_storage_obj.value
+                if isinstance(profile_value, (list, bytes)):
+                    profile_value = utils.bounded_vec_to_string(profile_value)
+                ipfs_profiles[entry_key_param_str] = profile_value
         user_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "UserProfile", block_hash=block_hash)
         if user_profile_result is not None:
             for key_storage_obj, value_storage_obj in user_profile_result:
                 entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                ipfs_profiles[entry_key_param_str] = value_storage_obj.value
+                profile_value = value_storage_obj.value
+                if isinstance(profile_value, (list, bytes)):
+                    profile_value = utils.bounded_vec_to_string(profile_value)
+                ipfs_profiles[entry_key_param_str] = profile_value
 
         # Identify changed CIDs
         changed_cids = []
