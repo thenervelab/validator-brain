@@ -643,10 +643,11 @@ async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[st
     """Saves UserStorageRequests data to the database, converting BoundedVec fields to strings."""
     async with pool.acquire() as conn:
         async with conn.transaction():
+            logger.info(f"Saving {requests} UserStorageRequests")
             for (owner_account_id, file_hash), request in requests.items():
                 try:
                     if request is None:
-                        logger.debug(f"Skipping None request for owner {owner_account_id}, file_hash {file_hash}")
+                        logger.info(f"Skipping None request for owner {owner_account_id}, file_hash {file_hash}")
                         continue
 
                     required_fields = [
@@ -660,10 +661,10 @@ async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[st
 
                     # Convert BoundedVec fields
                     file_hash_str = bounded_vec_to_string(file_hash)
-                    file_name_str = bounded_vec_to_string(request["file_name"])
+                    file_name_str = bounded_vec_to_raw_string(request["file_name"])
                     miner_ids = request.get("miner_ids", None)
                     miner_ids_str = (
-                        [bounded_vec_to_string(miner_id) for miner_id in miner_ids]
+                        [bounded_vec_to_raw_string(miner_id) for miner_id in miner_ids]
                         if miner_ids is not None else []
                     )
 
@@ -736,3 +737,7 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
     except Exception as e:
         logger.error(f"Error converting BoundedVec to string: {e}")
         return str(bounded_vec)
+
+def bounded_vec_to_raw_string(bounded_vec: Any) -> str:
+    """Converts any bounded_vec input to a plain string representation without decoding."""
+    return str(bounded_vec)

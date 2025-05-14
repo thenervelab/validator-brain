@@ -16,4 +16,22 @@ CREATE TABLE registration (
     status VARCHAR(20) NOT NULL,               -- Status (e.g., "Online")
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Track when the record was last updated
 );
-SELECT * FROM user_storage_requests LIMIT 10;
+SELECT * FROM user_storage_requests LIMIT 16;
+
+
+
+substrate_fetcher.utils - INFO - Saving {('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmZGKHgqvRjyJ7KSv4mp4UYtzeNcUr4QEkfsFeAKBtMw2a'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmV1fqoWLb6thQXdYBu99tJi4ykJydRxSssmhNx1PNY39f'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmSgtV6KzuJgXNdUb7dLuPzJE5rYZ9ZWQrnewigjBKWiT5'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmWe2577KXRwPudrwSnuFrrcBZCwHxq2h9wgQZCH3hZv6J'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmQT291jgmxom4DU29LtLcuJPRSoq9J9eDgWsEg91FNbjs'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmTcPK595M79iNCy4A3CTLiTudH2mb4WDNVYCzABWqp9S7'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmQysokgbQ7fmN98U9fzoDFytcax8G4jxWT2VmNJVHSEnC'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'Qmbd26h5DTeEvqsMc6M4iBCFpFGr6skwn8AYKLqBzdo37i'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmfQkwCwrzJdkajH7eDKC5sRVqAm4gfu44AoujpXFYdKAF'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmRDrxT42LZ85LGNFaoVaz4STD7w3UiyBBbhsAfAX1rGWN'): None, ('5DydLmGijznP1RhH3uaojj8CDjTLdbZXoyZLBNXC9CN68Vsv',
+ 'QmbNCGe3zLQqHfq3Y36MYQwjv2T8M5cXCxEXQmG7Cp5QZ3'): None, ('5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH',
+ 'QmTYjbCWy9Q1a5smcA5n6YMqLDSQhXSSdmqKfTS6XC8JJb'): None, ('5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH',
+ 'QmeQEUzjNhuGNUAJzZrXL1Jtcg9SZDKEaxoSYwrDUACZwk'): None, ('5H1QBRF7T7dgKwzVGCgS4wioudvMRf9K4NEDzfuKLnuyBNzH',
+ 'QmTJw5NYahdBL6fmqZe2bvNBHkn7Bcw9ToDKegV2f6zfgG'): None} UserStorageRequests
