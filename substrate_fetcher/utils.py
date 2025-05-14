@@ -272,6 +272,18 @@ def _preprocess_json_content(content: Any) -> Any:
     # Handle dictionaries
     if isinstance(content, dict):
         processed_content = content.copy()
+        # Check and decode file_name if it exists and is a list of integers
+        if "file_name" in processed_content and isinstance(processed_content["file_name"], list):
+            byte_list = processed_content["file_name"]
+            if all(isinstance(x, int) for x in byte_list):
+                try:
+                    # Convert list of integers to bytes then to string
+                    byte_data = bytes(byte_list)
+                    decoded_str = byte_data.decode('utf-8')
+                    processed_content["file_name"] = decoded_str
+                except UnicodeDecodeError as e:
+                    logger.warning(f"Failed to decode file_name as UTF-8: {e}. Keeping as byte array.")
+
         # Check and decode file_hash if it exists and is a list of integers
         if "file_hash" in processed_content and isinstance(processed_content["file_hash"], list):
             byte_list = processed_content["file_hash"]
@@ -486,6 +498,7 @@ async def save_ipfs_profiles(db_pool: asyncpg.Pool, ipfs_content: Dict[str, Any]
                         try:
                             # Merge required and optional fields
                             profile_data = {**optional_fields, **profile}
+                            print("user profile data is ", profile_data)
                             result = await conn.execute(
                                 """
                                 INSERT INTO user_profile (
