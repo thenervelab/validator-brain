@@ -236,8 +236,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             if block_numbers_result is not None:
                 for key_storage_obj, value_storage_obj in block_numbers_result:
                     entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
-                    block_numbers[entry_key_param_str] = value_storage_obj.value
-                    logger.info(f"Processing BlockNumbers entry: {entry_key_param_str} -> {value_storage_obj.value}")
+                    block_numbers[entry_key_param_str] = value_storage_obj.value\
             else:
                 logger.error("BlockNumbers query returned None")
          
@@ -247,7 +246,6 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                 for key_storage_obj, value_storage_obj in miner_profile_result:
                     entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
                     miner_profiles[entry_key_param_str] = value_storage_obj.value
-                    logger.info(f"Processing MinerProfile entry: {entry_key_param_str} -> {value_storage_obj.value}")
             else:
                 logger.error("MinerProfile query returned None")
       
@@ -520,7 +518,7 @@ async def start_fetching_loop_async():
                         logger.info(f"Received subscription update: Update #{update_nr}, Subscription ID: {subscription_id_from_lib}")
                         if not loop.is_closed():
                             asyncio.run_coroutine_threadsafe(block_queue.put(header_obj), loop)
-
+                    
                     sub_id = await _execute_query_async(substrate.chain_getFinalisedHead, sync_subscription_handler_wrapper, include_author=False)
                     if sub_id:
                         logger.info(f"Successfully subscribed with ID: {sub_id}")

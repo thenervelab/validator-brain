@@ -7,7 +7,6 @@ CREATE TABLE miners (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Track when the record was last updated
 );
 
-
 CREATE TABLE registration (
     node_id VARCHAR(54) PRIMARY KEY,           -- Node ID (e.g., "12D3KooWA1QSUbJSSYNL...")
     ipfs_node_id VARCHAR(54) NOT NULL,         -- IPFS Node ID (e.g., "12D3KooWNNyXznrESEQUwivscoGKgJZmourVPWhE5SCCAHXWkNdE")
@@ -17,3 +16,4 @@ CREATE TABLE registration (
     status VARCHAR(20) NOT NULL,               -- Status (e.g., "Online")
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Track when the record was last updated
 );
+SELECT * FROM user_profile LIMIT 10;

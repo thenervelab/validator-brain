@@ -66,7 +66,8 @@ async def init_db(pool: asyncpg.Pool):
             );
         """)
 
-        # Create MinerProfile table with individual columns
+
+        # Update the miner_profile table creation
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS miner_profile (
                 entry_id SERIAL PRIMARY KEY,
@@ -76,11 +77,11 @@ async def init_db(pool: asyncpg.Pool):
                 file_size_in_bytes BIGINT NOT NULL,
                 selected_validator VARCHAR(100) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(miner_node_id, entry_id)
+                UNIQUE(miner_node_id, file_hash)  -- This ensures uniqueness for conflict detection
             );
         """)
 
-        # Create UserProfile table with individual columns
+        # Update the user_profile table creation
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_profile (
                 entry_id SERIAL PRIMARY KEY,
@@ -97,7 +98,7 @@ async def init_db(pool: asyncpg.Pool):
                 selected_validator VARCHAR(100) NOT NULL,
                 total_replicas INTEGER NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, entry_id)
+                UNIQUE(user_id, file_hash)  -- This ensures uniqueness for conflict detection
             );
         """)
         print("Database tables initialized.")
@@ -197,7 +198,6 @@ async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], mi
                         """,
                         node_id, last_online_block, miner_profile_cid
                     )
-                    print(f"Inserted/Updated miners data for node_id: {node_id}")
                 except Exception as e:
                     print(f"Error inserting/updating miners data for node_id {node_id}: {e}")
 
@@ -409,118 +409,102 @@ async def fetch_all_cid_contents_async(cid_pairs: List[Tuple[str, str]]) -> Dict
 
     return results
 
-async def save_ipfs_profiles(pool: asyncpg.Pool, ipfs_content: Dict[str, Any]):
-    """
-    Saves MinerProfile and UserProfile contents to their respective database tables with individual columns,
-    skipping failed CIDs individually.
-    """
-    logger.info(f"Starting save_ipfs_profiles with ipfs_content: {list(ipfs_content.keys())}")
-    successful_saves = 0
-    failed_saves = 0
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            for node_id, content in ipfs_content.items():
-                if content is None:
-                    logger.warning(f"Skipping node_id {node_id}: Content is None (likely fetch failed).")
-                    failed_saves += 1
-                    continue
-                if not isinstance(content, list):
-                    logger.warning(f"Skipping node_id {node_id}: Content is not a list, got {type(content)}: {content}")
-                    failed_saves += 1
-                    continue
-
-                # Determine if this is a MinerProfile or UserProfile based on structure
-                if content and all("miner_node_id" in item for item in content):
-                    # MinerProfile
-                    logger.debug(f"Processing MinerProfile for node_id {node_id}")
-                    # Delete existing entries for this miner_node_id
-                    await conn.execute(
-                        "DELETE FROM miner_profile WHERE miner_node_id = $1",
-                        node_id
-                    )
-                    # Insert new entries
-                    for entry in content:
+async def save_ipfs_profiles(db_pool: asyncpg.Pool, ipfs_content: Dict[str, Any]):
+    """Saves IPFS profiles to the database, skipping existing entries."""
+    async with db_pool.acquire() as conn:
+        success_count = 0
+        skip_count = 0
+        try:
+            for node_id, profiles in ipfs_content.items():
+                for profile in profiles:
+                    if 'miner_node_id' in profile:
+                        # MinerProfile
+                        required_fields = ['miner_node_id', 'created_at', 'file_hash', 'file_size_in_bytes', 'selected_validator']
+                        if not all(field in profile for field in required_fields):
+                            missing = [field for field in required_fields if field not in profile]
+                            logger.warning(f"Skipping MinerProfile entry for miner_node_id {node_id}: Missing fields {missing}")
+                            skip_count += 1
+                            continue
                         try:
-                            required_fields = ["created_at", "file_hash", "file_size_in_bytes", "miner_node_id", "selected_validator"]
-                            if not all(field in entry for field in required_fields):
-                                missing = [f for f in required_fields if f not in entry]
-                                logger.warning(f"Skipping MinerProfile entry for miner_node_id {node_id}: Missing fields {missing}")
-                                continue
-
-                            await conn.execute(
+                            result = await conn.execute(
                                 """
-                                INSERT INTO miner_profile (
-                                    miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator
-                                ) VALUES ($1, $2, $3, $4, $5)
+                                INSERT INTO miner_profile (miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator)
+                                VALUES ($1, $2, $3, $4, $5)
+                                ON CONFLICT (miner_node_id, file_hash) DO NOTHING
                                 """,
                                 node_id,
-                                entry["created_at"],
-                                entry["file_hash"],
-                                entry["file_size_in_bytes"],
-                                entry["selected_validator"]
+                                profile['created_at'],
+                                profile['file_hash'],
+                                profile['file_size_in_bytes'],
+                                profile['selected_validator']
                             )
-                            print(f"Saved MinerProfile entry for miner_node_id: {node_id}")
-                            successful_saves += 1
+                            if result == "INSERT 0 1":  # Successfully inserted
+                                logger.info(f"Inserted new MinerProfile entry for miner_node_id: {node_id}")
+                                success_count += 1
+                            else:  # Conflict occurred, skipped
+                                logger.debug(f"Skipped existing MinerProfile entry for miner_node_id: {node_id}")
+                                skip_count += 1
                         except Exception as e:
-                            logger.error(f"Error saving MinerProfile entry for miner_node_id {node_id}: {e}")
-                            failed_saves += 1
-                            continue  # Skip this entry and proceed to the next
-
-                elif content and all("owner" in item for item in content):
-                    # UserProfile
-                    logger.debug(f"Processing UserProfile for node_id {node_id}")
-                    # Delete existing entries for this user_id
-                    await conn.execute(
-                        "DELETE FROM user_profile WHERE user_id = $1",
-                        node_id
-                    )
-                    # Insert new entries
-                    for entry in content:
+                            logger.error(f"Error saving MinerProfile for {node_id}: {e}")
+                            skip_count += 1
+                    elif 'user_id' in profile:
+                        # UserProfile
+                        required_fields = ['user_id', 'created_at', 'file_hash']
+                        optional_fields = {
+                            'file_name': None,
+                            'file_size_in_bytes': 0,
+                            'is_assigned': False,
+                            'last_charged_at': None,
+                            'main_req_hash': None,
+                            'miner_ids': [],
+                            'owner': None,
+                            'selected_validator': None,
+                            'total_replicas': 0
+                        }
+                        if not all(field in profile for field in required_fields):
+                            missing = [field for field in required_fields if field not in profile]
+                            logger.warning(f"Skipping UserProfile entry for user_id {node_id}: Missing fields {missing}")
+                            skip_count += 1
+                            continue
                         try:
-                            required_fields = [
-                                "created_at", "file_hash", "file_name", "file_size_in_bytes",
-                                "is_assigned", "last_charged_at", "main_req_hash", "miner_ids",
-                                "owner", "selected_validator", "total_replicas"
-                            ]
-                            if not all(field in entry for field in required_fields):
-                                missing = [f for f in required_fields if f not in entry]
-                                logger.warning(f"Skipping UserProfile entry for user_id {node_id}: Missing fields {missing}")
-                                continue
-
-                            await conn.execute(
+                            # Merge required and optional fields
+                            profile_data = {**optional_fields, **profile}
+                            result = await conn.execute(
                                 """
                                 INSERT INTO user_profile (
                                     user_id, created_at, file_hash, file_name, file_size_in_bytes,
                                     is_assigned, last_charged_at, main_req_hash, miner_ids,
                                     owner, selected_validator, total_replicas
-                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                                )
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                                ON CONFLICT (user_id, file_hash) DO NOTHING
                                 """,
                                 node_id,
-                                entry["created_at"],
-                                entry["file_hash"],
-                                entry["file_name"],
-                                entry["file_size_in_bytes"],
-                                entry["is_assigned"],
-                                entry["last_charged_at"],
-                                entry["main_req_hash"],
-                                entry["miner_ids"],
-                                entry["owner"],
-                                entry["selected_validator"],
-                                entry["total_replicas"]
+                                profile_data['created_at'],
+                                profile_data['file_hash'],
+                                profile_data['file_name'],
+                                profile_data['file_size_in_bytes'],
+                                profile_data['is_assigned'],
+                                profile_data['last_charged_at'],
+                                profile_data['main_req_hash'],
+                                profile_data['miner_ids'],
+                                profile_data['owner'],
+                                profile_data['selected_validator'],
+                                profile_data['total_replicas']
                             )
-                            print(f"Saved UserProfile entry for user_id: {node_id}")
-                            successful_saves += 1
+                            if result == "INSERT 0 1":  # Successfully inserted
+                                logger.info(f"Inserted new UserProfile entry for user_id: {node_id}")
+                                success_count += 1
+                            else:  # Conflict occurred, skipped
+                                logger.debug(f"Skipped existing UserProfile entry for user_id: {node_id}")
+                                skip_count += 1
                         except Exception as e:
-                            logger.error(f"Error saving UserProfile entry for user_id {node_id}: {e}")
-                            failed_saves += 1
-                            continue  # Skip this entry and proceed to the next
-                else:
-                    logger.warning(f"Skipping node_id {node_id}: Content does not match MinerProfile or UserProfile structure: {content}")
-                    failed_saves += 1
-
-    # Log summary of saves
-    logger.info(f"Profile Save Summary: {successful_saves} profiles saved successfully, {failed_saves} failed or skipped")
+                            logger.error(f"Error saving UserProfile for {node_id}: {e}")
+                            skip_count += 1
+            logger.info(f"Profile Save Summary: {success_count} profiles inserted, {skip_count} skipped (existing or invalid)")
+        except Exception as e:
+            logger.error(f"Error in save_ipfs_profiles: {e}\n{traceback.format_exc()}")
+            raise
 
 def ipfs_fetch_worker(queue: MPQueue, ipfs_content: mp.Manager().dict, event_queue: MPQueue = None):
     logging.basicConfig(

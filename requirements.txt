@@ -2,3 +2,4 @@ substrate-interface
 aiohttp
 base58
 asyncpg
+psutil
