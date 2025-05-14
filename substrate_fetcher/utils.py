@@ -705,26 +705,34 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
     try:
         # Handle list/tuple of integers (BoundedVec as list of bytes)
         if isinstance(bounded_vec, (list, tuple)) and all(isinstance(x, int) for x in bounded_vec):
+            logger.debug(f"BoundedVec is list of integers: {bounded_vec}")
             byte_data = bytes(bounded_vec)
+            return byte_data.decode('utf-8')
+
         # Handle bytes directly
         elif isinstance(bounded_vec, bytes):
-            byte_data = bounded_vec
+            logger.debug(f"BoundedVec is bytes: {bounded_vec}")
+            return bounded_vec.decode('utf-8')
+
         # Handle string input
         elif isinstance(bounded_vec, str):
+            logger.debug(f"BoundedVec is string: {bounded_vec}")
             try:
-                decoded_str = bytes.fromhex(bounded_vec).decode('utf-8')
-                return decoded_str
-            except ValueError as e:
+                return bytes.fromhex(bounded_vec).decode('utf-8')
+            except ValueError:
                 logger.warning(f"Invalid hex string format: {bounded_vec}, returning as string")
                 return bounded_vec
+
+        # Other types: force str conversion first
         else:
-            # Perform double-decoding process
+            logger.debug(f"Unhandled type for BoundedVec: {type(bounded_vec)}. Attempting to convert to string.")
+            str_data = str(bounded_vec)
             try:
-                decoded_str = bytes.fromhex(bounded_vec).decode('utf-8')
-                return decoded_str
+                return bytes.fromhex(str_data).decode('utf-8')
             except (UnicodeDecodeError, ValueError) as e:
-                logger.warning(f"Failed to decode BoundedVec as UTF-8 or process hex string: {e}. Using hex string instead.")
-                return str(bounded_vec)
+                logger.warning(f"Failed to decode BoundedVec as UTF-8 or process hex string: {e}. Returning string.")
+                return str_data
+
     except Exception as e:
         logger.error(f"Error converting BoundedVec to string: {e}")
         return str(bounded_vec)
