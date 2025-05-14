@@ -111,6 +111,23 @@ async def init_db(pool: asyncpg.Pool):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # New table for UserStorageRequests
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_storage_requests (
+                id SERIAL PRIMARY KEY,
+                owner_account_id VARCHAR(100) NOT NULL,
+                file_hash VARCHAR(350) NOT NULL,
+                total_replicas INTEGER NOT NULL,
+                file_name VARCHAR(350) NOT NULL,
+                last_charged_at BIGINT NOT NULL,
+                created_at BIGINT NOT NULL,
+                miner_ids TEXT[],
+                selected_validator VARCHAR(100) NOT NULL,
+                is_assigned BOOLEAN NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner_account_id, file_hash)
+            );
+        """)
         print("Database tables initialized.")
 
 # --- Database Operations for Fetcher ---
@@ -618,3 +635,87 @@ async def save_current_epoch_validator(db_pool, account_id, block_number):
         except Exception as e:
             logger.error(f"Error saving CurrentEpochValidator: {e}")
             raise
+
+
+async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[str, str], Any]):
+    """Saves UserStorageRequests data to the database, converting BoundedVec fields to strings."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for (owner_account_id, file_hash), request in requests.items():
+                try:
+                    if request is None:
+                        logger.debug(f"Skipping None request for owner {owner_account_id}, file_hash {file_hash}")
+                        continue
+
+                    required_fields = [
+                        "total_replicas", "owner", "file_hash", "file_name",
+                        "last_charged_at", "created_at", "selected_validator", "is_assigned"
+                    ]
+                    if not all(field in request for field in required_fields):
+                        missing = [f for f in required_fields if f not in request]
+                        logger.warning(f"Skipping UserStorageRequest for {owner_account_id}, {file_hash}: Missing fields {missing}")
+                        continue
+
+                    # Convert BoundedVec fields
+                    file_hash_str = bounded_vec_to_string(file_hash)
+                    file_name_str = bounded_vec_to_string(request["file_name"])
+                    miner_ids = request.get("miner_ids", None)
+                    miner_ids_str = (
+                        [bounded_vec_to_string(miner_id) for miner_id in miner_ids]
+                        if miner_ids is not None else []
+                    )
+
+                    await conn.execute(
+                        """
+                        INSERT INTO user_storage_requests (
+                            owner_account_id, file_hash, total_replicas, file_name,
+                            last_charged_at, created_at, miner_ids, selected_validator, is_assigned
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        ON CONFLICT (owner_account_id, file_hash) DO UPDATE
+                        SET total_replicas = EXCLUDED.total_replicas,
+                            file_name = EXCLUDED.file_name,
+                            last_charged_at = EXCLUDED.last_charged_at,
+                            created_at = EXCLUDED.created_at,
+                            miner_ids = EXCLUDED.miner_ids,
+                            selected_validator = EXCLUDED.selected_validator,
+                            is_assigned = EXCLUDED.is_assigned,
+                            updated_at = CURRENT_TIMESTAMP;
+                        """,
+                        owner_account_id,
+                        file_hash_str,
+                        int(request["total_replicas"]),
+                        file_name_str,
+                        int(request["last_charged_at"]),
+                        int(request["created_at"]),
+                        miner_ids_str,
+                        str(request["selected_validator"]),
+                        bool(request["is_assigned"])
+                    )
+                    logger.debug(f"Saved UserStorageRequest for {owner_account_id}, {file_hash_str}")
+                except Exception as e:
+                    logger.error(f"Error saving UserStorageRequest for {owner_account_id}, {file_hash}: {e}")
+                    continue
+            logger.info(f"Saved {len(requests)} UserStorageRequests to database.")
+
+def bounded_vec_to_string(bounded_vec: Any) -> str:
+    """Converts a BoundedVec (list of integers or bytes) to a UTF-8 string, falling back to hex if decoding fails."""
+    try:
+        if isinstance(bounded_vec, (list, tuple)) and all(isinstance(x, int) for x in bounded_vec):
+            byte_data = bytes(bounded_vec)
+        elif isinstance(bounded_vec, bytes):
+            byte_data = bounded_vec
+        elif isinstance(bounded_vec, str):
+            return bounded_vec  # Already a string, no conversion needed
+        else:
+            logger.warning(f"Unexpected BoundedVec format: {bounded_vec}")
+            return str(bounded_vec)
+        
+        try:
+            return byte_data.decode('utf-8')
+        except UnicodeDecodeError:
+            logger.debug(f"Failed to decode BoundedVec as UTF-8, using hex: {byte_data.hex()}")
+            return '0x' + byte_data.hex()
+    except Exception as e:
+        logger.error(f"Error converting BoundedVec to string: {e}")
+        return str(bounded_vec)

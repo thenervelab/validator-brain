@@ -135,71 +135,104 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
         # 1. Fetch individual storage items
         if config.STORAGE_ITEMS_TO_FETCH:
             logger.info(f"Fetching individual items at block: {block_hash or 'latest'}")
-            
-            # Special handling for CurrentEpochValidator
-            if ("IpfsPallet", "CurrentEpochValidator") in config.STORAGE_ITEMS_TO_FETCH:
-                try:
-                    # Fetch CurrentEpochValidator separately
-                    result = await _execute_query_async(
-                        substrate.query,
-                        "IpfsPallet",
-                        "CurrentEpochValidator",
-                        block_hash=block_hash
-                    )
-                    
-                    if result is not None:
-                        value = result.value
-                        account_id = None
-                        block_num = None
-                        
-                        if value is not None and value != "None":
-                            if isinstance(value, (tuple, list)) and len(value) == 2:
-                                account_id, block_num = value
-                            elif isinstance(value, dict):
-                                account_id = value.get('account_id')
-                                block_num = value.get('block_number')
-                            
-                        await utils.save_current_epoch_validator(
-                            config.db_pool,
-                            str(account_id) if account_id is not None else None,
-                            int(block_num) if block_num is not None else None
-                        )
-                        logger.info("Successfully processed CurrentEpochValidator")
+            multi_query_params = []
+            for item_config in config.STORAGE_ITEMS_TO_FETCH:
+                if len(item_config) in (2, 3):
+                    module, item = item_config[:2]
+                    params = item_config[2] if len(item_config) == 3 else None
+                    if params and isinstance(params, str):
+                        if params.startswith('0x'):
+                            try:
+                                params = bytes.fromhex(params[2:])
+                            except ValueError:
+                                logger.error(f"Invalid hex string for params in {module}.{item}: {params}")
+                                params = None
+                        else:
+                            logger.warning(f"Params for {module}.{item} is a string ({params}), treating as literal.")
+                    if params:
+                        multi_query_params.append((module, item, params))
                     else:
-                        logger.error("Failed to fetch CurrentEpochValidator")
-                        await utils.save_current_epoch_validator(config.db_pool, None, None)
-                        
-                except Exception as e:
-                    logger.error(f"Error processing CurrentEpochValidator: {e}")
-                    await utils.save_current_epoch_validator(config.db_pool, None, None)
-            
-            # Process other storage items (original code)
-            multi_query_params = [
-                item for item in config.STORAGE_ITEMS_TO_FETCH 
-                if item != ("IpfsPallet", "CurrentEpochValidator")
-            ]
-            
+                        multi_query_params.append((module, item))
+
             if multi_query_params:
                 logger.info(f"Query multi params: {multi_query_params}")
                 try:
                     results = await _execute_query_async(substrate.query_multi, multi_query_params, block_hash=block_hash)
+                    logger.debug(f"Raw query_multi results: {results}")
                     if results is not None:
                         for i, item_config_tuple in enumerate(multi_query_params):
                             storage_key_name = utils.get_storage_key_string(
-                                item_config_tuple[0], item_config_tuple[1]
+                                item_config_tuple[0], item_config_tuple[1],
+                                item_config_tuple[2] if len(item_config_tuple) == 3 else None
                             )
                             if i < len(results) and results[i] is not None:
-                                logger.debug(f"Storage item {storage_key_name}: {results[i].value}")
+                                if item_config_tuple[0] == "IpfsPallet" and item_config_tuple[1] == "CurrentEpochValidator":
+                                    value = results[i].value if hasattr(results[i], 'value') else results[i]
+                                    logger.debug(f"CurrentEpochValidator raw value: {value}")
+                                    try:
+                                        if value is not None:
+                                            if isinstance(value, (tuple, list)) and len(value) == 2:
+                                                account_id, block_num = value
+                                                await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                            elif isinstance(value, dict) and "account_id" in value and "block_number" in value:
+                                                account_id = value["account_id"]
+                                                block_num = value["block_number"]
+                                                await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                            else:
+                                                logger.warning(f"Unexpected CurrentEpochValidator value format: {value}")
+                                                await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                        else:
+                                            await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                    except Exception as e:
+                                        logger.error(f"Error processing CurrentEpochValidator value {value}: {e}")
+                                        await utils.save_current_epoch_validator(config.db_pool, None, None)
                             else:
                                 logger.error(f"Failed to fetch {storage_key_name}")
                     else:
                         logger.error("query_multi returned None or failed.")
                 except Exception as e:
-                    logger.error(f"Error during query_multi: {e}")
+                    logger.error(f"Error during query_multi: {e} (Type: {type(e).__name__})\n{traceback.format_exc()}")
+                    # Fallback to individual queries
+                    for item_config_tuple in multi_query_params:
+                        module, item = item_config_tuple[:2]
+                        params = item_config_tuple[2] if len(item_config_tuple) == 3 else None
+                        storage_key_name = utils.get_storage_key_string(module, item, params)
+                        try:
+                            if params:
+                                result = await _execute_query_async(substrate.query, module, item, params=params, block_hash=block_hash)
+                            else:
+                                result = await _execute_query_async(substrate.query, module, item, block_hash=block_hash)
+                            logger.debug(f"Individual query result for {storage_key_name}: {result}")
+                            if result is not None:
+                                if module == "IpfsPallet" and item == "CurrentEpochValidator":
+                                    value = result.value if hasattr(result, 'value') else result
+                                    logger.debug(f"CurrentEpochValidator individual query value: {value}")
+                                    try:
+                                        if value is not None:
+                                            if isinstance(value, (tuple, list)) and len(value) == 2:
+                                                account_id, block_num = value
+                                                await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                            elif isinstance(value, dict) and "account_id" in value and "block_number" in value:
+                                                account_id = value["account_id"]
+                                                block_num = value["block_number"]
+                                                await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                            else:
+                                                logger.warning(f"Unexpected CurrentEpochValidator value format: {value}")
+                                                await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                        else:
+                                            await utils.save_current_epoch_validator(config.db_pool, None, None)
+                                    except Exception as e:
+                                        logger.error(f"Error processing CurrentEpochValidator individual query value {value}: {e}")
+                                        await utils.save_current_epoch_validator(config.db_pool, None, None)
+                            else:
+                                logger.error(f"Failed to fetch {storage_key_name}")
+                        except Exception as e:
+                            logger.error(f"Error during individual query for {storage_key_name}: {e}\n{traceback.format_exc()}")
 
         # 2. Fetch all entries for specified StorageMaps
         if config.STORAGE_MAPS_TO_FETCH_ALL:
             logger.info(f"Fetching storage maps at block: {block_hash or 'latest'} (Block number: {block_number})")
+            user_storage_requests = {}  # Store UserStorageRequests data
             for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL:
                 # Skip ExecutionUnit.NodeMetrics unless block_number is a multiple of 300
                 if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number is not None and block_number % 300 != 0:
@@ -211,28 +244,39 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                     map_entries_raw = await _execute_query_async(substrate.query_map, module, map_name, block_hash=block_hash)
                     if map_entries_raw is not None:
                         for key_storage_obj, value_storage_obj in map_entries_raw:
-                            if module == "ExecutionUnit" and map_name == "NodeMetrics":
-                                pass  # Handled by DB update logic
-                            elif module == "ExecutionUnit" and map_name == "BlockNumbers":
-                                pass  # Handled by DB save logic below
-                            elif module == "IpfsPallet" and map_name in ["MinerProfile", "UserProfile"]:
-                                pass  # Handled by DB save logic below
-                            elif module == "Registration" and map_name in ["NodeRegistration", "ColdkeyNodeRegistration"]:
-                                pass  # Handled by DB save logic below
+                            if module == "IpfsPallet" and map_name == "UserStorageRequests":
+                                # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
+                                if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
+                                    owner_account_id = str(key_storage_obj[0])  # SS58 address
+                                    file_hash = utils.bounded_vec_to_string(key_storage_obj[1])  # Convert BoundedVec to string
+                                    value = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj
+                                    user_storage_requests[(owner_account_id, file_hash)] = value
+                                else:
+                                    logger.warning(f"Unexpected key format for UserStorageRequests: {key_storage_obj}")
+                            # Other maps handled below in save logic
                     else:
                         logger.error(f"query_map for {map_key_name} returned None or failed.")
                 except Exception as e:
-                    logger.error(f"Error during query_map for {map_key_name}: {e}")
+                    logger.error(f"Error during query_map for {map_key_name}: {e}\n{traceback.format_exc()}")
 
         # 3. Save data to the database
         if block_number is not None:
+            # Handle UserStorageRequests
+            if user_storage_requests:
+                try:
+                    await utils.save_user_storage_requests(config.db_pool, user_storage_requests)
+                    logger.info("Successfully saved UserStorageRequests data to database.")
+                except Exception as e:
+                    logger.error(f"Error saving UserStorageRequests data: {e}")
+                    raise
+
             # Handle ExecutionUnit.NodeMetrics (update, don't delete)
-            if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number % 300 == 0:
-                map_entries_raw = await _execute_query_async(substrate.query_map, module, map_name, block_hash=block_hash)
+            if any(module == "ExecutionUnit" and map_name == "NodeMetrics" for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL) and block_number % 300 == 0:
+                map_entries_raw = await _execute_query_async(substrate.query_map, "ExecutionUnit", "NodeMetrics", block_hash=block_hash)
                 metrics_data = {}
                 if map_entries_raw is not None:
                     for key_storage_obj, value_storage_obj in map_entries_raw:
-                        entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                        entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                         metrics_data[entry_key_param_str] = {
                             "ipfs_storage_max": value_storage_obj.value.get('ipfs_storage_max', 0),
                             "ipfs_zfs_pool_size": value_storage_obj.value.get('ipfs_zfs_pool_size', 0)
@@ -244,20 +288,20 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             block_numbers = {}
             if block_numbers_result is not None:
                 for key_storage_obj, value_storage_obj in block_numbers_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                     block_numbers[entry_key_param_str] = value_storage_obj.value
             else:
                 logger.error("BlockNumbers query returned None")
-         
+
             miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
             miner_profiles = {}
             if miner_profile_result is not None:
                 for key_storage_obj, value_storage_obj in miner_profile_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                     miner_profiles[entry_key_param_str] = value_storage_obj.value
             else:
                 logger.error("MinerProfile query returned None")
-      
+
             if not block_numbers and not miner_profiles:
                 logger.warning("Both BlockNumbers and MinerProfile data are empty. Skipping save_miners_data.")
             else:
@@ -274,12 +318,12 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             node_reg_result = await _execute_query_async(substrate.query_map, "Registration", "NodeRegistration", block_hash=block_hash)
             if node_reg_result is not None:
                 for key_storage_obj, value_storage_obj in node_reg_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                     node_registration[entry_key_param_str] = value_storage_obj.value
             coldkey_reg_result = await _execute_query_async(substrate.query_map, "Registration", "ColdkeyNodeRegistration", block_hash=block_hash)
             if coldkey_reg_result is not None:
                 for key_storage_obj, value_storage_obj in coldkey_reg_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                     coldkey_registration[entry_key_param_str] = value_storage_obj.value
 
             try:
@@ -295,12 +339,12 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
         miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
         if miner_profile_result is not None:
             for key_storage_obj, value_storage_obj in miner_profile_result:
-                entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                 ipfs_profiles[entry_key_param_str] = value_storage_obj.value
         user_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "UserProfile", block_hash=block_hash)
         if user_profile_result is not None:
             for key_storage_obj, value_storage_obj in user_profile_result:
-                entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                 ipfs_profiles[entry_key_param_str] = value_storage_obj.value
 
         # Identify changed CIDs

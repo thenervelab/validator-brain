@@ -4,22 +4,47 @@ import os
 # --- Connection Configuration ---
 NODE_URL = "wss://rpc.dubs.rs"  # CHANGE THIS TO YOUR NODE
 
+TYPE_REGISTRY = {
+    "types": {
+        "AccountId": "AccountId32",
+        "BlockNumber": "u32",
+        "<T::AccountId, BlockNumberFor<T>>": "(AccountId32, u32)",
+        "Option<(T::AccountId, BlockNumberFor<T>)>": "Option<(AccountId32, u32)>",
+        "FileHash": "BoundedVec<u8, 350>",
+        "FileName": "BoundedVec<u8, 350>",
+        "BoundedVec<u8, 350>": "Vec<u8>",
+        "BoundedVec<u8, 64>": "Vec<u8>",
+        "StorageRequest<AccountId, BlockNumber>": {
+            "type": "struct",
+            "type_mapping": [
+                ["total_replicas", "u32"],
+                ["owner", "AccountId32"],
+                ["file_hash", "BoundedVec<u8, 350>"],
+                ["file_name", "BoundedVec<u8, 350>"],
+                ["last_charged_at", "u32"],
+                ["created_at", "u32"],
+                ["miner_ids", "Option<BoundedVec<BoundedVec<u8, 64>, 5>>"],
+                ["selected_validator", "AccountId32"],
+                ["is_assigned", "bool"]
+            ]
+        },
+        "Option<StorageRequest<AccountId, BlockNumber>>": "Option<StorageRequest<AccountId32, u32>>"
+    }
+}
+
 STORAGE_ITEMS_TO_FETCH = [
     # ("IpfsPallet", "CurrentEpochValidator"),
 ]
 
-# For fetching all entries of a StorageMap
-# Format: (PalletName, StorageItemName)
 STORAGE_MAPS_TO_FETCH_ALL = [
-    ("Registration", "NodeRegistration"),
-    ("Registration", "ColdkeyNodeRegistration"),
     ("ExecutionUnit", "NodeMetrics"),
     ("ExecutionUnit", "BlockNumbers"),
     ("IpfsPallet", "MinerProfile"),
     ("IpfsPallet", "UserProfile"),
-    # Add other maps you want to fetch entirely
+    ("Registration", "NodeRegistration"),
+    ("Registration", "ColdkeyNodeRegistration"),
+    ("IpfsPallet", "UserStorageRequests"),
 ]
-
 # --- Application Settings ---
 SUBSCRIPTION_RETRY_DELAY = 10  # seconds
 MAIN_LOOP_SLEEP_INTERVAL = 5  # seconds for main.py's loop
