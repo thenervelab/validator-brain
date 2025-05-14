@@ -4,6 +4,8 @@ import os
 import asyncio
 import signal
 from substrate_fetcher import config, utils, storage_fetcher
+import aiohttp
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -15,6 +17,28 @@ async def initialize_database():
         await utils.init_db(config.db_pool)
     except Exception as e:
         print(f"Failed to initialize database: {e}")
+        raise
+
+async def initialize_ipfs_node():
+    """Checks if the IPFS node is up and running by performing a TCP ping."""
+    try:
+        # Parse the IPFS node URL to extract host and port
+        parsed_url = urlparse(config.IPFS_NODE_URL)
+        host = parsed_url.hostname or "localhost"
+        port = parsed_url.port or 5001  # Default IPFS API port
+
+        # Attempt to establish a TCP connection
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=5
+        )
+        # If connection is successful, close it immediately
+        writer.close()
+        await writer.wait_closed()
+        print(f"Successfully verified IPFS node is running at {host}:{port}.")
+        return True
+    except Exception as e:
+        print(f"Failed to connect to IPFS node at {config.IPFS_NODE_URL}: {e}")
         raise
 
 async def run_application():
@@ -34,6 +58,10 @@ async def run_application():
     try:
         # Initialize the database
         await initialize_database()
+
+
+        # Initialize the IPFS node
+        await initialize_ipfs_node()
 
         # Start the fetching loop
         fetcher_task = asyncio.create_task(storage_fetcher.start_fetching_loop_async())

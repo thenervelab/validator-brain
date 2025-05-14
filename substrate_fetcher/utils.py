@@ -206,16 +206,16 @@ async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], mi
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Step 1: Clear previous block numbers and miner profiles (set to NULL)
-            await conn.execute(
-                """
-                UPDATE miners
-                SET last_online_block = NULL,
-                    miner_profile_cid = NULL,
-                    updated_at = CURRENT_TIMESTAMP;
-                """
-            )
-            print("Cleared previous BlockNumbers and MinerProfile data from miners table.")
+            # # Step 1: Clear previous block numbers and miner profiles (set to NULL)
+            # await conn.execute(
+            #     """
+            #     UPDATE miners
+            #     SET last_online_block = NULL,
+            #         miner_profile_cid = NULL,
+            #         updated_at = CURRENT_TIMESTAMP;
+            #     """
+            # )
+            # print("Cleared previous BlockNumbers and MinerProfile data from miners table.")
 
             # Step 2: Batch insert or update BlockNumbers and MinerProfile data sequentially
             node_ids = set(list(block_numbers.keys()) + list(miner_profiles.keys()))
