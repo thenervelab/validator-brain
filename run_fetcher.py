@@ -3,9 +3,8 @@ import sys
 import os
 import asyncio
 import signal
-from substrate_fetcher import config, utils, storage_fetcher
-import aiohttp
 from urllib.parse import urlparse
+from substrate_fetcher import config, utils, storage_fetcher, ipfs_health_service
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -42,7 +41,7 @@ async def initialize_ipfs_node():
         raise
 
 async def run_application():
-    """Runs the Substrate fetcher application with database initialization."""
+    """Runs the Substrate fetcher application with database, IPFS node, and health service initialization."""
     # Create shutdown event
     shutdown_event = asyncio.Event()
 
@@ -55,16 +54,26 @@ async def run_application():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, handle_signal)
 
+    fetcher_task = None
+    health_service_task = None
+
     try:
         # Initialize the database
         await initialize_database()
 
-
         # Initialize the IPFS node
         await initialize_ipfs_node()
 
-        # Start the fetching loop
+        # Start the substrate fetcher loop
         fetcher_task = asyncio.create_task(storage_fetcher.start_fetching_loop_async())
+        print("Started substrate fetcher loop.")
+
+        # Start the IPFS health service
+        health_service_task = await ipfs_health_service.start_ping_service()
+        if health_service_task:
+            print("Started IPFS health service.")
+        else:
+            print("IPFS health service was already running or failed to start.")
 
         # Wait for shutdown signal
         await shutdown_event.wait()
@@ -74,11 +83,17 @@ async def run_application():
         print(f"Application error: {e}")
         raise
     finally:
+        # Stop the IPFS health service
+        if health_service_task:
+            await ipfs_health_service.stop_ping_service()
+            print("Stopped IPFS health service.")
+
         # Stop the fetcher
         await storage_fetcher.stop_fetching_async()
+        print("Stopped substrate fetcher.")
 
         # Wait for fetcher task to complete if it exists
-        if 'fetcher_task' in locals() and not fetcher_task.done():
+        if fetcher_task and not fetcher_task.done():
             print("Waiting for fetcher task to complete...")
             try:
                 await asyncio.wait_for(fetcher_task, timeout=10)

@@ -105,6 +105,9 @@ OUTPUT_JSON_FILE = "latest_storage_state.json"  # File to save the JSON output (
 IPFS_NODE_URL = "http://localhost:5001"  # IPFS node URL for fetching CID content
 IPFS_GATEWAY_URL = "http://localhost:8080"  # Adjust as needed
 IPFS_TIMEOUT_SECONDS = 10
+IPFS_REFS_TIMEOUT_SECONDS = 30 # Timeout for 'ipfs refs' command
+IPFS_DHT_TIMEOUT_SECONDS = 60  # Timeout for 'ipfs dht findprovs' command
+IPFS_FETCH_TIMEOUT = 60  # Timeout for IPFS fetch in seconds (used by ipfs_fetch_worker)
 
 # --- PostgreSQL Database Configuration ---
 POSTGRES_USER = os.getenv("POSTGRES_USER", "user")

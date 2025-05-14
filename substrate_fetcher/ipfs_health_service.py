@@ -22,7 +22,6 @@ EPOCH_CHECK_INTERVAL = 15
 
 # Track service state
 _running = False
-_stop_event = asyncio.Event()
 _active_tasks = set()  # Keep track of all active tasks for clean shutdown
 _last_processed_epoch = None  # Track the last epoch we processed
 
@@ -94,7 +93,7 @@ async def get_already_processed_miners_for_epoch(epoch):
         logger.error(f"Error getting processed miners: {e}")
         return set()
 
-async def process_miners_for_epoch(current_epoch, current_block):
+async def process_miners_for_epoch(current_epoch, current_block, stop_event):
     """Process all miners for the current epoch."""
     global _last_processed_epoch
     
@@ -132,7 +131,7 @@ async def process_miners_for_epoch(current_epoch, current_block):
     
     for batch_index in range(num_batches):
         # Check if we should stop
-        if _stop_event.is_set():
+        if stop_event.is_set():
             logger.info("Stop event detected, stopping epoch processing")
             return
         
@@ -206,7 +205,7 @@ async def process_miners_for_epoch(current_epoch, current_block):
     logger.info(f"Completed processing for epoch {current_epoch}: "
               f"{total_success} successful pings, {total_failed} failed")
 
-async def ping_service_loop():
+async def ping_service_loop(stop_event):
     """
     Main service loop that checks for epoch transitions and pings all miners at each new epoch.
     """
@@ -217,12 +216,11 @@ async def ping_service_loop():
         return
     
     _running = True
-    _stop_event.clear()
     
     logger.info("Starting IPFS ping service (epoch-based)")
     
     try:
-        while not _stop_event.is_set():
+        while not stop_event.is_set():
             # Get current block and epoch
             current_block, current_epoch = await get_current_block_and_epoch()
             
@@ -234,7 +232,7 @@ async def ping_service_loop():
             # Check if we need to process this epoch
             if _last_processed_epoch != current_epoch:
                 logger.info(f"New epoch detected: {current_epoch} (previous: {_last_processed_epoch})")
-                await process_miners_for_epoch(current_epoch, current_block)
+                await process_miners_for_epoch(current_epoch, current_block, stop_event)
             else:
                 logger.debug(f"Epoch {current_epoch} already processed, waiting for next epoch")
             
@@ -242,7 +240,7 @@ async def ping_service_loop():
             try:
                 # Use wait_for to allow interrupt during sleep
                 await asyncio.wait_for(
-                    _stop_event.wait(),
+                    stop_event.wait(),
                     timeout=EPOCH_CHECK_INTERVAL
                 )
                 logger.info("Stop event received during epoch check interval")
@@ -259,7 +257,7 @@ async def ping_service_loop():
         _running = False
         logger.info("IPFS ping service loop exited")
 
-async def start_ping_service():
+async def start_ping_service(shutdown_event=None):
     """
     Start the IPFS ping service as a background task.
     Returns the task object.
@@ -268,8 +266,11 @@ async def start_ping_service():
         logger.warning("IPFS ping service is already running")
         return None
     
+    # Use the provided shutdown event or create a new one
+    stop_event = shutdown_event if shutdown_event is not None else asyncio.Event()
+    
     # Create and return the task
-    service_task = asyncio.create_task(ping_service_loop())
+    service_task = asyncio.create_task(ping_service_loop(stop_event))
     _active_tasks.add(service_task)  # Track the main service task
     return service_task
 
@@ -285,7 +286,6 @@ async def stop_ping_service():
         return
     
     logger.info("Stopping IPFS ping service...")
-    _stop_event.set()
     
     # Cancel all active tasks to ensure they don't hang
     if _active_tasks:
@@ -298,7 +298,6 @@ async def stop_ping_service():
     try:
         shutdown_start = time.time()
         # Wait for service to mark itself as stopped or timeout
-        # Use a short timeout value
         shutdown_timeout = 5
         while _running and (time.time() - shutdown_start) < shutdown_timeout:
             await asyncio.sleep(0.1)
@@ -333,6 +332,7 @@ if __name__ == "__main__":
             asyncio.set_event_loop(self.loop)
             self.service_task = None
             self.is_shutting_down = False
+            self.shutdown_event = asyncio.Event()
         
         def shutdown_handler(self):
             if self.is_shutting_down:
@@ -341,6 +341,7 @@ if __name__ == "__main__":
                 
             self.is_shutting_down = True
             print("\nShutdown signal received. Press Ctrl+C again to force exit.")
+            self.shutdown_event.set()
             
             # Schedule the shutdown coroutine
             asyncio.create_task(self.shutdown())
@@ -372,7 +373,7 @@ if __name__ == "__main__":
             
             # Start the service
             logger.info("Starting ping service...")
-            self.service_task = await start_ping_service()
+            self.service_task = await start_ping_service(self.shutdown_event)
             
             try:
                 # Keep the main task running until the service completes
@@ -423,4 +424,4 @@ if __name__ == "__main__":
     try:
         manager.run()
     finally:
-        sys.exit(0) 
+        sys.exit(0)

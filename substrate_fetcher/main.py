@@ -1,8 +1,8 @@
-# substrate_fetcher/main.py
 import asyncio
 import os
 import sys
 import signal
+from urllib.parse import urlparse
 
 # Add parent directory to path
 script_path = os.path.abspath(os.path.dirname(__file__))
@@ -12,13 +12,10 @@ if parent_dir not in sys.path:
 
 import storage_fetcher
 import config
-from substrate_fetcher import utils
+from substrate_fetcher import utils, ipfs_health_service
 
-async def application_main_loop():
-    """The main application logic running in asyncio."""
-    print("Starting Substrate Storage Fetcher Application (Async)...")
-
-    # Initialize database pool
+async def initialize_database():
+    """Initializes the database connection pool and creates tables."""
     try:
         config.db_pool = await utils.create_db_pool()
         if config.db_pool:
@@ -27,6 +24,40 @@ async def application_main_loop():
             print("Failed to initialize database pool. Certain features might not work.")
     except Exception as e:
         print(f"Database initialization failed: {e}. Exiting.")
+        raise
+
+async def initialize_ipfs_node():
+    """Checks if the IPFS node is up and running by performing a TCP ping."""
+    try:
+        # Parse the IPFS node URL to extract host and port
+        parsed_url = urlparse(config.IPFS_NODE_URL)
+        host = parsed_url.hostname or "localhost"
+        port = parsed_url.port or 5001  # Default IPFS API port
+
+        # Attempt to establish a TCP connection
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=5
+        )
+        # If connection is successful, close it immediately
+        writer.close()
+        await writer.wait_closed()
+        print(f"Successfully verified IPFS node is running at {host}:{port}.")
+        return True
+    except Exception as e:
+        print(f"Failed to connect to IPFS node at {config.IPFS_NODE_URL}: {e}")
+        raise
+
+async def application_main_loop():
+    """The main application logic running in asyncio."""
+    print("Starting Substrate Storage Fetcher Application (Async)...")
+
+    # Initialize database pool and IPFS node
+    try:
+        await initialize_database()
+        await initialize_ipfs_node()
+    except Exception as e:
+        print(f"Initialization failed: {e}. Exiting.")
         return
 
     print(f"Monitoring node: {config.NODE_URL}")
@@ -46,6 +77,14 @@ async def application_main_loop():
 
     # Start the fetching task
     fetcher_task = asyncio.create_task(storage_fetcher.start_fetching_loop_async())
+    print("Started substrate fetcher loop.")
+
+    # Start the IPFS health service
+    health_service_task = await ipfs_health_service.start_ping_service()
+    if health_service_task:
+        print("Started IPFS health service.")
+    else:
+        print("IPFS health service was already running or failed to start.")
 
     last_printed_block = -1
     try:
@@ -55,7 +94,7 @@ async def application_main_loop():
 
             if current_data and current_data.get("block_number", -1) > last_printed_block:
                 print(f"\n--- Main App: Processed Block #{current_data['block_number']} ---")
-                print(f"--- Status: {current_status} ---")
+                print(f"--- Fetcher Status: {current_status} ---")
                 last_printed_block = current_data["block_number"]
 
             try:
@@ -67,9 +106,15 @@ async def application_main_loop():
         print(f"Error in main loop: {e}")
     finally:
         print("Initiating shutdown sequence...")
-        
+
+        # Stop the IPFS health service
+        if health_service_task:
+            await ipfs_health_service.stop_ping_service()
+            print("Stopped IPFS health service.")
+
         # Signal the fetcher to stop
         await storage_fetcher.stop_fetching_async()
+        print("Stopped substrate fetcher.")
 
         # Wait for fetcher task to complete
         if fetcher_task and not fetcher_task.done():
@@ -91,7 +136,7 @@ async def application_main_loop():
             print("Closing database connection pool...")
             await config.db_pool.close()
             print("Database connection pool closed.")
-            
+
         print("Application shutdown complete.")
 
 def run_application():

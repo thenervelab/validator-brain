@@ -4,14 +4,14 @@ import asyncpg
 import logging
 import json
 import aiohttp
-import random # Added for selecting random block
+import random  # Added for selecting random block
 from . import config
 
 logger = logging.getLogger(__name__)
 
 EPOCH_BLOCK_INTERVAL = 1200  # Define epoch length in blocks
 
-async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, epoch_number: int, block_number: int = None):
+async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, epoch_number: int, block_number: int = None, stop_event=None):
     """
     Performs an IPFS ping to a miner using the local IPFS node's HTTP API
     and updates or inserts health stats into the miner_epoch_health table.
@@ -22,7 +22,10 @@ async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: s
         ipfs_peer_id: The IPFS peer ID
         epoch_number: The current epoch
         block_number: The current block number (optional)
+        stop_event: Event to signal shutdown
     """
+    stop_event = stop_event or asyncio.Event()  # Fallback to a new event if none provided
+
     if db_pool is None:
         logger.error(f"Database pool is not initialized. Cannot ping {node_id} (IPFS: {ipfs_peer_id}).")
         return
@@ -35,7 +38,7 @@ async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: s
     ping_successful = False
     # Ensure IPFS_NODE_URL is correctly formatted (e.g., http://localhost:5001)
     api_url = f"{config.IPFS_NODE_URL.rstrip('/')}/api/v0/ping"
-    params = {'arg': ipfs_peer_id, 'count': '1'} # count must be a string for query params
+    params = {'arg': ipfs_peer_id, 'count': '1'}  # count must be a string for query params
     timeout_seconds = getattr(config, 'IPFS_TIMEOUT_SECONDS', 10)
     
     request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -45,20 +48,20 @@ async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: s
             async with session.post(api_url, params=params) as response:
                 if response.status == 200:
                     async for line in response.content:
-                        if _exit_event.is_set(): # Check for shutdown signal
+                        if stop_event.is_set():  # Check for shutdown signal
                             logger.warning(f"Shutdown signal received during ping for {node_id}")
-                            return # Exit early if shutdown is signaled
+                            return  # Exit early if shutdown is signaled
                         try:
                             data = json.loads(line.decode('utf-8'))
                             if data.get('Success') and (data.get('Time') or data.get('AvgLatency')):
                                 ping_successful = True
-                                break # Found success signal
+                                break  # Found success signal
                         except json.JSONDecodeError:
                             logger.debug(f"Non-JSON line from IPFS ping for {node_id}: {line}")
                         except Exception as e_parse:
                             logger.warning(f"Error parsing IPFS ping response line for {node_id}: {e_parse}")
                     if not ping_successful:
-                         logger.warning(f"IPFS ping to {ipfs_peer_id} (Node: {node_id}) completed with HTTP 200 but no definitive success signal (RTT or Avg Latency) in response stream.")
+                        logger.warning(f"IPFS ping to {ipfs_peer_id} (Node: {node_id}) completed with HTTP 200 but no definitive success signal (RTT or Avg Latency) in response stream.")
                 else:
                     error_text = await response.text()
                     logger.warning(f"IPFS ping to {ipfs_peer_id} (Node: {node_id}) failed with status {response.status}: {error_text}")
@@ -98,13 +101,14 @@ async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: s
         except Exception as e_db:
             logger.error(f"Database error updating/inserting health for {node_id} (IPFS: {ipfs_peer_id}) in epoch {epoch_number}: {e_db}")
 
-
-async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, root_cid_to_check: str, epoch_number: int):
+async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, root_cid_to_check: str, epoch_number: int, stop_event=None):
     """
     Performs an IPFS pin check. It verifies if a given ipfs_peer_id is a provider 
     for a randomly selected block within the DAG of root_cid_to_check.
     Logs the attempt to pin_check_log and updates miner_epoch_health.
     """
+    stop_event = stop_event or asyncio.Event()  # Fallback to a new event if none provided
+
     if db_pool is None:
         logger.error(f"Database pool not initialized. Cannot perform pin check for {node_id}.")
         return
@@ -118,11 +122,11 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
     logger.info(f"Starting pin check for {node_id} (IPFS: {ipfs_peer_id}) on root CID {root_cid_to_check} in epoch {epoch_number}...")
     
     pin_check_successful = False
-    effective_cid_checked = root_cid_to_check # Default to root CID
+    effective_cid_checked = root_cid_to_check  # Default to root CID
     refs_timeout_seconds = getattr(config, 'IPFS_REFS_TIMEOUT_SECONDS', 30) 
     dht_timeout_seconds = getattr(config, 'IPFS_DHT_TIMEOUT_SECONDS', 60)
 
-    all_block_cids = {root_cid_to_check} # Include root CID itself as a possibility
+    all_block_cids = {root_cid_to_check}  # Include root CID itself as a possibility
 
     # 1. Get all unique block CIDs from the root CID's DAG
     refs_api_url = f"{config.IPFS_NODE_URL.rstrip('/')}/api/v0/refs"
@@ -135,7 +139,7 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
             async with session.post(refs_api_url, params=refs_params) as response:
                 if response.status == 200:
                     async for line in response.content:
-                        if _exit_event.is_set(): # Check for shutdown signal
+                        if stop_event.is_set():  # Check for shutdown signal
                             logger.warning(f"Shutdown signal received during refs fetch for {root_cid_to_check}")
                             return
                         try:
@@ -167,7 +171,7 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
 
     # 2. Check if the target ipfs_peer_id is a provider for the effective_cid_checked
     dht_api_url = f"{config.IPFS_NODE_URL.rstrip('/')}/api/v0/dht/findprovs"
-    dht_params = {'arg': effective_cid_checked, 'verbose': 'true'} # verbose might give more info
+    dht_params = {'arg': effective_cid_checked, 'verbose': 'true'}  # verbose might give more info
     dht_request_timeout = aiohttp.ClientTimeout(total=dht_timeout_seconds)
 
     try:
@@ -176,7 +180,7 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
             async with session.post(dht_api_url, params=dht_params) as response:
                 if response.status == 200:
                     async for line in response.content:
-                        if _exit_event.is_set(): # Check for shutdown signal
+                        if stop_event.is_set():  # Check for shutdown signal
                             logger.warning(f"Shutdown signal received during DHT findprovs for {effective_cid_checked}")
                             return
                         try:
@@ -245,14 +249,13 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
         except Exception as e_db:
             logger.error(f"Database error updating pin check stats for {node_id} in epoch {epoch_number}: {e_db}")
 
-async def run_all_health_checks_for_epoch(db_pool: asyncpg.Pool, epoch_number: int):
+async def run_all_health_checks_for_epoch(db_pool: asyncpg.Pool, epoch_number: int, stop_event=None):
     """
     Iterates through miners in miner_epoch_health for the current epoch 
     and calls ping and pin check functions.
-    NOTE: With the new per-block random pinging of *new* miners, the role of this function changes.
-    It might be used to re-ping already known miners, or for other types of checks.
-    Or it could be deprecated if the per-block check is sufficient.
     """
+    stop_event = stop_event or asyncio.Event()  # Fallback to a new event if none provided
+
     if db_pool is None:
         logger.error(f"Database pool is not initialized. Cannot run health checks for epoch {epoch_number}.")
         return
@@ -269,20 +272,17 @@ async def run_all_health_checks_for_epoch(db_pool: asyncpg.Pool, epoch_number: i
 
     logger.info(f"Starting orchestrated health checks for {len(miners_to_check)} miners for epoch {epoch_number}.")
     for miner in miners_to_check:
+        if stop_event.is_set():
+            logger.info("Stop event detected, stopping health checks")
+            return
+
         node_id = miner['node_id']
         ipfs_peer_id = miner['ipfs_peer_id']
         
-        example_cid_to_check = "QmRAQB6YaCyBw3YyYfW3QL4U2Hq1mD2p3X1Dvn2Z2xK7aQ" 
+        example_cid_to_check = "QmRAQB6YaCyBw3YyYfW3QL4U2Hq1mD2p3X1Dvn2Z2xK7aQ"
 
-        # Decide if pings/pin checks here are supplemental or primary
-        # await perform_ipfs_ping(db_pool, node_id, ipfs_peer_id, epoch_number) # Example: Re-ping
-        # await perform_ipfs_pin_check(db_pool, node_id, ipfs_peer_id, example_cid_to_check, epoch_number)
+        # Perform health checks
+        await perform_ipfs_ping(db_pool, node_id, ipfs_peer_id, epoch_number, stop_event=stop_event)
+        await perform_ipfs_pin_check(db_pool, node_id, ipfs_peer_id, example_cid_to_check, epoch_number, stop_event=stop_event)
         
-    logger.info(f"Completed one round of orchestrated health checks for epoch {epoch_number}.") 
-
-# Global exit event for graceful shutdown, to be used by async tasks
-_exit_event = asyncio.Event()
-
-def signal_exit():
-    """Signals all async tasks to stop."""
-    _exit_event.set() 
+    logger.info(f"Completed one round of orchestrated health checks for epoch {epoch_number}.")
