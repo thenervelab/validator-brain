@@ -71,6 +71,24 @@ async def init_db(pool: asyncpg.Pool):
             );
         """)
 
+        # Create miner_epoch_health table (for IPFS health service)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS miner_epoch_health (
+                node_id TEXT,
+                ipfs_peer_id TEXT,
+                epoch BIGINT,
+                ping_successes INTEGER DEFAULT 0,
+                ping_failures INTEGER DEFAULT 0,
+                pin_check_successes INTEGER DEFAULT 0,
+                pin_check_failures INTEGER DEFAULT 0,
+                last_ping_attempt TIMESTAMP,
+                last_ping_block BIGINT,
+                last_pin_check_attempt TIMESTAMP,
+                last_activity_at TIMESTAMP,
+                PRIMARY KEY (node_id, epoch)
+            );
+        """)
+
         # Update the miner_profile table creation
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS miner_profile (
