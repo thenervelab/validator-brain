@@ -50,6 +50,8 @@ async def init_db(pool: asyncpg.Pool):
                 ipfs_zfs_pool_size BIGINT,
                 last_online_block INTEGER,
                 miner_profile_cid VARCHAR(255),
+                successful_pin_checks INTEGER,
+                total_pin_checks INTEGER,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -146,6 +148,8 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
             for node_id, metrics in metrics_data.items():
                 ipfs_storage_max = metrics.get("ipfs_storage_max", None)
                 ipfs_zfs_pool_size = metrics.get("ipfs_zfs_pool_size", None)
+                successful_pin_checks = metrics.get("successful_pin_checks", None)
+                total_pin_checks = metrics.get("total_pin_checks", None)
 
                 # Check if the node_id exists
                 exists = await conn.fetchval(
@@ -159,24 +163,28 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                         UPDATE miners
                         SET ipfs_storage_max = $2,
                             ipfs_zfs_pool_size = $3,
+                            successful_pin_checks = $4,
+                            total_pin_checks = $5,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE node_id = $1;
                         """,
-                        node_id, ipfs_storage_max, ipfs_zfs_pool_size
+                        node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks
                     )
                     print(f"Updated ExecutionUnit metrics for node_id: {node_id}")
                 else:
                     # Insert new row (with only metrics for now)
                     await conn.execute(
                         """
-                        INSERT INTO miners (node_id, ipfs_storage_max, ipfs_zfs_pool_size)
-                        VALUES ($1, $2, $3)
+                        INSERT INTO miners (node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks)
+                        VALUES ($1, $2, $3, $4, $5)
                         ON CONFLICT (node_id) DO UPDATE
                         SET ipfs_storage_max = EXCLUDED.ipfs_storage_max,
                             ipfs_zfs_pool_size = EXCLUDED.ipfs_zfs_pool_size,
+                            successful_pin_checks = EXCLUDED.successful_pin_checks,
+                            total_pin_checks = EXCLUDED.total_pin_checks,
                             updated_at = CURRENT_TIMESTAMP;
                         """,
-                        node_id, ipfs_storage_max, ipfs_zfs_pool_size
+                        node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks
                     )
                     print(f"Inserted new ExecutionUnit metrics for node_id: {node_id}")
 

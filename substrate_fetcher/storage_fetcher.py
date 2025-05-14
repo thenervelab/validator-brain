@@ -235,7 +235,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             user_storage_requests = {}  # Store UserStorageRequests data
             for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL:
                 # Skip ExecutionUnit.NodeMetrics unless block_number is a multiple of 300
-                if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number is not None and block_number % 300 != 0:
+                if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number is not None and block_number % 2 != 0:
                     logger.info(f"Skipping ExecutionUnit.NodeMetrics at block {block_number} (not a multiple of 300)")
                     continue
 
@@ -271,7 +271,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                     raise
 
             # Handle ExecutionUnit.NodeMetrics (update, don't delete)
-            if any(module == "ExecutionUnit" and map_name == "NodeMetrics" for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL) and block_number % 300 == 0:
+            if any(module == "ExecutionUnit" and map_name == "NodeMetrics" for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL) and block_number % 2 == 0:
                 map_entries_raw = await _execute_query_async(substrate.query_map, "ExecutionUnit", "NodeMetrics", block_hash=block_hash)
                 metrics_data = {}
                 if map_entries_raw is not None:
@@ -279,7 +279,9 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                         entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
                         metrics_data[entry_key_param_str] = {
                             "ipfs_storage_max": value_storage_obj.value.get('ipfs_storage_max', 0),
-                            "ipfs_zfs_pool_size": value_storage_obj.value.get('ipfs_zfs_pool_size', 0)
+                            "ipfs_zfs_pool_size": value_storage_obj.value.get('ipfs_zfs_pool_size', 0),
+                            "successful_pin_checks": value_storage_obj.value.get('successful_pin_checks', 0),
+                            "total_pin_checks": value_storage_obj.value.get('total_pin_checks', 0)
                         }
                 await utils.update_execution_unit_metrics(config.db_pool, metrics_data)
 
