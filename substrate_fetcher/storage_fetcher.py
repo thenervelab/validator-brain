@@ -236,7 +236,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             if block_numbers_result is not None:
                 for key_storage_obj, value_storage_obj in block_numbers_result:
                     entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
-                    block_numbers[entry_key_param_str] = value_storage_obj.value\
+                    block_numbers[entry_key_param_str] = value_storage_obj.value
             else:
                 logger.error("BlockNumbers query returned None")
          
@@ -467,27 +467,14 @@ async def start_fetching_loop_async():
         subscription_active = False
         polling_mode = False
         last_head_hash = None
-
-        # Queue to store incoming block headers (for processing only the latest block)
-        block_queue = asyncio.Queue()
         latest_block_number = 0
 
-        # Worker to process blocks from the queue
-        async def process_blocks():
-            nonlocal latest_block_number
-            while not _exit_event.is_set():
-                try:
-                    header_data = await block_queue.get()
-                    current_block_number = header_data.get('number')
-                    if current_block_number <= latest_block_number:
-                        logger.info(f"Skipping block #{current_block_number} (older than latest processed block #{latest_block_number})")
-                        continue
-                    await _handle_new_block_data(header_data, 0, "queue", event_queue)
-                    latest_block_number = current_block_number
-                except Exception as e:
-                    logger.error(f"Error processing block from queue: {e}\n{traceback.format_exc()}")
-
-        asyncio.create_task(process_blocks())
+        # First do an initial fetch to get started
+        success = await _initial_fetch_async(event_queue)
+        if not success:
+            logger.warning("Initial fetch failed. Switching to polling mode.")
+            polling_mode = True
+            _update_status("Polling Mode")
 
         while not _exit_event.is_set():
             substrate = _get_substrate_interface()
@@ -497,29 +484,17 @@ async def start_fetching_loop_async():
                 continue
 
             if not subscription_active and not polling_mode:
-                try:
-                    success = await _initial_fetch_async(event_queue)
-                    if not success:
-                        logger.warning("Initial fetch failed. Switching to polling mode.")
-                        polling_mode = True
-                        _update_status("Polling Mode")
-                        continue
-                except Exception as e:
-                    logger.error(f"Error during initial fetch: {e}\n{traceback.format_exc()}")
-                    polling_mode = True
-                    _update_status("Polling Mode")
-                    continue
-
                 _update_status("Attempting to subscribe to finalized heads...")
                 logger.info("Attempting to subscribe to finalized heads...")
                 try:
-                    loop = asyncio.get_running_loop()
-                    def sync_subscription_handler_wrapper(header_obj, update_nr, subscription_id_from_lib):
-                        logger.info(f"Received subscription update: Update #{update_nr}, Subscription ID: {subscription_id_from_lib}")
-                        if not loop.is_closed():
-                            asyncio.run_coroutine_threadsafe(block_queue.put(header_obj), loop)
-                    
-                    sub_id = await _execute_query_async(substrate.chain_getFinalisedHead, sync_subscription_handler_wrapper, include_author=False)
+                    # Create a queue for block headers
+                    block_queue = asyncio.Queue()
+
+                    def sync_subscription_handler(header_obj, update_nr, subscription_id):
+                        logger.info(f"Received subscription update: Update #{update_nr}, Subscription ID: {subscription_id}")
+                        asyncio.create_task(block_queue.put(header_obj))
+
+                    sub_id = await _execute_query_async(substrate.subscribe_block_headers, sync_subscription_handler, finalized_only=True)
                     if sub_id:
                         logger.info(f"Successfully subscribed with ID: {sub_id}")
                         _update_status("Subscribed")
@@ -533,29 +508,87 @@ async def start_fetching_loop_async():
                     polling_mode = True
                     _update_status("Polling Mode")
 
-            if polling_mode:
-                head_hash = await _get_chain_head_hash()
-                if head_hash and head_hash != last_head_hash:
-                    last_head_hash = head_hash
-                    block_number = await _get_block_number_by_hash(head_hash)
-                    if block_number is not None:
-                        header_data_for_handler = {
-                            'hash': bytes.fromhex(head_hash[2:]),
-                            'number': block_number
-                        }
-                        await block_queue.put(header_data_for_handler)
-                await asyncio.sleep(10)
-                continue
-
             if subscription_active:
                 try:
-                    await asyncio.wait_for(_exit_event.wait(), timeout=5.0)
+                    # Process blocks from the subscription
+                    header_data = await asyncio.wait_for(block_queue.get(), timeout=5.0)
+                    
+                    # Ensure we have valid block data
+                    if not header_data or 'hash' not in header_data or 'number' not in header_data:
+                        logger.warning("Received invalid block header data from subscription")
+                        continue
+                        
+                    block_hash = header_data['hash']
+                    block_number = header_data['number']
+                    
+                    # Convert hash to hex string if needed
+                    if isinstance(block_hash, bytes):
+                        block_hash = '0x' + block_hash.hex()
+                    
+                    # Skip if this block is older than our latest processed
+                    if block_number <= latest_block_number:
+                        logger.info(f"Skipping block #{block_number} (already processed #{latest_block_number})")
+                        continue
+                        
+                    logger.info(f"Processing new block #{block_number} (Hash: {block_hash})")
+                    
+                    # Process the block data
+                    await fetch_all_chain_data(
+                        substrate, 
+                        block_hash=block_hash, 
+                        block_number=block_number,
+                        event_queue=event_queue
+                    )
+                    
+                    # Update latest processed block
+                    latest_block_number = block_number
+                    _update_status(f"Connected (Last fetch: Block #{block_number})")
+
                 except asyncio.TimeoutError:
+                    # Check connection status
                     if substrate and hasattr(substrate, 'websocket') and \
                        (not substrate.websocket or not substrate.websocket.connected):
                         logger.warning("Detected disconnection (websocket). Re-initiating.")
                         subscription_active = False
                         _get_substrate_interface(force_reconnect=True)
+                except Exception as e:
+                    logger.error(f"Error processing block from subscription: {e}\n{traceback.format_exc()}")
+                    subscription_active = False
+                    _get_substrate_interface(force_reconnect=True)
+
+            if polling_mode:
+                try:
+                    head_hash = await _get_chain_head_hash()
+                    if head_hash and head_hash != last_head_hash:
+                        last_head_hash = head_hash
+                        block_number = await _get_block_number_by_hash(head_hash)
+                        if block_number is not None:
+                            # Skip if this block is older than our latest processed
+                            if block_number <= latest_block_number:
+                                logger.debug(f"Skipping block #{block_number} (already processed #{latest_block_number})")
+                                continue
+                                
+                            logger.info(f"Processing new block #{block_number} (Hash: {head_hash})")
+                            c
+                            # Process the block data
+                            await fetch_all_chain_data(
+                                substrate, 
+                                block_hash=head_hash, 
+                                block_number=block_number,
+                                event_queue=event_queue
+                            )
+                            
+                            # Update latest processed block
+                            latest_block_number = block_number
+                            _update_status(f"Connected (Last fetch: Block #{block_number})")
+                        else:
+                            logger.warning("Failed to get block number for hash, retrying...")
+                    else:
+                        logger.debug("No new block head hash or same as last, skipping...")
+                except Exception as e:
+                    logger.error(f"Error in polling loop: {e}\n{traceback.format_exc()}")
+                    _get_substrate_interface(force_reconnect=True)  # Reconnect on error
+                await asyncio.sleep(5)
 
     except Exception as e:
         logger.error(f"Critical error in start_fetching_loop_async: {e} (Type: {type(e).__name__})\n{traceback.format_exc()}")
