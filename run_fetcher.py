@@ -13,7 +13,6 @@ async def initialize_database():
         config.db_pool = await utils.create_db_pool()
         print("Successfully created database connection pool.")
         await utils.init_db(config.db_pool)
-        print("Database tables initialized.")
     except Exception as e:
         print(f"Failed to initialize database: {e}")
         raise

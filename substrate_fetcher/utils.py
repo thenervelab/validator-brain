@@ -67,7 +67,6 @@ async def init_db(pool: asyncpg.Pool):
             );
         """)
 
-
         # Update the miner_profile table creation
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS miner_profile (
@@ -82,7 +81,7 @@ async def init_db(pool: asyncpg.Pool):
             );
         """)
 
-        # Update the user_profile table creation
+        # Update the user_profile table creation (make main_req_hash nullable)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_profile (
                 entry_id SERIAL PRIMARY KEY,
@@ -93,7 +92,7 @@ async def init_db(pool: asyncpg.Pool):
                 file_size_in_bytes BIGINT NOT NULL,
                 is_assigned BOOLEAN NOT NULL,
                 last_charged_at INTEGER NOT NULL,
-                main_req_hash VARCHAR(255) NOT NULL,
+                main_req_hash VARCHAR(255),  -- Changed to allow NULL
                 miner_ids TEXT[] NOT NULL,
                 owner VARCHAR(100) NOT NULL,
                 selected_validator VARCHAR(100) NOT NULL,
@@ -456,101 +455,105 @@ async def save_ipfs_profiles(db_pool: asyncpg.Pool, ipfs_content: Dict[str, Any]
             for node_id, profiles in ipfs_content.items():
                 try:
                     # Ensure profiles is iterable
-                    iter(profiles)
-                except TypeError:
-                    logger.warning(f"Skipping node {node_id}: profiles is not iterable")
+                    if not isinstance(profiles, (list, tuple)):
+                        logger.warning(f"Skipping node {node_id}: profiles is not iterable")
+                        skip_count += 1
+                        continue
+
+                    for profile in profiles:
+                        if 'miner_node_id' in profile:
+                            # MinerProfile
+                            required_fields = ['miner_node_id', 'created_at', 'file_hash', 'file_size_in_bytes', 'selected_validator']
+                            if not all(field in profile for field in required_fields):
+                                missing = [field for field in required_fields if field not in profile]
+                                logger.warning(f"Skipping MinerProfile entry for miner_node_id {node_id}: Missing fields {missing}")
+                                skip_count += 1
+                                continue
+                            try:
+                                result = await conn.execute(
+                                    """
+                                    INSERT INTO miner_profile (miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator)
+                                    VALUES ($1, $2, $3, $4, $5)
+                                    ON CONFLICT (miner_node_id, file_hash) DO NOTHING
+                                    """,
+                                    node_id,
+                                    profile['created_at'],
+                                    profile['file_hash'],
+                                    profile['file_size_in_bytes'],
+                                    profile['selected_validator']
+                                )
+                                if result == "INSERT 0 1":  # Successfully inserted
+                                    logger.info(f"Inserted new MinerProfile entry for miner_node_id: {node_id}")
+                                    success_count += 1
+                                else:  # Conflict occurred, skipped
+                                    logger.debug(f"Skipped existing MinerProfile entry for miner_node_id: {node_id}")
+                                    skip_count += 1
+                            except Exception as e:
+                                logger.error(f"Error saving MinerProfile for {node_id}: {e}")
+                                skip_count += 1
+                                continue
+                        elif 'owner' in profile:
+                            # UserProfile
+                            required_fields = ['owner', 'created_at', 'file_hash']
+                            optional_fields = {
+                                'file_name': None,
+                                'file_size_in_bytes': 0,
+                                'is_assigned': False,
+                                'last_charged_at': None,
+                                'main_req_hash': None,  # Allow NULL
+                                'miner_ids': [],
+                                'owner': None,
+                                'selected_validator': None,
+                                'total_replicas': 0
+                            }
+                            if not all(field in profile for field in required_fields):
+                                missing = [field for field in required_fields if field not in profile]
+                                logger.warning(f"Skipping UserProfile entry for user_id {node_id}: Missing fields {missing}")
+                                skip_count += 1
+                                continue
+                            try:
+                                # Merge required and optional fields
+                                profile_data = {**optional_fields, **profile}
+                                result = await conn.execute(
+                                    """
+                                    INSERT INTO user_profile (
+                                        user_id, created_at, file_hash, file_name, file_size_in_bytes,
+                                        is_assigned, last_charged_at, main_req_hash, miner_ids,
+                                        owner, selected_validator, total_replicas
+                                    )
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                                    ON CONFLICT (user_id, file_hash) DO NOTHING
+                                    """,
+                                    node_id,
+                                    profile_data['created_at'],
+                                    profile_data['file_hash'],
+                                    profile_data['file_name'],
+                                    profile_data['file_size_in_bytes'],
+                                    profile_data['is_assigned'],
+                                    profile_data['last_charged_at'],
+                                    profile_data['main_req_hash'],
+                                    profile_data['miner_ids'],
+                                    profile_data['owner'],
+                                    profile_data['selected_validator'],
+                                    profile_data['total_replicas']
+                                )
+                                if result == "INSERT 0 1":  # Successfully inserted
+                                    logger.info(f"Inserted new UserProfile entry for user_id: {node_id}")
+                                    success_count += 1
+                                else:  # Conflict occurred, skipped
+                                    logger.debug(f"Skipped existing UserProfile entry for user_id: {node_id}")
+                                    skip_count += 1
+                            except Exception as e:
+                                logger.error(f"Error saving UserProfile for {node_id}: {e}")
+                                skip_count += 1
+                                continue
+                except Exception as e:
+                    logger.error(f"Error processing profiles for node {node_id}: {e}")
                     skip_count += 1
                     continue
-
-                for profile in profiles:
-                    if 'miner_node_id' in profile:
-                        # MinerProfile
-                        required_fields = ['miner_node_id', 'created_at', 'file_hash', 'file_size_in_bytes', 'selected_validator']
-                        if not all(field in profile for field in required_fields):
-                            missing = [field for field in required_fields if field not in profile]
-                            logger.warning(f"Skipping MinerProfile entry for miner_node_id {node_id}: Missing fields {missing}")
-                            skip_count += 1
-                            continue
-                        try:
-                            result = await conn.execute(
-                                """
-                                INSERT INTO miner_profile (miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator)
-                                VALUES ($1, $2, $3, $4, $5)
-                                ON CONFLICT (miner_node_id, file_hash) DO NOTHING
-                                """,
-                                node_id,
-                                profile['created_at'],
-                                profile['file_hash'],
-                                profile['file_size_in_bytes'],
-                                profile['selected_validator']
-                            )
-                            if result == "INSERT 0 1":  # Successfully inserted
-                                logger.info(f"Inserted new MinerProfile entry for miner_node_id: {node_id}")
-                                success_count += 1
-                            else:  # Conflict occurred, skipped
-                                logger.debug(f"Skipped existing MinerProfile entry for miner_node_id: {node_id}")
-                                skip_count += 1
-                        except Exception as e:
-                            logger.error(f"Error saving MinerProfile for {node_id}: {e}")
-                            skip_count += 1
-                    elif 'owner' in profile:
-                        # UserProfile
-                        required_fields = ['owner', 'created_at', 'file_hash']
-                        optional_fields = {
-                            'file_name': None,
-                            'file_size_in_bytes': 0,
-                            'is_assigned': False,
-                            'last_charged_at': None,
-                            'main_req_hash': None,
-                            'miner_ids': [],
-                            'owner': None,
-                            'selected_validator': None,
-                            'total_replicas': 0
-                        }
-                        if not all(field in profile for field in required_fields):
-                            missing = [field for field in required_fields if field not in profile]
-                            logger.warning(f"Skipping UserProfile entry for user_id {node_id}: Missing fields {missing}")
-                            skip_count += 1
-                            continue
-                        try:
-                            # Merge required and optional fields
-                            profile_data = {**optional_fields, **profile}
-                            print("user profile data is ", profile_data)
-                            result = await conn.execute(
-                                """
-                                INSERT INTO user_profile (
-                                    user_id, created_at, file_hash, file_name, file_size_in_bytes,
-                                    is_assigned, last_charged_at, main_req_hash, miner_ids,
-                                    owner, selected_validator, total_replicas
-                                )
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                                ON CONFLICT (user_id, file_hash) DO NOTHING
-                                """,
-                                node_id,
-                                profile_data['created_at'],
-                                profile_data['file_hash'],
-                                profile_data['file_name'],
-                                profile_data['file_size_in_bytes'],
-                                profile_data['is_assigned'],
-                                profile_data['last_charged_at'],
-                                profile_data['main_req_hash'],
-                                profile_data['miner_ids'],
-                                profile_data['owner'],
-                                profile_data['selected_validator'],
-                                profile_data['total_replicas']
-                            )
-                            if result == "INSERT 0 1":  # Successfully inserted
-                                logger.info(f"Inserted new UserProfile entry for user_id: {node_id}")
-                                success_count += 1
-                            else:  # Conflict occurred, skipped
-                                logger.debug(f"Skipped existing UserProfile entry for user_id: {node_id}")
-                                skip_count += 1
-                        except Exception as e:
-                            logger.error(f"Error saving UserProfile for {node_id}: {e}")
-                            skip_count += 1
             logger.info(f"Profile Save Summary: {success_count} profiles inserted, {skip_count} skipped (existing or invalid)")
         except Exception as e:
-            logger.error(f"Error in save_ipfs_profiles: {e}\n")
+            logger.error(f"Critical error in save_ipfs_profiles: {e}")
             raise
 
 def ipfs_fetch_worker(queue: MPQueue, ipfs_content: mp.Manager().dict, event_queue: MPQueue = None):
@@ -625,7 +628,7 @@ async def save_current_epoch_validator(db_pool, account_id, block_number):
                 VALUES ($1, $2, NOW())
                 ON CONFLICT (id) DO UPDATE 
                 SET account_id = EXCLUDED.account_id,
-                    block_number = EXCLUDED.block_number,
+                   ブロック_number = EXCLUDED.block_number,
                     updated_at = NOW()
                 """,
                 account_id,
@@ -635,7 +638,6 @@ async def save_current_epoch_validator(db_pool, account_id, block_number):
         except Exception as e:
             logger.error(f"Error saving CurrentEpochValidator: {e}")
             raise
-
 
 async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[str, str], Any]):
     """Saves UserStorageRequests data to the database, converting BoundedVec fields to strings."""
@@ -699,23 +701,30 @@ async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[st
             logger.info(f"Saved {len(requests)} UserStorageRequests to database.")
 
 def bounded_vec_to_string(bounded_vec: Any) -> str:
-    """Converts a BoundedVec (list of integers or bytes) to a UTF-8 string, falling back to hex if decoding fails."""
+    """Converts a BoundedVec (list of integers, bytes, or hex string) to a UTF-8 string, with double-decoding for hex strings."""
     try:
+        # Handle list/tuple of integers (BoundedVec as list of bytes)
         if isinstance(bounded_vec, (list, tuple)) and all(isinstance(x, int) for x in bounded_vec):
             byte_data = bytes(bounded_vec)
+        # Handle bytes directly
         elif isinstance(bounded_vec, bytes):
             byte_data = bounded_vec
+        # Handle string input
         elif isinstance(bounded_vec, str):
-            return bounded_vec  # Already a string, no conversion needed
+            try:
+                decoded_str = bytes.fromhex(bounded_vec).decode('utf-8')
+                return decoded_str
+            except ValueError as e:
+                logger.warning(f"Invalid hex string format: {bounded_vec}, returning as string")
+                return bounded_vec
         else:
-            logger.warning(f"Unexpected BoundedVec format: {bounded_vec}")
-            return str(bounded_vec)
-        
-        try:
-            return byte_data.decode('utf-8')
-        except UnicodeDecodeError:
-            logger.debug(f"Failed to decode BoundedVec as UTF-8, using hex: {byte_data.hex()}")
-            return '0x' + byte_data.hex()
+            # Perform double-decoding process
+            try:
+                decoded_str = bytes.fromhex(bounded_vec).decode('utf-8')
+                return decoded_str
+            except (UnicodeDecodeError, ValueError) as e:
+                logger.warning(f"Failed to decode BoundedVec as UTF-8 or process hex string: {e}. Using hex string instead.")
+                return str(bounded_vec)
     except Exception as e:
         logger.error(f"Error converting BoundedVec to string: {e}")
         return str(bounded_vec)

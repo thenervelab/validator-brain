@@ -16,4 +16,4 @@ CREATE TABLE registration (
     status VARCHAR(20) NOT NULL,               -- Status (e.g., "Online")
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Track when the record was last updated
 );
-SELECT * FROM miner_profile LIMIT 10;
+SELECT * FROM miners LIMIT 10;

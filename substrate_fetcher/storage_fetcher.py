@@ -370,7 +370,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                         event_queue.get_nowait()
                         break
                 except QueueEmptyException:
-                    time.sleep(0.1)
+                    await asyncio.sleep(0.1)
             else:
                 logger.warning(f"IPFS fetch worker timed out after {timeout_seconds} seconds")
                 
@@ -545,16 +545,15 @@ async def start_fetching_loop_async():
 
                     async def sync_subscription_handler(header_obj, update_nr, subscription_id):
                         logger.info(f"Received subscription update: Update #{update_nr}, Subscription ID: {subscription_id}")
-                        asyncio.create_task(block_queue.put(header_obj))
-
+                        await block_queue.put(header_obj)
 
                     sub_id = await _execute_query_async(substrate.subscribe_block_headers, sync_subscription_handler, finalized_only=True)
-                    if sub_id:
+                    if sub_id and isinstance(sub_id, str):
                         logger.info(f"Successfully subscribed with ID: {sub_id}")
                         _update_status("Subscribed")
                         subscription_active = True
                     else:
-                        logger.warning("Failed to subscribe to finalized heads. Switching to polling mode.")
+                        logger.warning(f"Failed to subscribe to finalized heads (sub_id: {sub_id}). Switching to polling mode.")
                         polling_mode = True
                         _update_status("Polling Mode")
                 except Exception as e:
@@ -609,6 +608,7 @@ async def start_fetching_loop_async():
                     logger.error(f"Error processing block from subscription: {e}\n{traceback.format_exc()}")
                     subscription_active = False
                     _get_substrate_interface(force_reconnect=True)
+                    await asyncio.sleep(config.SUBSCRIPTION_RETRY_DELAY)
 
             if polling_mode:
                 try:
