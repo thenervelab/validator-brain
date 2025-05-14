@@ -52,6 +52,8 @@ async def init_db(pool: asyncpg.Pool):
                 miner_profile_cid VARCHAR(255),
                 successful_pin_checks INTEGER,
                 total_pin_checks INTEGER,
+                miner_total_files_size BIGINT,
+                miner_total_files_pinned INTEGER,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -140,7 +142,7 @@ async def clear_table(pool: asyncpg.Pool, table_name: str):
 
 async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[str, Dict[str, int]]):
     """
-    Updates or inserts ExecutionUnit.NodeMetrics data into the miners table.
+    Updates or inserts ExecutionUnit.NodeMetrics, MinerTotalFilesSize, and MinerTotalFilesPinned data into the miners table.
     If the node_id exists, updates the metrics; otherwise, inserts a new row.
     """
     async with pool.acquire() as conn:
@@ -150,6 +152,8 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                 ipfs_zfs_pool_size = metrics.get("ipfs_zfs_pool_size", None)
                 successful_pin_checks = metrics.get("successful_pin_checks", None)
                 total_pin_checks = metrics.get("total_pin_checks", None)
+                miner_total_files_size = metrics.get("miner_total_files_size", None)
+                miner_total_files_pinned = metrics.get("miner_total_files_pinned", None)
 
                 # Check if the node_id exists
                 exists = await conn.fetchval(
@@ -165,29 +169,36 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                             ipfs_zfs_pool_size = $3,
                             successful_pin_checks = $4,
                             total_pin_checks = $5,
+                            miner_total_files_size = $6,
+                            miner_total_files_pinned = $7,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE node_id = $1;
                         """,
-                        node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks
+                        node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks,
+                        miner_total_files_size, miner_total_files_pinned
                     )
-                    print(f"Updated ExecutionUnit metrics for node_id: {node_id}")
+                    print(f"Updated metrics for node_id: {node_id}")
                 else:
                     # Insert new row (with only metrics for now)
                     await conn.execute(
                         """
-                        INSERT INTO miners (node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks)
-                        VALUES ($1, $2, $3, $4, $5)
+                        INSERT INTO miners (node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks,
+                                          miner_total_files_size, miner_total_files_pinned)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
                         ON CONFLICT (node_id) DO UPDATE
                         SET ipfs_storage_max = EXCLUDED.ipfs_storage_max,
                             ipfs_zfs_pool_size = EXCLUDED.ipfs_zfs_pool_size,
                             successful_pin_checks = EXCLUDED.successful_pin_checks,
                             total_pin_checks = EXCLUDED.total_pin_checks,
+                            miner_total_files_size = EXCLUDED.miner_total_files_size,
+                            miner_total_files_pinned = EXCLUDED.miner_total_files_pinned,
                             updated_at = CURRENT_TIMESTAMP;
                         """,
-                        node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks
+                        node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks,
+                        miner_total_files_size, miner_total_files_pinned
                     )
-                    print(f"Inserted new ExecutionUnit metrics for node_id: {node_id}")
-
+                    print(f"Inserted new metrics for node_id: {node_id}")
+                    
 async def save_miners_data(pool: asyncpg.Pool, block_numbers: Dict[str, Any], miner_profiles: Dict[str, Any]):
     """
     Saves BlockNumbers and MinerProfile data into the miners table.

@@ -270,70 +270,51 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                     logger.error(f"Error saving UserStorageRequests data: {e}")
                     raise
 
-            # Handle ExecutionUnit.NodeMetrics (update, don't delete)
+            # Initialize metrics_data as an empty dict by default
+            metrics_data = {}
+            # Handle ExecutionUnit.NodeMetrics (update, don't delete) only every 300th block
             if any(module == "ExecutionUnit" and map_name == "NodeMetrics" for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL) and block_number % 2 == 0:
                 map_entries_raw = await _execute_query_async(substrate.query_map, "ExecutionUnit", "NodeMetrics", block_hash=block_hash)
-                metrics_data = {}
                 if map_entries_raw is not None:
                     for key_storage_obj, value_storage_obj in map_entries_raw:
                         entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
+                        logger.debug(f"NodeMetrics for node {entry_key_param_str}: {value_storage_obj.value}")
                         metrics_data[entry_key_param_str] = {
                             "ipfs_storage_max": value_storage_obj.value.get('ipfs_storage_max', 0),
                             "ipfs_zfs_pool_size": value_storage_obj.value.get('ipfs_zfs_pool_size', 0),
                             "successful_pin_checks": value_storage_obj.value.get('successful_pin_checks', 0),
                             "total_pin_checks": value_storage_obj.value.get('total_pin_checks', 0)
                         }
-                await utils.update_execution_unit_metrics(config.db_pool, metrics_data)
+                        logger.debug(f"Extracted metrics for node {entry_key_param_str}: {metrics_data[entry_key_param_str]}")
 
-            # Handle BlockNumbers and MinerProfiles (save on every block)
-            block_numbers_result = await _execute_query_async(substrate.query_map, "ExecutionUnit", "BlockNumbers", block_hash=block_hash)
-            block_numbers = {}
-            if block_numbers_result is not None:
-                for key_storage_obj, value_storage_obj in block_numbers_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                    block_numbers[entry_key_param_str] = value_storage_obj.value
-            else:
-                logger.error("BlockNumbers query returned None")
+            # Fetch and handle MinerTotalFilesSize and MinerTotalFilesPinned
+            miner_files_size_data = {}
+            miner_files_pinned_data = {}
+            miner_files_size_entries = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerTotalFilesSize", block_hash=block_hash)
+            if miner_files_size_entries is not None:
+                for key_storage_obj, value_storage_obj in miner_files_size_entries:
+                    node_id = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                    miner_files_size_data[node_id] = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj.value
 
-            miner_profile_result = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerProfile", block_hash=block_hash)
-            miner_profiles = {}
-            if miner_profile_result is not None:
-                for key_storage_obj, value_storage_obj in miner_profile_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                    miner_profiles[entry_key_param_str] = value_storage_obj.value
-            else:
-                logger.error("MinerProfile query returned None")
+            miner_files_pinned_entries = await _execute_query_async(substrate.query_map, "IpfsPallet", "MinerTotalFilesPinned", block_hash=block_hash)
+            if miner_files_pinned_entries is not None:
+                for key_storage_obj, value_storage_obj in miner_files_pinned_entries:
+                    node_id = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj.value)
+                    miner_files_pinned_data[node_id] = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj.value
 
-            if not block_numbers and not miner_profiles:
-                logger.warning("Both BlockNumbers and MinerProfile data are empty. Skipping save_miners_data.")
-            else:
-                try:
-                    await utils.save_miners_data(config.db_pool, block_numbers, miner_profiles)
-                    logger.info("Successfully saved miners data to database.")
-                except Exception as e:
-                    logger.error(f"Error saving miners data: {e}")
-                    raise
-
-            # Handle Registration data
-            node_registration = {}
-            coldkey_registration = {}
-            node_reg_result = await _execute_query_async(substrate.query_map, "Registration", "NodeRegistration", block_hash=block_hash)
-            if node_reg_result is not None:
-                for key_storage_obj, value_storage_obj in node_reg_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                    node_registration[entry_key_param_str] = value_storage_obj.value
-            coldkey_reg_result = await _execute_query_async(substrate.query_map, "Registration", "ColdkeyNodeRegistration", block_hash=block_hash)
-            if coldkey_reg_result is not None:
-                for key_storage_obj, value_storage_obj in coldkey_reg_result:
-                    entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                    coldkey_registration[entry_key_param_str] = value_storage_obj.value
-
-            try:
-                await utils.save_registration_data(config.db_pool, node_registration, coldkey_registration)
-                logger.info("Successfully saved registration data to database.")
-            except Exception as e:
-                logger.error(f"Error saving registration data: {e}")
-                raise
+            # Combine all metrics into a single dictionary for database update
+            all_metrics_data = {}
+            all_node_ids = set(list(metrics_data.keys()) + list(miner_files_size_data.keys()) + list(miner_files_pinned_data.keys()))
+            for node_id in all_node_ids:
+                all_metrics_data[node_id] = {
+                    "ipfs_storage_max": metrics_data.get(node_id, {}).get("ipfs_storage_max", 0),
+                    "ipfs_zfs_pool_size": metrics_data.get(node_id, {}).get("ipfs_zfs_pool_size", 0),
+                    "successful_pin_checks": metrics_data.get(node_id, {}).get("successful_pin_checks", 0),
+                    "total_pin_checks": metrics_data.get(node_id, {}).get("total_pin_checks", 0),
+                    "miner_total_files_size": miner_files_size_data.get(node_id, 0),
+                    "miner_total_files_pinned": miner_files_pinned_data.get(node_id, 0)
+                }
+            await utils.update_execution_unit_metrics(config.db_pool, all_metrics_data)
 
         # 4. Queue changed CIDs for IPFS content fetch
         global _previous_ipfs_profiles
