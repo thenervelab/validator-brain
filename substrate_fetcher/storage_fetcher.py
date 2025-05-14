@@ -490,7 +490,7 @@ async def start_fetching_loop_async():
                     # Create a queue for block headers
                     block_queue = asyncio.Queue()
 
-                    def sync_subscription_handler(header_obj, update_nr, subscription_id):
+                    async def sync_subscription_handler(header_obj, update_nr, subscription_id):
                         logger.info(f"Received subscription update: Update #{update_nr}, Subscription ID: {subscription_id}")
                         asyncio.create_task(block_queue.put(header_obj))
 
@@ -569,7 +569,7 @@ async def start_fetching_loop_async():
                                 continue
                                 
                             logger.info(f"Processing new block #{block_number} (Hash: {head_hash})")
-                            c
+                            
                             # Process the block data
                             await fetch_all_chain_data(
                                 substrate, 

@@ -4,11 +4,8 @@ import os
 # --- Connection Configuration ---
 NODE_URL = "ws://rpc.dubs.rs"  # CHANGE THIS TO YOUR NODE
 
-# --- Storage Items Configuration ---
-# For single storage items or specific keys in a map
-# Format: (PalletName, StorageItemName, [optional_params_if_map_key])
 STORAGE_ITEMS_TO_FETCH = [
-    # ("Timestamp", "Now"), # Example: a simple non-map item
+    # ("IpfsPallet", "CurrentEpochValidator"),
 ]
 
 # For fetching all entries of a StorageMap

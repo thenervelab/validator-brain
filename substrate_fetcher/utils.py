@@ -101,6 +101,15 @@ async def init_db(pool: asyncpg.Pool):
                 UNIQUE(user_id, file_hash)  -- This ensures uniqueness for conflict detection
             );
         """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS current_epoch_validator (
+                id SERIAL PRIMARY KEY,
+                account_id VARCHAR(100),
+                block_number BIGINT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
         print("Database tables initialized.")
 
 # --- Database Operations for Fetcher ---
@@ -238,7 +247,6 @@ async def save_registration_data(pool: asyncpg.Pool, node_registration: Dict, co
                         """,
                         node_id, ipfs_node_id, node_type, owner, registered_at, status
                     )
-                    print(f"Saved registration data for node_id: {node_id}")
                 except asyncpg.exceptions.PostgresError as e:
                     print(f"Database error saving registration data for node_id {node_id}: {e}")
                     raise
@@ -416,6 +424,14 @@ async def save_ipfs_profiles(db_pool: asyncpg.Pool, ipfs_content: Dict[str, Any]
         skip_count = 0
         try:
             for node_id, profiles in ipfs_content.items():
+                try:
+                    # Ensure profiles is iterable
+                    iter(profiles)
+                except TypeError:
+                    logger.warning(f"Skipping node {node_id}: profiles is not iterable")
+                    skip_count += 1
+                    continue
+
                 for profile in profiles:
                     if 'miner_node_id' in profile:
                         # MinerProfile
@@ -447,9 +463,9 @@ async def save_ipfs_profiles(db_pool: asyncpg.Pool, ipfs_content: Dict[str, Any]
                         except Exception as e:
                             logger.error(f"Error saving MinerProfile for {node_id}: {e}")
                             skip_count += 1
-                    elif 'user_id' in profile:
+                    elif 'owner' in profile:
                         # UserProfile
-                        required_fields = ['user_id', 'created_at', 'file_hash']
+                        required_fields = ['owner', 'created_at', 'file_hash']
                         optional_fields = {
                             'file_name': None,
                             'file_size_in_bytes': 0,
@@ -503,7 +519,7 @@ async def save_ipfs_profiles(db_pool: asyncpg.Pool, ipfs_content: Dict[str, Any]
                             skip_count += 1
             logger.info(f"Profile Save Summary: {success_count} profiles inserted, {skip_count} skipped (existing or invalid)")
         except Exception as e:
-            logger.error(f"Error in save_ipfs_profiles: {e}\n{traceback.format_exc()}")
+            logger.error(f"Error in save_ipfs_profiles: {e}\n")
             raise
 
 def ipfs_fetch_worker(queue: MPQueue, ipfs_content: mp.Manager().dict, event_queue: MPQueue = None):
