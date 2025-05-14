@@ -233,6 +233,9 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
         if config.STORAGE_MAPS_TO_FETCH_ALL:
             logger.info(f"Fetching storage maps at block: {block_hash or 'latest'} (Block number: {block_number})")
             user_storage_requests = {}  # Store UserStorageRequests data
+            node_registration = {}  # Store NodeRegistration data
+            coldkey_registration = {}  # Store ColdkeyNodeRegistration data
+
             for module, map_name in config.STORAGE_MAPS_TO_FETCH_ALL:
                 # Skip ExecutionUnit.NodeMetrics unless block_number is a multiple of 300
                 if module == "ExecutionUnit" and map_name == "NodeMetrics" and block_number is not None and block_number % 300 != 0:
@@ -244,6 +247,9 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                     map_entries_raw = await _execute_query_async(substrate.query_map, module, map_name, block_hash=block_hash)
                     if map_entries_raw is not None:
                         for key_storage_obj, value_storage_obj in map_entries_raw:
+                            # Extract the node_id from the key
+                            entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
+
                             if module == "IpfsPallet" and map_name == "UserStorageRequests":
                                 # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
                                 if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
@@ -253,7 +259,48 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                                     user_storage_requests[(owner_account_id, file_hash)] = value
                                 else:
                                     logger.warning(f"Unexpected key format for UserStorageRequests: {key_storage_obj}")
-                            # Other maps handled below in save logic
+
+                            elif module == "Registration" and map_name == "NodeRegistration":
+                                value = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj
+                                # Skip if the value is None (Option<NodeInfo> returned None)
+                                if value is None:
+                                    logger.debug(f"NodeRegistration for node {entry_key_param_str} is None, skipping.")
+                                    continue
+                                # Process NodeInfo struct
+                                try:
+                                    node_info = {
+                                        "node_id": utils.bounded_vec_to_string(value.get("node_id")),
+                                        "ipfs_node_id": utils.bounded_vec_to_string(value.get("ipfs_node_id")) if value.get("ipfs_node_id") else None,
+                                        "node_type": value.get("node_type", ""),
+                                        "owner": str(value.get("owner", "")),
+                                        "registered_at": int(value.get("registered_at", 0)),
+                                        "status": value.get("status", "")
+                                    }
+                                    node_registration[entry_key_param_str] = node_info
+                                except Exception as e:
+                                    logger.error(f"Error processing NodeRegistration for node {entry_key_param_str}: {e}")
+
+                            elif module == "Registration" and map_name == "ColdkeyNodeRegistration":
+                                value = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj
+                                # Skip if the value is None (Option<NodeInfo> returned None)
+                                if value is None:
+                                    logger.debug(f"ColdkeyNodeRegistration for node {entry_key_param_str} is None, skipping.")
+                                    continue
+                                # Process NodeInfo struct
+                                try:
+                                    node_info = {
+                                        "node_id": utils.bounded_vec_to_string(value.get("node_id")),
+                                        "ipfs_node_id": utils.bounded_vec_to_string(value.get("ipfs_node_id")) if value.get("ipfs_node_id") else None,
+                                        "node_type": value.get("node_type", ""),
+                                        "owner": str(value.get("owner", "")),
+                                        "registered_at": int(value.get("registered_at", 0)),
+                                        "status": value.get("status", "")
+                                    }
+                                    coldkey_registration[entry_key_param_str] = node_info
+                                except Exception as e:
+                                    logger.error(f"Error processing ColdkeyNodeRegistration for node {entry_key_param_str}: {e}")
+
+                            # Other maps will be handled below in save logic
                     else:
                         logger.error(f"query_map for {map_key_name} returned None or failed.")
                 except Exception as e:
@@ -261,6 +308,16 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
 
         # 3. Save data to the database
         if block_number is not None:
+            # Handle Registration data
+            if node_registration or coldkey_registration:
+                logger.info(f"NodeRegistration entries: {len(node_registration)}, ColdkeyNodeRegistration entries: {len(coldkey_registration)}")
+                try:
+                    await utils.save_registration_data(config.db_pool, node_registration, coldkey_registration)
+                    logger.info("Successfully saved registration data to database.")
+                except Exception as e:
+                    logger.error(f"Error saving registration data: {e}")
+                    raise
+
             # Handle UserStorageRequests
             if user_storage_requests:
                 try:
