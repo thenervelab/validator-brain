@@ -517,12 +517,12 @@ async def assign_to_storage_miners(block_number):
     user_profile_dir = os.path.join(profiles_dir, "user_profile")
 
     async with config.db_pool.acquire() as conn:
-        # Fetch all registered StorageMiners
+        # Fetch all registered StorageMiners (case-insensitive match)
         storage_miners = await conn.fetch(
             """
             SELECT node_id
             FROM registration
-            WHERE node_type = $1
+            WHERE node_type ILIKE $1
             """,
             "StorageMiner"
         )
