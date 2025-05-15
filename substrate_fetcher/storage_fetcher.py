@@ -157,37 +157,29 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             if multi_query_params:
                 logger.info(f"Query multi params: {multi_query_params}")
                 try:
-                    results = await _execute_query_async(substrate.query_multi, multi_query_params, block_hash=block_hash)
-                    logger.debug(f"Raw query_multi results: {results}")
-                    if results is not None:
-                        for i, item_config_tuple in enumerate(multi_query_params):
-                            storage_key_name = utils.get_storage_key_string(
-                                item_config_tuple[0], item_config_tuple[1],
-                                item_config_tuple[2] if len(item_config_tuple) == 3 else None
-                            )
-                            if i < len(results) and results[i] is not None:
-                                if item_config_tuple[0] == "IpfsPallet" and item_config_tuple[1] == "CurrentEpochValidator":
-                                    value = results[i].value if hasattr(results[i], 'value') else results[i]
-                                    logger.debug(f"CurrentEpochValidator raw value: {value}")
-                                    try:
-                                        if value is not None:
-                                            if isinstance(value, (tuple, list)) and len(value) == 2:
-                                                account_id, block_num = value
-                                                await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
-                                            elif isinstance(value, dict) and "account_id" in value and "block_number" in value:
-                                                account_id = value["account_id"]
-                                                block_num = value["block_number"]
-                                                await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
-                                            else:
-                                                logger.warning(f"Unexpected CurrentEpochValidator value format: {value}")
-                                                await utils.save_current_epoch_validator(config.db_pool, None, None)
-                                        else:
-                                            await utils.save_current_epoch_validator(config.db_pool, None, None)
-                                    except Exception as e:
-                                        logger.error(f"Error processing CurrentEpochValidator value {value}: {e}")
-                                        await utils.save_current_epoch_validator(config.db_pool, None, None)
+                    result = await _execute_query_async(substrate.query, module, item, block_hash=block_hash)
+                    logger.debug(f"Raw query_multi results: {result}")
+                    if result is not None:
+                        value = result.value if hasattr(result, 'value') else result
+                        logger.debug(f"CurrentEpochValidator value: {value}")
+                        try:
+                            if value is not None:
+                                if isinstance(value, (tuple, list)) and len(value) == 2:
+                                    account_id, block_num = value
+                                    await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                elif isinstance(value, dict) and "account_id" in value and "block_number" in value:
+                                    account_id = value["account_id"]
+                                    block_num = value["block_number"]
+                                    await utils.save_current_epoch_validator(config.db_pool, str(account_id), int(block_num))
+                                else:
+                                    logger.warning(f"Unexpected CurrentEpochValidator value format: {value}")
+                                    await utils.save_current_epoch_validator(config.db_pool, None, None)
                             else:
-                                logger.error(f"Failed to fetch {storage_key_name}")
+                                logger.info("CurrentEpochValidator is None")
+                                await utils.save_current_epoch_validator(config.db_pool, None, None)
+                        except Exception as e:
+                            logger.error(f"Error processing CurrentEpochValidator value {value}: {e}")
+                            await utils.save_current_epoch_validator(config.db_pool, None, None)
                     else:
                         logger.error("query_multi returned None or failed.")
                 except Exception as e:
@@ -414,6 +406,14 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                     raise
             else:
                 logger.warning("No BlockNumbers or MinerProfile data to save.")
+
+            # Save the latest block number to the database
+            try:
+                await utils.save_latest_block(config.db_pool, block_number)
+                logger.info(f"Successfully saved latest block number: {block_number}")
+            except Exception as e:
+                logger.error(f"Error saving latest block number: {e}")
+                raise
 
         # 4. Queue changed CIDs for IPFS content fetch
         global _previous_ipfs_profiles

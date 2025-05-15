@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 import asyncio
 import os
 import sys
+import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -16,10 +17,7 @@ parent_dir = os.path.dirname(script_path)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-import config
 
-# Define the keystore path
-KEYSTORE_PATH = "/home/faiz/test-chain/chains/hippius_mainnet/keystore/"
 
 def string_to_bounded_vec(s: str) -> List[int]:
     """Converts a string to a list of byte values (BoundedVec<u8, ...> equivalent).
@@ -123,7 +121,7 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
             return False
 
         # Load the HIPS keypair for signing
-        keypair = load_hips_keypair(KEYSTORE_PATH)
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
         logger.info(f"Using account {keypair.ss58_address} for signing")
 
         # Format the requests to match the StorageRequestUpdate structure
@@ -209,7 +207,7 @@ async def call_update_unpin_and_storage_requests(requests: List[Dict[str, Any]])
             return False
 
         # Load the HIPS keypair for signing
-        keypair = load_hips_keypair(KEYSTORE_PATH)
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
         logger.info(f"Using account {keypair.ss58_address} for signing")
 
         # Format the requests to match the StorageUnpinUpdateRequest structure
@@ -289,7 +287,7 @@ async def call_remove_bad_storage_request(file_hash: str) -> bool:
         logger.info(f"Connected to Substrate node at {config.NODE_URL}")
 
         # Load the HIPS keypair for signing
-        keypair = load_hips_keypair(KEYSTORE_PATH)
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
         logger.info(f"Using account {keypair.ss58_address} for signing")
 
         # Format the file_hash as a BoundedVec<u8, ...>
@@ -351,7 +349,7 @@ async def call_remove_bad_unpin_request(file_hash: str) -> bool:
         logger.info(f"Connected to Substrate node at {config.NODE_URL}")
 
         # Load the HIPS keypair for signing
-        keypair = load_hips_keypair(KEYSTORE_PATH)
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
         logger.info(f"Using account {keypair.ss58_address} for signing")
 
         # Format the file_hash as a BoundedVec<u8, ...>
@@ -404,7 +402,7 @@ async def call_update_pin_check_metrics(miners_metrics: List[Dict[str, Any]]) ->
         )
         logger.info(f"Connected to Substrate node at {config.NODE_URL}")
 
-        keypair = load_hips_keypair(KEYSTORE_PATH)
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
         logger.info(f"Using account {keypair.ss58_address} for signing")
 
         # Debug: Print metadata to verify pallet exists

@@ -151,6 +151,16 @@ async def init_db(pool: asyncpg.Pool):
         """)
         print("Database tables initialized.")
 
+        # New table for storing the latest block number
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS latest_block (
+                id SERIAL PRIMARY KEY,
+                block_number BIGINT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+
 # --- Database Operations for Fetcher ---
 async def clear_table(pool: asyncpg.Pool, table_name: str):
     """Clears all data from the specified table."""
@@ -656,17 +666,16 @@ def get_storage_key_string(module: str, storage_item: str, params: Any = None) -
     return f"{module}.{storage_item}({str(params)})"
 
 async def save_current_epoch_validator(db_pool, account_id, block_number):
-    """Saves or updates the current epoch validator in database."""
+    """Saves or updates the current epoch validator in database, replacing all existing rows."""
     async with db_pool.acquire() as conn:
         try:
+            # Delete all existing rows
+            await conn.execute("DELETE FROM current_epoch_validator")
+            # Insert new row
             await conn.execute(
                 """
                 INSERT INTO current_epoch_validator (account_id, block_number, updated_at)
                 VALUES ($1, $2, NOW())
-                ON CONFLICT (id) DO UPDATE 
-                SET account_id = EXCLUDED.account_id,
-                   ブロック_number = EXCLUDED.block_number,
-                    updated_at = NOW()
                 """,
                 account_id,
                 block_number
@@ -778,3 +787,22 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
 def bounded_vec_to_raw_string(bounded_vec: Any) -> str:
     """Converts any bounded_vec input to a plain string representation without decoding."""
     return str(bounded_vec)
+
+async def save_latest_block(db_pool, block_number):
+    """Saves or updates the latest block number in the database, replacing all existing rows."""
+    async with db_pool.acquire() as conn:
+        try:
+            # Delete all existing rows
+            await conn.execute("DELETE FROM latest_block")
+            # Insert new row
+            await conn.execute(
+                """
+                INSERT INTO latest_block (block_number, updated_at)
+                VALUES ($1, NOW())
+                """,
+                block_number
+            )
+            logger.info(f"Updated LatestBlock: {block_number}")
+        except Exception as e:
+            logger.error(f"Error saving LatestBlock: {e}")
+            raise

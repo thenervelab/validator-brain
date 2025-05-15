@@ -82,7 +82,7 @@ TYPE_REGISTRY = {
 }
 
 STORAGE_ITEMS_TO_FETCH = [
-    # ("IpfsPallet", "CurrentEpochValidator"),
+    ("IpfsPallet", "CurrentEpochValidator"),
 ]
 
 STORAGE_MAPS_TO_FETCH_ALL = [
@@ -125,3 +125,6 @@ POSTGRES_URI = f"postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:
 # Global database pool (to be initialized in main.py)
 db_pool = None
 IPFS_FETCH_TIMEOUT = 60  # Timeout for IPFS fetch in seconds
+
+# Define the keystore path
+KEYSTORE_PATH = "/home/faiz/test-chain/chains/hippius_mainnet/keystore/"
