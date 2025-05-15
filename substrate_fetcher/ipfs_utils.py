@@ -516,7 +516,9 @@ async def get_ipfs_content(cid: str, api_url: str) -> dict:
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(cat_url, data={'arg': cid}) as response:
+            # Use query parameters instead of form data with the correct parameter name 'ipfs-path'
+            params = {'arg': cid}
+            async with session.post(cat_url, params=params) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     logger.warning(f"Failed to fetch IPFS content for CID {cid}: HTTP {response.status} - {error_text}")
