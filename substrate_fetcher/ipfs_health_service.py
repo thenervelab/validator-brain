@@ -5,7 +5,6 @@ import signal
 import sys
 import time
 import math
-
 from . import config
 from .ipfs_health_utils import perform_ipfs_ping, EPOCH_BLOCK_INTERVAL
 

@@ -127,4 +127,4 @@ db_pool = None
 IPFS_FETCH_TIMEOUT = 60  # Timeout for IPFS fetch in seconds
 
 # Define the keystore path
-KEYSTORE_PATH = "/home/faiz/test-chain/chains/hippius_mainnet/keystore/"
+KEYSTORE_PATH = "/opt/hippius/data/chains/hippius-mainnet/keystore/"

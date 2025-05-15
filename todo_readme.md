@@ -6,8 +6,7 @@
 # take pending requests from the db and fulfill one by one and update status
 # at 90th block convert them all to desired format
 # at the end on 95th block take all fulfilled requests and then submit batch 
-    # 1) user storage requests
-    # 2) update minerProfiles (rebalance)
+    # 1) user storage requests + rebalence
     # 3) unpin requests
 # added update metrics fn in ipfs health service (use latest block db)
 # make epoch number dynamic

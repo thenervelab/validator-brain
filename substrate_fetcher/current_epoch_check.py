@@ -1,6 +1,6 @@
 import asyncio
 import asyncpg
-from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests, call_update_miner_profiles
+from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests, call_update_miner_profiles, call_update_pin_check_metrics
 import logging
 import time
 import aiohttp
@@ -9,7 +9,6 @@ import os
 import shutil
 import random
 from typing import List, Dict
-
 from . import config
 from . import utils
 from . import ipfs_utils
@@ -685,6 +684,9 @@ async def monitor_validator_epochs(pool):
             await asyncio.sleep(5)
             continue
 
+        # Check pin check metrics every 1200th block
+        await update_pin_check_metrics_near_block(current_block_number)
+
         # If we're in an action period, continue logging until the epoch ends
         if in_action_period:
             if current_block_number >= target_block_number:
@@ -917,3 +919,46 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
                 logger.info(f"No miner profile file found for offline miner: {node_id}")
 
     logger.info("Finished processing epoch tasks")
+
+async def update_pin_check_metrics_near_block(block_number):
+    """Updates pin check metrics every 1200th block and submits to chain."""
+    logger.info(f"Checking pin check metrics at block {block_number}...")
+    
+    if block_number % 1200 != 0:
+        logger.debug(f"Block {block_number} is not a 1200th block, skipping metric update")
+        return
+
+    # Fetch all miner metrics from miner_epoch_health
+    async with config.db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT node_id, pin_check_successes, pin_check_failures
+            FROM miner_epoch_health
+            """
+        )
+
+    if not rows:
+        logger.info("No miner pin check metrics found in miner_epoch_health")
+        return
+
+    # Collect metrics in an array
+    metrics = []
+    for row in rows:
+        node_id = row['node_id']
+        total_pin_checks = row['pin_check_successes'] + row['pin_check_failures']
+        successful_pin_checks = row['pin_check_successes']
+        metrics.append({
+            "node_id": node_id,
+            "total_pin_checks": total_pin_checks,
+            "successful_pin_checks": successful_pin_checks
+        })
+
+    # Call the chain function if there are metrics to submit
+    if metrics:
+        logger.info(f"Submitting update_pin_check_metrics with {len(metrics)} miners...")
+        success = await call_update_pin_check_metrics(metrics)
+        logger.info(f"update_pin_check_metrics {'succeeded' if success else 'failed'}")
+    else:
+        logger.info("No pin check metrics to submit")
+
+    logger.info(f"Finished processing pin check metrics at block {block_number}")
