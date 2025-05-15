@@ -165,6 +165,9 @@ async def init_db(pool: asyncpg.Pool):
                 id SERIAL PRIMARY KEY,
                 owner VARCHAR(100) NOT NULL,
                 file_hash VARCHAR(350) NOT NULL,
+                file_name VARCHAR(350),
+                main_req_hash VARCHAR(350),
+                selected_validator VARCHAR(100),
                 status VARCHAR(20) NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(owner, file_hash)
