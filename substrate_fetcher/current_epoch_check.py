@@ -1,6 +1,6 @@
 import asyncio
 import asyncpg
-from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests
+from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests, call_update_miner_profiles
 import logging
 import time
 import aiohttp
@@ -13,6 +13,7 @@ from typing import List, Dict
 from . import config
 from . import utils
 from . import ipfs_utils
+from . import substrate_utils
 
 logger = logging.getLogger(__name__)
 
@@ -696,6 +697,7 @@ async def monitor_validator_epochs(pool):
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
                 if current_block_number % 100 == 94:
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
+                    await update_miner_profiles_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
             continue
 
@@ -737,3 +739,181 @@ async def monitor_validator_epochs(pool):
             else:
                 logger.info("No entries found in current_epoch_validator table")
         await asyncio.sleep(5)
+
+async def update_miner_profiles_near_epoch_end(block_number):
+    """Updates miner profiles 5 blocks before epoch end and submits to chain."""
+    logger.info(f"Updating miner profiles at block {block_number}...")
+
+    miner_profile_dir = os.path.join("profiles", "miner_profile")
+    if not os.path.exists(miner_profile_dir):
+        logger.warning(f"Miner profile directory not found: {miner_profile_dir}")
+        return
+
+    # List to store miner profile data for the chain function
+    miner_profiles = []
+
+    # Iterate through all JSON files in the miner profile directory
+    for filename in os.listdir(miner_profile_dir):
+        if not filename.endswith('.json'):
+            continue
+
+        miner_file_path = os.path.join(miner_profile_dir, filename)
+        try:
+            with open(miner_file_path, 'r') as f:
+                miner_data = json.load(f)
+                if not isinstance(miner_data, list):
+                    miner_data = [miner_data]
+        except Exception as e:
+            logger.error(f"Error reading miner profile file {miner_file_path}: {e}")
+            continue
+
+        # Skip if the miner data is empty
+        if not miner_data:
+            logger.info(f"Empty miner profile file: {miner_file_path}")
+            continue
+
+        # Track total file size and file count for this miner
+        total_file_size = 0
+        total_files_pinned = 0
+
+        # Update each item in the miner profile
+        updated_miner_data = []
+        for entry in miner_data:
+            # Encode file_hash to byte array
+            file_hash_bytes = list(entry['file_hash'].encode('utf-8'))
+
+            # Update totals
+            file_size = entry.get('file_size_in_bytes', 0)
+            total_file_size += file_size if file_size else 0
+            total_files_pinned += 1
+
+            # Create updated entry
+            updated_entry = {
+                "created_at": entry['created_at'],
+                "file_hash": file_hash_bytes,
+                "file_size_in_bytes": file_size,
+                "miner_node_id": entry['miner_node_id'],
+                "selected_validator": entry['selected_validator']
+            }
+            updated_miner_data.append(updated_entry)
+
+        # Pin the updated miner profile to IPFS
+        pin_response = await utils.upload_json_to_ipfs(data=updated_miner_data, api_url=config.IPFS_NODE_URL)
+        if not pin_response['success']:
+            logger.error(f"Failed to pin updated miner profile for {filename}: {pin_response['error']}")
+            continue
+
+        new_cid = pin_response['cid']
+        logger.info(f"Pinned updated miner profile for {filename} to CID: {new_cid}")
+
+        # Add to miner_profiles list
+        miner_node_id = updated_miner_data[0]['miner_node_id']  # Assuming all entries have the same miner_node_id
+        miner_profiles.append({
+            "miner_node_id": miner_node_id,
+            "cid": new_cid,
+            "files_count": total_files_pinned,
+            "files_size": total_file_size
+        })
+
+        # Optionally, update the local file with the new data
+        try:
+            with open(miner_file_path, 'w') as f:
+                json.dump(updated_miner_data, f, indent=4)
+            logger.debug(f"Updated miner profile file: {miner_file_path}")
+        except Exception as e:
+            logger.error(f"Error writing updated miner profile file {miner_file_path}: {e}")
+
+    # Call the chain function if there are profiles to submit
+    if miner_profiles:
+        logger.info(f"Submitting update_miner_profiles with {len(miner_profiles)} profiles...")
+        success = await call_update_miner_profiles(miner_profiles)
+        logger.info(f"update_miner_profiles {'succeeded' if success else 'failed'}")
+    else:
+        logger.info("No miner profiles to submit.")
+
+    logger.info(f"Finished updating miner profiles at block {block_number}")
+
+async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
+    """Detect offline miners at the start of each epoch and log the result."""
+    try:
+        offline_miners = await get_offline_miners(pool)
+        if offline_miners:
+            logger.info(f"Offline miners detected at epoch start: {offline_miners}")
+        else:
+            logger.info("No offline miners detected at epoch start")
+    except Exception as e:
+        logger.error(f"Error detecting offline miners: {e}")
+
+async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
+    """Orchestrates epoch tasks: detects offline miners, reconstructs profiles, and processes pending requests."""
+    await detect_offline_miners_at_epoch_start(pool)
+    await reconstruct_profiles_to_json(pool)
+
+    profiles_dir = "profiles"
+    miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
+
+    offline_miners = await get_offline_miners(pool)
+    if not offline_miners:
+        logger.info("No offline miners to process.")
+        return
+
+    async with pool.acquire() as conn:
+        for miner in offline_miners:
+            node_id = miner['node_id']
+            miner_file_path = os.path.join(miner_profile_dir, f"{node_id}.json")
+
+            if os.path.exists(miner_file_path):
+                try:
+                    with open(miner_file_path, 'r') as f:
+                        profile_data = json.load(f)
+                        if not isinstance(profile_data, list):
+                            profile_data = [profile_data]
+
+                    for entry in profile_data:
+                        file_hash = entry.get('file_hash')
+                        if file_hash:
+                            # Fetch the owner, file_name, selected_validator, and main_req_hash from user_profile
+                            user_info = await conn.fetchrow(
+                                """
+                                SELECT owner_account_id, file_name, selected_validator, main_req_hash
+                                FROM user_profile
+                                WHERE file_hash = $1
+                                LIMIT 1
+                                """,
+                                file_hash
+                            )
+                            if user_info:
+                                owner = user_info['owner_account_id']
+                                file_name = user_info['file_name']
+                                selected_validator = user_info['selected_validator']
+                                main_req_hash = user_info['main_req_hash']
+
+                                # Check if the record already exists in pending_pool
+                                exists = await conn.fetchval(
+                                    """
+                                    SELECT EXISTS (
+                                        SELECT 1 FROM pending_pool WHERE owner = $1 AND file_hash = $2
+                                    )""",
+                                    owner, file_hash
+                                )
+                                if not exists:
+                                    await conn.execute(
+                                        """
+                                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status)
+                                        VALUES ($1, $2, $3, $4, $5, $6)
+                                        """,
+                                        owner, file_hash, file_name, selected_validator, main_req_hash, "pending"
+                                    )
+                                    logger.info(f"Added pending request for owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={main_req_hash} from offline miner {node_id}")
+                                else:
+                                    logger.debug(f"Pending request already exists for owner={owner}, file_hash={file_hash}")
+                            else:
+                                logger.warning(f"No user info found for file_hash={file_hash} in user_profile")
+                        else:
+                            logger.warning(f"No file_hash found in entry: {entry}")
+                except Exception as e:
+                    logger.error(f"Error processing miner profile for {node_id}: {e}")
+            else:
+                logger.info(f"No miner profile file found for offline miner: {node_id}")
+
+    logger.info("Finished processing epoch tasks")

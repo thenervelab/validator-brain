@@ -28,7 +28,7 @@ async def test_node_connectivity(api_url: str) -> bool:
                     logger.error("Node version check failed at %s: %s - %s", api_url, resp.status, await resp.text())
                     return False
         except Exception as e:
-            logger.error("Failed to connect to IPFS node at %s: %s",=api_url, e)
+            logger.error("Failed to connect to IPFS node at %s: %s", api_url, e)
             return False
 
 async def pin_cid(cid: str, api_url: str = 'http://127.0.0.1:5001', recursive: bool = True) -> Dict:
