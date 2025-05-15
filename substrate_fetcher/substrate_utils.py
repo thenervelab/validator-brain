@@ -17,8 +17,6 @@ parent_dir = os.path.dirname(script_path)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-
-
 def string_to_bounded_vec(s: str) -> List[int]:
     """Converts a string to a list of byte values (BoundedVec<u8, ...> equivalent).
 
@@ -128,14 +126,6 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
         formatted_requests = []
         for req in requests:
             formatted_req = {
-                "miner_pin_requests": [
-                    {
-                        "miner_node_id": string_to_bounded_vec(item["miner_node_id"]),
-                        "cid": string_to_bounded_vec(item["cid"]),
-                        "files_count": item["files_count"]
-                    }
-                    for item in req["miner_pin_requests"]
-                ],
                 "storage_request_owner": req["storage_request_owner"],
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
                 "file_size": req["file_size"],
@@ -452,22 +442,94 @@ async def call_update_pin_check_metrics(miners_metrics: List[Dict[str, Any]]) ->
         if 'substrate' in locals():
             substrate.close()
 
+async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bool:
+    """Calls the update_miner_profiles extrinsic on the Substrate node using the HIPS key for signing.
+
+    Args:
+        miner_profiles: List of miner profiles where each dict contains:
+            - miner_node_id: str (node ID as string)
+            - cid: str (IPFS CID as string)
+            - files_count: int
+            - files_size: int
+
+    Returns:
+        bool: True if extrinsic was successfully submitted and finalized, False otherwise
+    """
+    try:
+        # Initialize Substrate interface
+        substrate = SubstrateInterface(
+            url=config.NODE_URL,
+            type_registry=config.TYPE_REGISTRY if hasattr(config, 'TYPE_REGISTRY') else None,
+            use_remote_preset=True
+        )
+        logger.info(f"Connected to Substrate node at {config.NODE_URL}")
+
+        # Verify pallet exists in metadata
+        metadata = substrate.get_metadata()
+        if 'IpfsPallet' not in [p.name for p in metadata.pallets]:
+            logger.error("IpfsPallet not found in chain metadata!")
+            return False
+
+        # Load HIPS keypair
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
+        logger.info(f"Using account {keypair.ss58_address} for signing")
+
+        # Format miner profiles to match MinerProfileItem structure
+        formatted_profiles = []
+        for profile in miner_profiles:
+            formatted_profile = {
+                "miner_node_id": string_to_bounded_vec(profile["miner_node_id"]),
+                "cid": string_to_bounded_vec(profile["cid"]),
+                "files_count": profile["files_count"],
+                "files_size": profile["files_size"]
+            }
+            formatted_profiles.append(formatted_profile)
+
+        logger.debug(f"Formatted {len(formatted_profiles)} miner profile(s)")
+
+        # Compose the call
+        call = substrate.compose_call(
+            call_module='IpfsPallet',
+            call_function='update_miner_profiles',
+            call_params={
+                'miner_profiles': formatted_profiles
+            }
+        )
+
+        # Create and sign extrinsic
+        extrinsic = substrate.create_signed_extrinsic(call, keypair)
+        logger.debug(f"Created extrinsic: {extrinsic}")
+
+        # Submit and wait for finalization
+        receipt = substrate.submit_extrinsic(
+            extrinsic,
+            wait_for_inclusion=True,
+            wait_for_finalization=True
+        )
+
+        if receipt.is_success:
+            logger.info(f"Extrinsic successful in block {receipt.block_hash}")
+            # Log all events for debugging
+            for event in receipt.triggered_events:
+                logger.debug(f"Event: {event.value}")
+            return True
+        else:
+            logger.error(f"Extrinsic failed: {receipt.error_message}")
+            return False
+
+    except SubstrateRequestException as e:
+        logger.error(f"Substrate request error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during extrinsic submission: {e}", exc_info=True)
+        return False
+    finally:
+        if 'substrate' in locals():
+            substrate.close()
 # async def main():
     # # Example usage for update_pin_and_storage_requests
     # pin_requests = [
     #     {
-    #         "miner_pin_requests": [
-    #             {
-    #                 "miner_node_id": "0x1234567890abcdef",
-    #                 "cid": "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6ucX",
-    #                 "files_count": 5
-    #             },
-    #             {
-    #                 "miner_node_id": "0xabcdef1234567890",
-    #                 "cid": "QmY9jG2dWq6PfQ7dX8sYQ5b3r8sXWFqiW8w2e5j6hX2X2X",
-    #                 "files_count": 3
-    #             }
-    #         ],
     #         "storage_request_owner": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
     #         "storage_request_file_hash": "QmZ1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t1u2",
     #         "file_size": 1024,
@@ -521,6 +583,26 @@ async def call_update_pin_check_metrics(miners_metrics: List[Dict[str, Any]]) ->
     # print("Submitting update_pin_check_metrics...")
     # metrics_success = await call_update_pin_check_metrics(metrics)
     # print(f"update_pin_check_metrics {'succeeded' if metrics_success else 'failed'}")
+    # Example miner profiles data
+    # miner_profiles = [
+    #     {
+    #         "miner_node_id": "12D3KooWLGwcL7uJSv4rdhCeADULDuehrzcdXKfeMjaJ2sCh2pBJ",
+    #         "cid": "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6ucX",
+    #         "files_count": 5,
+    #         "files_size": 102400  # in bytes
+    #     },
+    #     {
+    #         "miner_node_id": "12D3KooWQYV9dGMFoRzNStwpXztXaBUjtPqi6aU76ZgUriHhKust",
+    #         "cid": "QmY9jG2dWq6PfQ7dX8sYQ5b3r8sXWFqiW8w2e5j6hX2X2X",
+    #         "files_count": 3,
+    #         "files_size": 51200
+    #     }
+    # ]
+
+    # print("Submitting update_miner_profiles...")
+    # success = await call_update_miner_profiles(miner_profiles)
+    # print(f"update_miner_profiles {'succeeded' if success else 'failed'}")
+
 
 # if __name__ == "__main__":
 #     asyncio.run(main())
