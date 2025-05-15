@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 import asyncio
 import os
 import sys
-import config
+from . import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

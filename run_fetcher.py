@@ -5,6 +5,7 @@ import asyncio
 import signal
 from urllib.parse import urlparse
 from substrate_fetcher import config, utils, storage_fetcher, ipfs_health_service
+from substrate_fetcher.current_epoch_check import monitor_validator_epochs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -75,6 +76,10 @@ async def run_application():
         else:
             print("IPFS health service was already running or failed to start.")
 
+        # Start the validator epoch monitor task
+        validator_task = asyncio.create_task(monitor_validator_epochs(config.db_pool))
+        print("Started validator epoch monitor.")
+
         # Wait for shutdown signal
         await shutdown_event.wait()
         print("\nShutdown signal received, cleaning up...")
@@ -87,6 +92,17 @@ async def run_application():
         if health_service_task:
             await ipfs_health_service.stop_ping_service()
             print("Stopped IPFS health service.")
+
+        # Cancel the validator task
+        if validator_task and not validator_task.done():
+            print("Cancelling validator monitor task...")
+            validator_task.cancel()
+            try:
+                await validator_task
+            except asyncio.CancelledError:
+                print("Validator monitor task cancelled successfully.")
+            except Exception as e:
+                print(f"Error during validator task cancellation: {e}")
 
         # Stop the fetcher
         await storage_fetcher.stop_fetching_async()

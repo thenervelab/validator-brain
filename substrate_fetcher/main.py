@@ -13,6 +13,7 @@ if parent_dir not in sys.path:
 import storage_fetcher
 import config
 from substrate_fetcher import utils, ipfs_health_service
+from check_current_epoch import monitor_validator_epochs
 
 async def initialize_database():
     """Initializes the database connection pool and creates tables."""
@@ -86,6 +87,10 @@ async def application_main_loop():
     else:
         print("IPFS health service was already running or failed to start.")
 
+    # Start the validator epoch monitor task
+    validator_task = asyncio.create_task(monitor_validator_epochs(config.db_pool))
+    print("Started validator epoch monitor.")
+
     last_printed_block = -1
     try:
         while not shutdown_event.is_set() and not storage_fetcher.is_stopping():
@@ -111,6 +116,17 @@ async def application_main_loop():
         if health_service_task:
             await ipfs_health_service.stop_ping_service()
             print("Stopped IPFS health service.")
+
+        # Cancel the validator task
+        if validator_task and not validator_task.done():
+            print("Cancelling validator monitor task...")
+            validator_task.cancel()
+            try:
+                await validator_task
+            except asyncio.CancelledError:
+                print("Validator monitor task cancelled successfully.")
+            except Exception as e:
+                print(f"Error during validator task cancellation: {e}")
 
         # Signal the fetcher to stop
         await storage_fetcher.stop_fetching_async()
