@@ -546,7 +546,7 @@ async def assign_to_storage_miners(block_number):
         other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
         available_miners = priority_miners + other_miners
 
-        if len(available_miners) < 5:
+        if len(available_miners) < 1:
             logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 5). Skipping action.")
             return
 

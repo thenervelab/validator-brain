@@ -494,7 +494,7 @@ async def ping_ipfs_node(ipfs_peer_id: str) -> bool:
 
 async def get_ipfs_content(cid: str, api_url: str) -> dict:
     """
-    Fetches content from IPFS using the provided CID.
+    Fetches content from IPFS using the provided CID via POST request.
 
     Args:
         cid (str): The IPFS CID to fetch content for.
@@ -511,12 +511,12 @@ async def get_ipfs_content(cid: str, api_url: str) -> dict:
         return {'success': False, 'content': None, 'error': "No CID provided"}
 
     logger.info(f"Fetching IPFS content for CID: {cid}")
-    cat_url = f"{api_url.rstrip('/')}/api/v0/cat?arg={cid}"
+    cat_url = f"{api_url.rstrip('/')}/api/v0/cat"
     timeout = aiohttp.ClientTimeout(total=10)
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(cat_url) as response:
+            async with session.post(cat_url, data={'arg': cid}) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     logger.warning(f"Failed to fetch IPFS content for CID {cid}: HTTP {response.status} - {error_text}")
