@@ -149,7 +149,6 @@ async def init_db(pool: asyncpg.Pool):
                 UNIQUE(owner_account_id, file_hash)
             );
         """)
-        print("Database tables initialized.")
 
         # New table for storing the latest block number
         await conn.execute("""
@@ -159,6 +158,19 @@ async def init_db(pool: asyncpg.Pool):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # Create pending_pool table if it doesn't exist
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_pool (
+                id SERIAL PRIMARY KEY,
+                owner VARCHAR(100) NOT NULL,
+                file_hash VARCHAR(350) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner, file_hash)
+            );
+        """)
+        print("Database tables initialized.")
 
 
 # --- Database Operations for Fetcher ---

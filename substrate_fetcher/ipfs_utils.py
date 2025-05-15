@@ -443,3 +443,51 @@ async def clean_profile_directory(
     except Exception as e:
         logger.error("Error cleaning profile directory %s: %s", output_dir, e)
         return {'success': False, 'removed_files': [], 'error': str(e)}
+
+
+async def ping_ipfs_node(ipfs_peer_id: str) -> bool:
+    """Pings an IPFS node to test connectivity without storing results in the database."""
+    if not ipfs_peer_id:
+        logger.warning(f"No IPFS peer ID provided. Skipping ping.")
+        return False
+
+    logger.info(f"Pinging IPFS node: {ipfs_peer_id}...")
+    
+    ping_successful = False
+    api_url = f"{config.IPFS_NODE_URL.rstrip('/')}/api/v0/ping"
+    params = {'arg': ipfs_peer_id, 'count': '1'}  # count must be a string for query params
+    timeout_seconds = getattr(config, 'IPFS_TIMEOUT_SECONDS', 10)
+    request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+    try:
+        async with aiohttp.ClientSession(timeout=request_timeout) as session:
+            async with session.post(api_url, params=params) as response:
+                if response.status == 200:
+                    async for line in response.content:
+                        try:
+                            data = json.loads(line.decode('utf-8'))
+                            if data.get('Success') and (data.get('Time') or data.get('AvgLatency')):
+                                ping_successful = True
+                                break  # Found success signal
+                        except json.JSONDecodeError:
+                            logger.debug(f"Non-JSON line from IPFS ping for {ipfs_peer_id}: {line}")
+                        except Exception as e_parse:
+                            logger.warning(f"Error parsing IPFS ping response line for {ipfs_peer_id}: {e_parse}")
+                    if not ping_successful:
+                        logger.warning(f"IPFS ping to {ipfs_peer_id} completed with HTTP 200 but no definitive success signal (RTT or Avg Latency) in response stream.")
+                else:
+                    error_text = await response.text()
+                    logger.warning(f"IPFS ping to {ipfs_peer_id} failed with status {response.status}: {error_text}")
+    except asyncio.TimeoutError:
+        logger.warning(f"IPFS ping to {ipfs_peer_id} timed out after {timeout_seconds} seconds.")
+    except aiohttp.ClientConnectorError as e_conn:
+        logger.error(f"IPFS connection error for {ipfs_peer_id}: {e_conn}")
+    except Exception as e_req:
+        logger.error(f"Request error during IPFS ping for {ipfs_peer_id}: {e_req}")
+
+    if ping_successful:
+        logger.info(f"Successfully pinged IPFS node: {ipfs_peer_id}")
+    else:
+        logger.warning(f"Failed to ping IPFS node: {ipfs_peer_id}")
+    
+    return ping_successful
