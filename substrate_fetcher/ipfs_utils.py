@@ -491,3 +491,52 @@ async def ping_ipfs_node(ipfs_peer_id: str) -> bool:
         logger.warning(f"Failed to ping IPFS node: {ipfs_peer_id}")
     
     return ping_successful
+
+async def get_ipfs_content(cid: str, api_url: str) -> dict:
+    """
+    Fetches content from IPFS using the provided CID.
+
+    Args:
+        cid (str): The IPFS CID to fetch content for.
+        api_url (str): The IPFS HTTP API endpoint (e.g., 'http://127.0.0.1:5001').
+
+    Returns:
+        Dict: A dictionary with the following keys:
+            - success (bool): True if the operation was successful, False otherwise.
+            - content (List[Dict] or None): The fetched content as a list of dictionaries, or None if failed.
+            - error (str or None): Error message if the operation failed, None otherwise.
+    """
+    if not cid:
+        logger.warning("No CID provided for IPFS content fetch.")
+        return {'success': False, 'content': None, 'error': "No CID provided"}
+
+    logger.info(f"Fetching IPFS content for CID: {cid}")
+    cat_url = f"{api_url.rstrip('/')}/api/v0/cat?arg={cid}"
+    timeout = aiohttp.ClientTimeout(total=10)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(cat_url) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.warning(f"Failed to fetch IPFS content for CID {cid}: HTTP {response.status} - {error_text}")
+                    return {'success': False, 'content': None, 'error': f"HTTP {response.status}: {error_text}"}
+
+                content_text = await response.text()
+                try:
+                    content = json.loads(content_text)
+                    logger.info(f"Successfully fetched IPFS content for CID {cid}")
+                    return {'success': True, 'content': content, 'error': None}
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse IPFS content as JSON for CID {cid}: {e}")
+                    return {'success': False, 'content': None, 'error': f"Invalid JSON: {str(e)}"}
+
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout while fetching IPFS content for CID {cid}")
+        return {'success': False, 'content': None, 'error': "Request timed out"}
+    except aiohttp.ClientError as e:
+        logger.error(f"Client error while fetching IPFS content for CID {cid}: {e}")
+        return {'success': False, 'content': None, 'error': f"Client error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Unexpected error while fetching IPFS content for CID {cid}: {e}")
+        return {'success': False, 'content': None, 'error': f"Unexpected error: {str(e)}"}

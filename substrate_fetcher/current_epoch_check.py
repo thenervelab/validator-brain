@@ -1,6 +1,6 @@
 import asyncio
 import asyncpg
-from substrate_fetcher.substrate_utils import load_hips_keypair
+from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests
 import logging
 import time
 import aiohttp
@@ -12,6 +12,7 @@ from typing import List, Dict
 
 from . import config
 from . import utils
+from . import ipfs_utils
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ async def sync_storage_requests(block_number):
             selected_validator = row['selected_validator']
 
             # Fetch content of the original CID
-            content_response = await utils.get_ipfs_content(original_file_hash, config.IPFS_NODE_URL)
+            content_response = await ipfs_utils.get_ipfs_content(original_file_hash, config.IPFS_NODE_URL)
             if not content_response['success']:
                 logger.warning(f"Failed to fetch content for CID {original_file_hash}: {content_response['error']}")
                 continue
@@ -314,6 +315,116 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
 
     logger.info("Finished reconstructing profiles to JSON files")
 
+async def update_pin_and_storage_requests_near_epoch_end(block_number):
+    """Processes 'processed' requests 5 blocks before epoch end, updates profiles, and submits to chain."""
+    logger.info(f"Checking for pin and storage update at block {block_number}...")
+    
+    # Fetch all processed requests from pending_pool
+    async with config.db_pool.acquire() as conn:
+        processed_requests = await conn.fetch(
+            """
+            SELECT owner, file_hash
+            FROM pending_pool
+            WHERE status = $1
+            """,
+            "processed"
+        )
+
+    if not processed_requests:
+        logger.info("No processed requests found to update pin and storage.")
+        return
+
+    # Process each request
+    for request in processed_requests:
+        owner = request['owner']
+        file_hash = request['file_hash']
+        
+        # Load the user's profile JSON
+        user_profile_path = os.path.join("profiles", "user_profile", f"{owner}.json")
+        if not os.path.exists(user_profile_path):
+            logger.warning(f"User profile not found for owner {owner} at {user_profile_path}")
+            continue
+
+        try:
+            with open(user_profile_path, 'r') as f:
+                user_data = json.load(f)
+                if not isinstance(user_data, list):
+                    user_data = [user_data]
+        except Exception as e:
+            logger.error(f"Error reading user profile for owner {owner}: {e}")
+            continue
+
+        # Calculate total file size and modify each entry
+        total_file_size = 0
+        updated_user_data = []
+        for entry in user_data:
+            # Only process entries matching the current file_hash
+            if entry.get('file_hash') != file_hash:
+                updated_user_data.append(entry)
+                continue
+
+            # Fetch file size for this file_hash
+            file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL)
+            file_size = file_size_response.get('size', 0)
+            total_file_size += file_size if file_size else 0
+
+            # Convert file_hash to byte array
+            file_hash_bytes = list(entry['file_hash'].encode('utf-8'))
+
+            # Encode main_req_hash
+            main_req_hash = entry.get('main_req_hash')
+            main_req_hash_encoded = main_req_hash.encode('utf-8') if main_req_hash else None
+
+            # Update the entry
+            updated_entry = {
+                "created_at": entry['created_at'],
+                "file_hash": file_hash_bytes,
+                "file_name": entry['file_name'],
+                "file_size_in_bytes": file_size if file_size else entry.get('file_size_in_bytes', 0),
+                "is_assigned": entry['is_assigned'],
+                "last_charged_at": entry['last_charged_at'],
+                "main_req_hash": main_req_hash_encoded,
+                "miner_ids": entry['miner_ids'],
+                "owner": entry['owner'],
+                "selected_validator": entry['selected_validator'],
+                "total_replicas": entry['total_replicas']
+            }
+            updated_user_data.append(updated_entry)
+
+        # Pin the updated user profile to IPFS
+        pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_user_data, api_url=config.IPFS_NODE_URL)
+        if not pin_response['success']:
+            logger.error(f"Failed to pin updated user profile for owner {owner}: {pin_response['error']}")
+            continue
+
+        user_profile_cid = pin_response['cid']
+        logger.info(f"Pinned updated user profile for owner {owner} to CID: {user_profile_cid}")
+
+        # Construct the parameter for call_update_pin_and_storage_requests
+        pin_request = [
+            {
+                "storage_request_owner": owner,
+                "storage_request_file_hash": file_hash,
+                "file_size": total_file_size,
+                "user_profile_cid": user_profile_cid
+            }
+        ]
+
+        # Call the chain function
+        logger.info(f"Submitting update_pin_and_storage_requests for owner {owner}...")
+        pin_success = await call_update_pin_and_storage_requests(pin_request)
+        logger.info(f"update_pin_and_storage_requests {'succeeded' if pin_success else 'failed'} for owner {owner}")
+
+        # Optionally, update the local user profile file with the new CID (if needed)
+        try:
+            with open(user_profile_path, 'w') as f:
+                json.dump(updated_user_data, f, indent=4)
+            logger.debug(f"Updated user profile file with new CID: {user_profile_path}")
+        except Exception as e:
+            logger.error(f"Error writing updated user profile file {user_profile_path}: {e}")
+
+    logger.info(f"Finished processing pin and storage updates at block {block_number}")
+
 async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
     """Detect offline miners at the start of each epoch and log the result."""
     try:
@@ -486,7 +597,7 @@ async def assign_to_storage_miners(block_number):
                         miner_data.append({
                             "created_at": int(time.time()),
                             "file_hash": file_hash,
-                            "file_size_in_bytes": (await utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
+                            "file_size_in_bytes": (await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
                             "miner_node_id": selected_miners[0],
                             "selected_validator": selected_validator,
                             "miner_ids": selected_miners,
@@ -524,7 +635,7 @@ async def assign_to_storage_miners(block_number):
                             "created_at": int(time.time()),
                             "file_hash": file_hash,
                             "file_name": file_name,
-                            "file_size_in_bytes": (await utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
+                            "file_size_in_bytes": (await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
                             "is_assigned": True,
                             "last_charged_at": int(time.time()),
                             "main_req_hash": main_req_hash,
@@ -582,6 +693,9 @@ async def monitor_validator_epochs(pool):
                 last_checked_block = None
             else:
                 await perform_action(current_block_number)
+                # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
+                if current_block_number % 100 == 94:
+                    await update_pin_and_storage_requests_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
             continue
 
