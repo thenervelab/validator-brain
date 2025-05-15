@@ -38,7 +38,6 @@ _ipfs_content = None
 _previous_ipfs_profiles = {}
 _latest_data = None  # Store latest block data
 
-# --- Helper Functions ---
 def get_status():
     return _current_status
 

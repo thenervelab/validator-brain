@@ -1,9 +1,14 @@
 import asyncio
+import asyncpg
 from substrate_fetcher.substrate_utils import load_hips_keypair
 import logging
 import time
+import aiohttp
+import json
+import os
+import shutil
+
 from . import config
-from ipfs_utils import ping_ipfs_node
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +29,55 @@ async def get_latest_block_number(pool):
             logger.error("No entries found in latest_block table")
             return None
 
+async def ping_ipfs_node(ipfs_peer_id: str) -> bool:
+    """Pings an IPFS node to test connectivity without storing results in the database."""
+    if not ipfs_peer_id:
+        logger.warning(f"No IPFS peer ID provided. Skipping ping.")
+        return False
+
+    logger.info(f"Pinging IPFS node: {ipfs_peer_id}...")
+    
+    ping_successful = False
+    api_url = f"{config.IPFS_NODE_URL.rstrip('/')}/api/v0/ping"
+    params = {'arg': ipfs_peer_id, 'count': '1'}  # count must be a string for query params
+    timeout_seconds = getattr(config, 'IPFS_TIMEOUT_SECONDS', 10)
+    request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+    try:
+        async with aiohttp.ClientSession(timeout=request_timeout) as session:
+            async with session.post(api_url, params=params) as response:
+                if response.status == 200:
+                    async for line in response.content:
+                        try:
+                            data = json.loads(line.decode('utf-8'))
+                            if data.get('Success') and (data.get('Time') or data.get('AvgLatency')):
+                                ping_successful = True
+                                break  # Found success signal
+                        except json.JSONDecodeError:
+                            logger.debug(f"Non-JSON line from IPFS ping for {ipfs_peer_id}: {line}")
+                        except Exception as e_parse:
+                            logger.warning(f"Error parsing IPFS ping response line for {ipfs_peer_id}: {e_parse}")
+                    if not ping_successful:
+                        logger.warning(f"IPFS ping to {ipfs_peer_id} completed with HTTP 200 but no definitive success signal (RTT or Avg Latency) in response stream.")
+                else:
+                    error_text = await response.text()
+                    logger.warning(f"IPFS ping to {ipfs_peer_id} failed with status {response.status}: {error_text}")
+    except asyncio.TimeoutError:
+        logger.warning(f"IPFS ping to {ipfs_peer_id} timed out after {timeout_seconds} seconds.")
+    except aiohttp.ClientConnectorError as e_conn:
+        logger.error(f"IPFS connection error for {ipfs_peer_id}: {e_conn}")
+    except Exception as e_req:
+        logger.error(f"Request error during IPFS ping for {ipfs_peer_id}: {e_req}")
+
+    if ping_successful:
+        logger.info(f"Successfully pinged IPFS node: {ipfs_peer_id}")
+    else:
+        logger.warning(f"Failed to ping IPFS node: {ipfs_peer_id}")
+    
+    return ping_successful
+
 async def perform_action(block_number):
-    # sync strorage requests and add that to pending pool
+    # sync storage requests and add that to pending pool
     await sync_storage_requests(block_number)
 
 async def sync_storage_requests(block_number):
@@ -67,6 +119,185 @@ async def sync_storage_requests(block_number):
 
     # Log the action call
     logger.info(f"Performing action at block {block_number} (Transferred records to pending_pool)")
+
+async def get_offline_miners(pool: asyncpg.Pool) -> list:
+    """Fetch all miners and identify offline ones with non-empty miner_profile_cid."""
+    offline_miners = []
+    
+    async with pool.acquire() as conn:
+        # Fetch all miners from the miners table
+        miners = await conn.fetch(
+            """
+            SELECT node_id, ipfs_storage_max, ipfs_zfs_pool_size, last_online_block, miner_profile_cid
+            FROM miners
+            """
+        )
+
+        # Fetch ipfs_node_id from registration table for each miner
+        for miner in miners:
+            node_id = miner['node_id']
+            miner_profile_cid = miner['miner_profile_cid']
+            
+            # Skip if miner_profile_cid is None or empty
+            if not miner_profile_cid or miner_profile_cid.strip() == "":
+                continue
+
+            # Get ipfs_node_id from registration table
+            ipfs_node_id = await conn.fetchval(
+                """
+                SELECT ipfs_node_id FROM registration WHERE node_id = $1
+                """,
+                node_id
+            )
+
+            if ipfs_node_id:
+                # Use ping_ipfs_node to test connectivity
+                is_reachable = await ping_ipfs_node(ipfs_node_id)
+                
+                if not is_reachable:
+                    offline_miners.append({
+                        "node_id": node_id,
+                        "ipfs_node_id": ipfs_node_id,
+                        "miner_profile_cid": miner_profile_cid
+                    })
+                    logger.info(f"Offline miner detected: node_id={node_id}, ipfs_node_id={ipfs_node_id}, miner_profile_cid={miner_profile_cid}")
+            else:
+                logger.warning(f"No ipfs_node_id found for miner: {node_id}")
+
+    return offline_miners
+
+async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
+    """Reconstructs miner and user profiles from the database into JSON files."""
+    # Define directories
+    profiles_dir = "profiles"
+    miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
+    user_profile_dir = os.path.join(profiles_dir, "user_profile")
+
+    # Delete the profiles directory if it exists
+    if os.path.exists(profiles_dir):
+        try:
+            shutil.rmtree(profiles_dir)
+            logger.info(f"Deleted existing profiles directory: {profiles_dir}")
+        except Exception as e:
+            logger.error(f"Error deleting profiles directory: {e}")
+            return
+
+    # Create directories
+    try:
+        os.makedirs(miner_profile_dir, exist_ok=True)
+        os.makedirs(user_profile_dir, exist_ok=True)
+        logger.info(f"Created directories: {miner_profile_dir}, {user_profile_dir}")
+    except Exception as e:
+        logger.error(f"Error creating directories: {e}")
+        return
+
+    async with pool.acquire() as conn:
+        # Process miner profiles
+        miner_rows = await conn.fetch(
+            """
+            SELECT miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator, updated_at
+            FROM miner_profile
+            """
+        )
+
+        for row in miner_rows:
+            miner_node_id = row['miner_node_id']
+            miner_data = {
+                "created_at": row['created_at'],
+                "file_hash": row['file_hash'],
+                "file_size_in_bytes": row['file_size_in_bytes'],
+                "selected_validator": row['selected_validator'],
+                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
+            }
+
+            miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
+
+            # Load existing data if the file exists
+            existing_data = []
+            if os.path.exists(miner_file_path):
+                try:
+                    with open(miner_file_path, 'r') as f:
+                        existing_data = json.load(f)
+                        if not isinstance(existing_data, list):
+                            existing_data = [existing_data]
+                except Exception as e:
+                    logger.warning(f"Error reading existing miner profile file {miner_file_path}: {e}")
+                    existing_data = []
+
+            # Append new data
+            existing_data.append(miner_data)
+
+            # Write back to file
+            try:
+                with open(miner_file_path, 'w') as f:
+                    json.dump(existing_data, f, indent=4)
+                logger.debug(f"Updated miner profile file: {miner_file_path}")
+            except Exception as e:
+                logger.error(f"Error writing miner profile file {miner_file_path}: {e}")
+
+        # Process user profiles
+        user_rows = await conn.fetch(
+            """
+            SELECT user_id, created_at, file_hash, file_name, file_size_in_bytes, is_assigned, last_charged_at, 
+                   main_req_hash, miner_ids, owner, selected_validator, total_replicas, updated_at
+            FROM user_profile
+            """
+        )
+
+        for row in user_rows:
+            user_id = row['user_id']
+            user_data = {
+                "created_at": row['created_at'],
+                "file_hash": row['file_hash'],
+                "file_name": row['file_name'],
+                "file_size_in_bytes": row['file_size_in_bytes'],
+                "is_assigned": row['is_assigned'],
+                "last_charged_at": row['last_charged_at'],
+                "main_req_hash": row['main_req_hash'],
+                "miner_ids": row['miner_ids'],
+                "owner": row['owner'],
+                "selected_validator": row['selected_validator'],
+                "total_replicas": row['total_replicas'],
+                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
+            }
+
+            user_file_path = os.path.join(user_profile_dir, f"{user_id}.json")
+
+            # Load existing data if the file exists
+            existing_data = []
+            if os.path.exists(user_file_path):
+                try:
+                    with open(user_file_path, 'r') as f:
+                        existing_data = json.load(f)
+                        if not isinstance(existing_data, list):
+                            existing_data = [existing_data]
+                except Exception as e:
+                    logger.warning(f"Error reading existing user profile file {user_file_path}: {e}")
+                    existing_data = []
+
+            # Append new data
+            existing_data.append(user_data)
+
+            # Write back to file
+            try:
+                with open(user_file_path, 'w') as f:
+                    json.dump(existing_data, f, indent=4)
+                logger.debug(f"Updated user profile file: {user_file_path}")
+            except Exception as e:
+                logger.error(f"Error writing user profile file {user_file_path}: {e}")
+
+    logger.info("Finished reconstructing profiles to JSON files")
+
+async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
+    """Detect offline miners at the start of each epoch and log the result."""
+    try:
+        offline_miners = await get_offline_miners(pool)
+        if offline_miners:
+            logger.info(f"Offline miners detected at epoch start: {offline_miners}")
+        else:
+            logger.info("No offline miners detected at epoch start")
+    except Exception as e:
+        logger.error(f"Error detecting offline miners: {e}")
 
 async def monitor_validator_epochs(pool):
     """Monitors the current_epoch_validator table and logs for 100 blocks when HIPS key matches."""
@@ -129,7 +360,7 @@ async def monitor_validator_epochs(pool):
                     target_block_number = block_number + 100
                     logger.info(f"Match found: HIPS account {hips_account_id} is the current validator at block {block_number}")
                     logger.info(f"Will perform action until block {target_block_number} (current block: {current_block_number})")
-                    await rebalance_offline_miners(pool)
+                    await perfrom_rebelance_and_reconstruct_profiles(pool)
                     await perform_action(current_block_number)
                 else:
                     logger.info(f"No match: HIPS account {hips_account_id} is not the current validator at block {block_number}")
@@ -138,57 +369,71 @@ async def monitor_validator_epochs(pool):
         await asyncio.sleep(5)
 
 
-async def get_offline_miners(pool: asyncpg.Pool, base_ipfs_url: str = "http://") -> list:
-    """Fetch all miners and identify offline ones with non-empty miner_profile_cid."""
-    offline_miners = []
-    
-    async with pool.acquire() as conn:
-        # Fetch all miners from the miners table
-        miners = await conn.fetch(
-            """
-            SELECT node_id, ipfs_storage_max, ipfs_zfs_pool_size, last_online_block, miner_profile_cid
-            FROM miners
-            """
-        )
+async def perfrom_rebelance_and_reconstruct_profiles(pool: asyncpg.Pool):
+    """Orchestrates epoch tasks: detects offline miners, reconstructs profiles, and processes pending requests."""
+    await detect_offline_miners_at_epoch_start(pool)
+    await reconstruct_profiles_to_json(pool)
 
-        # Fetch ipfs_node_id from registration table for each miner
-        for miner in miners:
-            node_id = miner['node_id']
-            miner_profile_cid = miner['miner_profile_cid']
-            
-            # Skip if miner_profile_cid is None or empty
-            if not miner_profile_cid or miner_profile_cid.strip() == "":
-                continue
+    profiles_dir = "profiles"
+    miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
 
-            # Get ipfs_node_id from registration table
-            ipfs_node_id = await conn.fetchval(
-                """
-                SELECT ipfs_node_id FROM registration WHERE node_id = $1
-                """,
-                node_id
-            )
-
-            if ipfs_node_id:
-                # Construct API URL (assuming port 5001, adjust if different)
-                api_url = f"{base_ipfs_url}{ipfs_node_id}:5001"
-                is_reachable = await ping_ipfs_node(ipfs_node_id)
-                
-                if not is_reachable:
-                    offline_miners.append({
-                        "node_id": node_id,
-                        "ipfs_node_id": ipfs_node_id,
-                        "miner_profile_cid": miner_profile_cid
-                    })
-                    logger.info(f"Offline miner detected: node_id={node_id}, ipfs_node_id={ipfs_node_id}, miner_profile_cid={miner_profile_cid}")
-            else:
-                logger.warning(f"No ipfs_node_id found for miner: {node_id}")
-
-    return offline_miners
-
-async def rebalance_offline_miners(pool: asyncpg.Pool):
-    # Call get_offline_miners only at the start of the epoch
     offline_miners = await get_offline_miners(pool)
-    if offline_miners:
-        logger.info(f"Offline miners detected at epoch start: {offline_miners}")
-    else:
-        logger.info("No offline miners detected at epoch start")
+    if not offline_miners:
+        logger.info("No offline miners to process.")
+        return
+
+    async with pool.acquire() as conn:
+        for miner in offline_miners:
+            node_id = miner['node_id']
+            miner_file_path = os.path.join(miner_profile_dir, f"{node_id}.json")
+
+            if os.path.exists(miner_file_path):
+                try:
+                    with open(miner_file_path, 'r') as f:
+                        profile_data = json.load(f)
+                        if not isinstance(profile_data, list):
+                            profile_data = [profile_data]
+
+                    for entry in profile_data:
+                        file_hash = entry.get('file_hash')
+                        if file_hash:
+                            # Fetch the owner from user_profile
+                            owner = await conn.fetchval(
+                                """
+                                SELECT owner_account_id
+                                FROM user_profile
+                                WHERE file_hash = $1
+                                LIMIT 1
+                                """,
+                                file_hash
+                            )
+                            if owner:
+                                # Check if the record already exists in pending_pool
+                                exists = await conn.fetchval(
+                                    """
+                                    SELECT EXISTS (
+                                        SELECT 1 FROM pending_pool WHERE owner = $1 AND file_hash = $2
+                                    )""",
+                                    owner, file_hash
+                                )
+                                if not exists:
+                                    await conn.execute(
+                                        """
+                                        INSERT INTO pending_pool (owner, file_hash, status)
+                                        VALUES ($1, $2, $3)
+                                        """,
+                                        owner, file_hash, "pending"
+                                    )
+                                    logger.info(f"Added pending request for owner={owner}, file_hash={file_hash} from offline miner {node_id}")
+                                else:
+                                    logger.debug(f"Pending request already exists for owner={owner}, file_hash={file_hash}")
+                            else:
+                                logger.warning(f"No owner found for file_hash={file_hash} in user_profile")
+                        else:
+                            logger.warning(f"No file_hash found in entry: {entry}")
+                except Exception as e:
+                    logger.error(f"Error processing miner profile for {node_id}: {e}")
+            else:
+                logger.info(f"No miner profile file found for offline miner: {node_id}")
+
+    logger.info("Finished processing epoch tasks")
