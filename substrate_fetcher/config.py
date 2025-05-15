@@ -2,7 +2,7 @@
 import os
 
 # --- Connection Configuration ---
-NODE_URL = "wss://rpc.dubs.rs"  # CHANGE THIS TO YOUR NODE
+NODE_URL = "ws://127.0.0.1:9944"
 
 TYPE_REGISTRY = {
     "types": {
