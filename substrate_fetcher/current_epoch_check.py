@@ -331,7 +331,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         )
 
     if not processed_requests:
-        logger.info("No pending requests found to update pin and storage.")
+        logger.info("No processed requests found to update pin and storage.")
         return
 
     # Process each request
@@ -343,18 +343,14 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         # Load the user's profile JSON
         user_profile_path = os.path.join("profiles", "user_profile", f"{owner}.json")
         user_data = []
-        if os.path.exists(user_profile_path):
-            try:
-                with open(user_profile_path, 'r') as f:
-                    user_data = json.load(f)
-                    if not isinstance(user_data, list):
-                        user_data = [user_data]
-            except Exception as e:
-                # logger.error(f"Error reading user profile for owner {owner}: {e}")
-                user_data = []
-        else:
-            user_data = []
-            # logger.warning(f"User profile not found for owner {owner} at {user_profile_path}. Using empty profile.")
+        try:
+            with open(user_profile_path, 'r') as f:
+                user_data = json.load(f)
+                if not isinstance(user_data, list):
+                    user_data = [user_data]
+        except Exception as e:
+            logger.error(f"Error reading user profile for owner {owner}: {e}")
+            user_data = []  # Use empty array on error
 
         # Fetch matching user_storage_requests record
         async with config.db_pool.acquire() as conn:
@@ -382,24 +378,27 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 continue
 
             # Fetch file size for this file_hash
-            try:
-                file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL)
-                file_size = file_size_response.get('size', 0)
-            except Exception as e:
-                logger.error(f"Failed to fetch file size for CID {entry['file_hash']} at {config.IPFS_NODE_URL}: {e}")
-                file_size = entry.get('file_size_in_bytes', 0)
+            file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL)
+            file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
 
-            # Keep file_hash and main_req_hash as strings initially
+            # Convert file_hash to byte array
+            file_hash_bytes = list(entry['file_hash'].encode('utf-8'))
+
+            # Encode main_req_hash
+            entry_main_req_hash = entry.get('main_req_hash')
+            main_req_hash_encoded = entry_main_req_hash.encode('utf-8') if entry_main_req_hash else None
+
+            # Update the entry
             updated_entry = {
                 "created_at": entry['created_at'],
-                "file_hash": entry['file_hash'],
+                "file_hash": file_hash_bytes,
                 "file_name": entry['file_name'],
                 "file_size_in_bytes": file_size if file_size else entry.get('file_size_in_bytes', 0),
                 "is_assigned": entry['is_assigned'],
                 "last_charged_at": entry['last_charged_at'],
-                "main_req_hash": entry.get('main_req_hash'),
+                "main_req_hash": main_req_hash_encoded,
                 "miner_ids": entry['miner_ids'],
                 "owner": entry['owner'],
                 "selected_validator": entry['selected_validator'],
@@ -410,48 +409,37 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         # Add new entry from user_storage_requests if found
         if storage_request:
             # Fetch file size for the processed request's file_hash
-            try:
-                file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
-                file_size = file_size_response.get('size', 0)
-            except Exception as e:
-                logger.error(f"Failed to fetch file size for CID {file_hash} at {config.IPFS_NODE_URL}: {e}")
-                file_size = 0
+            file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
+            file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
 
-            # Create new entry with strings
+            # Convert file_hash to byte array
+            file_hash_bytes = list(file_hash.encode('utf-8'))
+
+            # Encode main_req_hash
+            processed_main_req_hash_encoded = main_req_hash.encode('utf-8') if main_req_hash else None
+
+            # Create new entry
             new_entry = {
                 "created_at": storage_request['created_at'],
-                "file_hash": file_hash,
+                "file_hash": file_hash_bytes,
                 "file_name": storage_request['file_name'],
                 "file_size_in_bytes": file_size if file_size else 0,
                 "is_assigned": storage_request['is_assigned'],
                 "last_charged_at": storage_request['last_charged_at'],
-                "main_req_hash": main_req_hash,
+                "main_req_hash": processed_main_req_hash_encoded,
                 "miner_ids": storage_request['miner_ids'] or [],
                 "owner": storage_request['owner_account_id'],
                 "selected_validator": storage_request['selected_validator'],
                 "total_replicas": storage_request['total_replicas']
             }
             updated_user_data.append(new_entry)
-
-        # Convert file_hash and main_req_hash to byte arrays in JSON before pinning
-        import json
-        def convert_to_bytes(obj):
-            if isinstance(obj, dict):
-                return {k: convert_to_bytes(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_to_bytes(i) for i in obj]
-            elif isinstance(obj, str) and k in ['file_hash', 'main_req_hash']:
-                return list(obj.encode('utf-8'))
-            return obj
-
-        # Create a copy of updated_user_data and convert to JSON string with byte arrays
-        updated_user_data_for_ipfs = convert_to_bytes(updated_user_data.copy())
-        json_content = json.dumps(updated_user_data_for_ipfs)
+        else:
+            logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}")
 
         # Pin the updated user profile to IPFS
-        pin_response = await ipfs_utils.upload_json_to_ipfs(json_content, api_url=config.IPFS_NODE_URL)
+        pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_user_data, api_url=config.IPFS_NODE_URL)
         if not pin_response['success']:
             logger.error(f"Failed to pin updated user profile for owner {owner}: {pin_response['error']}")
             continue
@@ -459,15 +447,11 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         user_profile_cid = pin_response['cid']
         logger.info(f"Pinned updated user profile for owner {owner} to CID: {user_profile_cid}")
 
-        # Convert file_hash to bytes for chain call
-        file_hash_bytes = list(file_hash.encode('utf-8'))
-        main_req_hash_bytes = list(main_req_hash.encode('utf-8')) if main_req_hash else None
-
         # Construct the parameter for call_update_pin_and_storage_requests
         pin_request = [
             {
                 "storage_request_owner": owner,
-                "storage_request_file_hash": file_hash_bytes,
+                "storage_request_file_hash": file_hash,
                 "file_size": total_file_size,
                 "user_profile_cid": user_profile_cid,
                 "total_files_pinned": total_files_pinned
@@ -483,12 +467,13 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         try:
             os.makedirs(os.path.dirname(user_profile_path), exist_ok=True)
             with open(user_profile_path, 'w') as f:
-                json.dump(updated_user_data, f, indent=4)  # Store original strings
+                json.dump(updated_user_data, f, indent=4)
             logger.debug(f"Updated user profile file with new CID: {user_profile_path}")
         except Exception as e:
             logger.error(f"Error writing updated user profile file {user_profile_path}: {e}")
 
     logger.info(f"Finished processing pin and storage updates at block {block_number}")
+
 
 async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
     """Detect offline miners at the start of each epoch and log the result."""
