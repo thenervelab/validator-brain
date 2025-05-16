@@ -684,7 +684,7 @@ async def monitor_validator_epochs(pool):
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
                 if current_block_number % 5 == 0:
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
-                    # await update_miner_profiles_near_epoch_end(current_block_number)
+                    await update_miner_profiles_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
             continue
 
