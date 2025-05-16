@@ -187,103 +187,124 @@ async def run_garbage_collector(api_url: str = 'http://127.0.0.1:5001', quiet: b
             return {'success': False, 'removed_blocks': [], 'error': str(e)}
 
 async def get_file_size(
-    cid: str,
+    cid_str: str,
     api_url: str = "http://127.0.0.1:5001",
     timeout: int = 10
 ) -> Dict[str, Union[int, str, None]]:
-    """    
-    Args:
-        cid: The CID to get size for
-        api_url: IPFS API endpoint
-        timeout: Timeout in seconds
-        
-    Returns:
-        Dictionary with success status, CID, size, and error message
     """
-    logger.info(f"cid for fethcing file size is {cid}")
-    url = f"{api_url}/api/v0/dag/stat?arg={cid}"
-    
+    Gets the size of an IPFS object using /api/v0/dag/stat.
+
+    Args:
+        cid_str: The CID string to get size for.
+        api_url: IPFS API endpoint.
+        timeout: Timeout in seconds.
+
+    Returns:
+        Dictionary with success status, CID, size, and error message.
+    """
+    logger.info(f"Fetching file size for CID (using dag/stat): {cid_str}")
+    url = f"{api_url}/api/v0/dag/stat"
+    request_params = {'arg': cid_str}
+
     try:
-        # Validate CID first (like Rust would with Cid::from_str)
+        # Validate CID first
         try:
-            CID.decode(cid)
+            CID.decode(cid_str)
         except ValueError as e:
+            logger.warning(f"Invalid CID format for '{cid_str}': {e}")
             return {
                 'success': False,
-                'cid': cid,
+                'cid': cid_str,
                 'size': None,
-                'error': f"Invalid CID: {str(e)}"
+                'error': f"Invalid CID format: {str(e)}"
             }
 
         async with aiohttp.ClientSession() as session:
+            # For IPFS API commands like dag/stat, arguments are often passed as query parameters,
+            # even with POST. aiohttp handles this with the `params` argument.
+            # No explicit `Content-Type` or `data` body is needed here.
             async with session.post(
                 url,
-                headers={"Content-Type": "application/json"},
-                data="{}",  # Empty JSON body like Rust version
+                params=request_params,
                 timeout=aiohttp.ClientTimeout(total=timeout)
             ) as response:
-                
+
                 if not response.ok:
                     error_text = await response.text()
+                    logger.error(
+                        f"API error for CID '{cid_str}' using dag/stat. Status: {response.status}. Response: {error_text}"
+                    )
                     return {
                         'success': False,
-                        'cid': cid,
+                        'cid': cid_str,
                         'size': None,
-                        'error': f"Unexpected status code {response.status}: {error_text}"
+                        'error': f"API error {response.status}: {error_text}"
                     }
-                
+
                 try:
                     data = await response.json()
-                    if 'Size' in data or 'TotalSize' in data:
-                        size = data.get('Size', data.get('TotalSize'))
+                    # /api/v0/dag/stat response structure: {"Size": <num>, "NumBlocks": <num>}
+                    if 'Size' in data:
+                        size = data['Size']
+                        logger.info(f"Successfully fetched size for CID '{cid_str}': {size} bytes")
                         return {
                             'success': True,
-                            'cid': cid,
+                            'cid': cid_str,
                             'size': size,
                             'error': None
                         }
                     else:
+                        logger.warning(f"No 'Size' field in dag/stat response for CID '{cid_str}'. Data: {data}")
                         return {
                             'success': False,
-                            'cid': cid,
+                            'cid': cid_str,
                             'size': None,
-                            'error': "No size field in response"
+                            'error': "No 'Size' field in API response"
                         }
                 except json.JSONDecodeError as e:
+                    # Log the raw text if JSON decoding fails
+                    raw_text = await response.text()
+                    logger.error(
+                        f"Failed to parse JSON response for CID '{cid_str}' from dag/stat: {e}. Raw response: '{raw_text[:200]}...'"
+                    )
                     return {
                         'success': False,
-                        'cid': cid,
+                        'cid': cid_str,
                         'size': None,
-                        'error': f"Failed to parse response: {str(e)}"
+                        'error': f"Failed to parse API response as JSON: {str(e)}"
                     }
 
     except asyncio.TimeoutError:
+        logger.error(f"Request timed out for CID '{cid_str}' using dag/stat.")
         return {
             'success': False,
-            'cid': cid,
+            'cid': cid_str,
             'size': None,
-            'error': f"Request timed out for CID: {cid}"
+            'error': f"Request timed out for CID: {cid_str}"
         }
-    except aiohttp.ClientConnectorError:
+    except aiohttp.ClientConnectorError as e: # More specific connection error
+        logger.error(f"Connection error for CID '{cid_str}' to {api_url}: {e}")
         return {
             'success': False,
-            'cid': cid,
+            'cid': cid_str,
             'size': None,
-            'error': f"Connection error for CID {cid} - Check IPFS node URL"
+            'error': f"Connection error to IPFS API ({api_url}): {str(e)}"
         }
-    except aiohttp.ClientError as e:
+    except aiohttp.ClientError as e: # Catch other aiohttp client errors
+        logger.error(f"AIOHTTP client error for CID '{cid_str}' using dag/stat: {e}")
         return {
             'success': False,
-            'cid': cid,
+            'cid': cid_str,
             'size': None,
-            'error': f"Failed to send request for CID {cid}: {str(e)}"
+            'error': f"HTTP client error: {str(e)}"
         }
     except Exception as e:
+        logger.exception(f"Unexpected error for CID '{cid_str}' using dag/stat.") # Logs stack trace
         return {
             'success': False,
-            'cid': cid,
+            'cid': cid_str,
             'size': None,
-            'error': f"Unexpected error for CID {cid}: {str(e)}"
+            'error': f"An unexpected error occurred: {str(e)}"
         }
 
 async def create_or_update_profile_json(
