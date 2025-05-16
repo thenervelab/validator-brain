@@ -336,9 +336,6 @@ async def upload_json_to_ipfs(
     Returns:
         Dict: {'success': bool, 'cid': str or None, 'error': str or None}
     """
-    if not await test_node_connectivity(api_url):
-        return {'success': False, 'cid': None, 'error': "IPFS node is not reachable"}
-
     logger.info("data_present=%s, file_path_present=%s, json_str_present=%s", 
                      data_present, file_path_present, json_str_present)
     if sum(1 for x in (data_present, file_path_present, json_str_present)) != 1:
