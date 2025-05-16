@@ -415,6 +415,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 "total_replicas": entry['total_replicas']
             }
             updated_user_data.append(updated_entry)
+            updated_user_profile_data.append(entry)
 
         # Add new entry from user_storage_requests if found
         if storage_request:
@@ -461,7 +462,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 "total_replicas": storage_request['total_replicas']
             }
             updated_user_data.append(new_entry)
-            updated_user_profile_data()
+            updated_user_profile_data.append(new_file_entry)
         else:
             logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}. Cannot create new profile entry for {file_hash}.")
 
@@ -523,7 +524,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         try:
             os.makedirs(os.path.dirname(user_profile_path), exist_ok=True)
             with open(user_profile_path, 'w') as f:
-                json.dump(updated_user_data, f, indent=4)
+                json.dump(updated_user_profile_data, f, indent=4)
             logger.info(f"Updated user profile file with new CID: {user_profile_path}")
         except Exception as e:
             logger.error(f"Error writing updated user profile file {user_profile_path}: {e}")
