@@ -5,7 +5,7 @@ import asyncio
 import os
 import aiofiles
 from multiformats import CID
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Union
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
