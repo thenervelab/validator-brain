@@ -127,6 +127,7 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
         for req in requests:
 
             owner_account_id = substrate.ss58_decode(req["storage_request_owner"])
+            logger.info(f"owner_account_id converted :  {owner_account_id}")
             if not owner_account_id or len(owner_account_id) != 64:  # 32 bytes = 64 hex chars
                 logger.error(f"Invalid AccountId for owner {req['storage_request_owner']}")
                 return False

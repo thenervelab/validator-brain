@@ -186,56 +186,106 @@ async def run_garbage_collector(api_url: str = 'http://127.0.0.1:5001', quiet: b
             logger.error("Error running garbage collector at %s: %s", api_url, e)
             return {'success': False, 'removed_blocks': [], 'error': str(e)}
 
-async def get_file_size(cid: str, api_url: str = 'http://127.0.0.1:5001') -> Dict:
+async def get_file_size(
+    cid: str,
+    api_url: str = "http://127.0.0.1:5001",
+    timeout: int = 10
+) -> Dict[str, Union[int, str, None]]:
     """
-    Get the cumulative size of a CID's DAG (file or folder).
-
+    Python equivalent of Rust's fetch_ipfs_file_size
+    
     Args:
-        cid (str): The CID to get the size for.
-        api_url (str): The IPFS HTTP API endpoint (default: http://127.0.0.1:5001).
-
+        cid: The CID to get size for
+        api_url: IPFS API endpoint
+        timeout: Timeout in seconds
+        
     Returns:
-        Dict: {'success': bool, 'cid': str, 'size': int or None, 'error': str or None}
+        Dictionary with success status, CID, size, and error message
     """
-    if not await test_node_connectivity(api_url):
-        return {'success': False, 'cid': cid, 'size': None, 'error': "IPFS node is not reachable"}
-
-    async with aiohttp.ClientSession() as session:
+    url = f"{api_url}/api/v0/dag/stat?arg={cid}"
+    
+    try:
+        # Validate CID first (like Rust would with Cid::from_str)
         try:
-            # Validate CID
-            logger.debug("Parsing CID: %s", cid)
-            try:
-                CID.decode(cid)
-            except ValueError as e:
-                logger.error("Invalid CID %s: %s", cid, e)
-                return {'success': False, 'cid': cid, 'size': None, 'error': str(e)}
+            CID.decode(cid)
+        except ValueError as e:
+            return {
+                'success': False,
+                'cid': cid,
+                'size': None,
+                'error': f"Invalid CID: {str(e)}"
+            }
 
-            # Get DAG stats
-            logger.debug("Fetching DAG stats for CID %s at %s", cid, api_url)
+        async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{api_url}/api/v0/dag/stat?arg={cid}",
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                logger.debug("DAG stat response status for CID %s: %s", cid, resp.status)
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error("DAG stat failed for CID %s: %s - %s", cid, resp.status, error_text)
-                    return {'success': False, 'cid': cid, 'size': None, 'error': f"DAG stat failed: {error_text}"}
+                url,
+                headers={"Content-Type": "application/json"},
+                data="{}",  # Empty JSON body like Rust version
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as response:
                 
-                data = await resp.json()
-                logger.debug("DAG stat response for CID %s: %s", cid, data)
-                size = data.get('TotalSize', None)
-                if size is not None:
-                    return {'success': True, 'cid': cid, 'size': size, 'error': None}
-                else:
-                    return {'success': False, 'cid': cid, 'size': None, 'error': "No size found in DAG stats"}
+                if not response.ok:
+                    error_text = await response.text()
+                    return {
+                        'success': False,
+                        'cid': cid,
+                        'size': None,
+                        'error': f"Unexpected status code {response.status}: {error_text}"
+                    }
+                
+                try:
+                    data = await response.json()
+                    if 'Size' in data or 'TotalSize' in data:
+                        size = data.get('Size', data.get('TotalSize'))
+                        return {
+                            'success': True,
+                            'cid': cid,
+                            'size': size,
+                            'error': None
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'cid': cid,
+                            'size': None,
+                            'error': "No size field in response"
+                        }
+                except json.JSONDecodeError as e:
+                    return {
+                        'success': False,
+                        'cid': cid,
+                        'size': None,
+                        'error': f"Failed to parse response: {str(e)}"
+                    }
 
-        except asyncio.TimeoutError:
-            logger.error("Timeout fetching DAG stats for CID %s at %s", cid, api_url)
-            return {'success': False, 'cid': cid, 'size': None, 'error': "Timeout fetching DAG stats"}
-        except Exception as e:
-            logger.error("Error fetching DAG stats for CID %s at %s: %s", cid, api_url, e)
-            return {'success': False, 'cid': cid, 'size': None, 'error': str(e)}
+    except asyncio.TimeoutError:
+        return {
+            'success': False,
+            'cid': cid,
+            'size': None,
+            'error': f"Request timed out for CID: {cid}"
+        }
+    except aiohttp.ClientConnectorError:
+        return {
+            'success': False,
+            'cid': cid,
+            'size': None,
+            'error': f"Connection error for CID {cid} - Check IPFS node URL"
+        }
+    except aiohttp.ClientError as e:
+        return {
+            'success': False,
+            'cid': cid,
+            'size': None,
+            'error': f"Failed to send request for CID {cid}: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'cid': cid,
+            'size': None,
+            'error': f"Unexpected error for CID {cid}: {str(e)}"
+        }
 
 async def create_or_update_profile_json(
     profile_type: str,
