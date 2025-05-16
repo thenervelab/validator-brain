@@ -17,3 +17,4 @@ Indexes:
 Referenced by:
     TABLE "miner_content_association" CONSTRAINT "miner_content_association_miner_id_fkey" FOREIGN KEY (miner_id) REFERENCES miners(id)
 
+    

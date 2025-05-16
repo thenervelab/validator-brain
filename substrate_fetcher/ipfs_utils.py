@@ -191,9 +191,7 @@ async def get_file_size(
     api_url: str = "http://127.0.0.1:5001",
     timeout: int = 10
 ) -> Dict[str, Union[int, str, None]]:
-    """
-    Python equivalent of Rust's fetch_ipfs_file_size
-    
+    """    
     Args:
         cid: The CID to get size for
         api_url: IPFS API endpoint
@@ -202,6 +200,7 @@ async def get_file_size(
     Returns:
         Dictionary with success status, CID, size, and error message
     """
+    logger.info(f"cid for fethcing file size is {cid}")
     url = f"{api_url}/api/v0/dag/stat?arg={cid}"
     
     try:

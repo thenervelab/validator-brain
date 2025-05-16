@@ -16,4 +16,4 @@ CREATE TABLE registration (
     status VARCHAR(20) NOT NULL,               -- Status (e.g., "Online")
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Track when the record was last updated
 );
-SELECT * FROM registration LIMIT 100;
+SELECT * FROM pending_pool LIMIT 100;

@@ -320,7 +320,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
     async with config.db_pool.acquire() as conn:
         processed_requests = await conn.fetch(
             """
-            SELECT owner, file_hash, main_req_hash
+            SELECT owner, file_hash, main_req_hash, selected_miners
             FROM pending_pool
             WHERE status = $1
             """,
@@ -380,7 +380,9 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             selected_miners = request['selected_miners'] or []  # Use selected_miners from pending_pool, default to empty list
             
             # Convert file_hash to byte array
-            file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
+            file_hash_hex = file_hash.encode('utf-8').hex()
+            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
+            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
 
             # Encode main_req_hash
             entry_main_req_hash = entry.get('main_req_hash')
@@ -389,7 +391,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             # Update the entry
             updated_entry = {
                 "created_at": entry['created_at'],
-                "file_hash": file_hash_bytes,
+                "file_hash": file_hash_vec,
                 "file_name": entry['file_name'],
                 "file_size_in_bytes": file_size if file_size else entry.get('file_size_in_bytes', 0),
                 "is_assigned": entry['is_assigned'],
@@ -407,12 +409,15 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             logger.info("Adding new entry from storage request")
             # Fetch file size for the processed request's file_hash
             file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
+            logger.info(f"file_size_response : {file_size_response}")
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
 
             # Convert file_hash to byte array
-            file_hash_bytes = list(file_hash.encode('utf-8').hex())
+            file_hash_hex = file_hash.encode('utf-8').hex()
+            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
+            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
 
             # Encode main_req_hash
             processed_main_req_hash_encoded = main_req_hash.encode('utf-8').hex() if main_req_hash else None
@@ -420,13 +425,13 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             # Create new entry
             new_entry = {
                 "created_at": storage_request['created_at'],
-                "file_hash": file_hash_bytes,
+                "file_hash": file_hash_vec,
                 "file_name": storage_request['file_name'],
                 "file_size_in_bytes": file_size if file_size else 0,
                 "is_assigned": storage_request['is_assigned'],
                 "last_charged_at": storage_request['last_charged_at'],
                 "main_req_hash": processed_main_req_hash_encoded,
-                "miner_ids": storage_request['miner_ids'] or [],
+                "miner_ids": selected_miners,
                 "owner": storage_request['owner_account_id'],
                 "selected_validator": storage_request['selected_validator'],
                 "total_replicas": storage_request['total_replicas']
@@ -461,6 +466,21 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         logger.info(f"Submitting update_pin_and_storage_requests for : {pin_request}...")
         pin_success = await call_update_pin_and_storage_requests(pin_request)
         logger.info(f"update_pin_and_storage_requests {'succeeded' if pin_success else 'failed'} for owner {owner}")
+
+        # If the transaction was successful, delete the processed request from pending_pool
+        if pin_success:
+            async with config.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    DELETE FROM pending_pool
+                    WHERE owner = $1 AND file_hash = $2
+                    """,
+                    owner,
+                    file_hash
+                )
+                logger.info(f"Deleted processed request from pending_pool: owner={owner}, file_hash={file_hash}")
+        else:
+            logger.warning(f"Transaction failed, retaining processed request in pending_pool: owner={owner}, file_hash={file_hash}")
 
         # Update the local user profile file
         try:
@@ -756,7 +776,10 @@ async def update_miner_profiles_near_epoch_end(block_number):
         updated_miner_data = []
         for entry in miner_data:
             # Encode file_hash to byte array
-            file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
+
+            file_hash_hex = file_hash.encode('utf-8').hex()
+            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
+            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
 
             # Update totals
             file_size = entry.get('file_size_in_bytes', 0)
@@ -766,7 +789,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
             # Create updated entry
             updated_entry = {
                 "created_at": entry['created_at'],
-                "file_hash": file_hash_bytes,
+                "file_hash": file_hash_vec,
                 "file_size_in_bytes": file_size,
                 "miner_node_id": entry['miner_node_id'],
                 "selected_validator": entry['selected_validator']
