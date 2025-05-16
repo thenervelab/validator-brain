@@ -320,7 +320,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
     async with config.db_pool.acquire() as conn:
         processed_requests = await conn.fetch(
             """
-            SELECT owner, file_hash, main_req_hash
+            SELECT owner, file_hash, main_req_hash, selected_miners
             FROM pending_pool
             WHERE status = $1
             """,
@@ -338,6 +338,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         owner = request['owner']
         file_hash = request['file_hash']
         main_req_hash = request['main_req_hash']
+        selected_miners = request['selected_miners'] or []  # Use selected_miners from pending_pool, default to empty list
         
         # Load the user's profile JSON
         user_profile_path = os.path.join("profiles", "user_profile", f"{owner}.json")
@@ -377,7 +378,6 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
-            selected_miners = request['selected_miners'] or []  # Use selected_miners from pending_pool, default to empty list
             
             # Convert file_hash to byte array
             file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
