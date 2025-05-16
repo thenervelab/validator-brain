@@ -463,6 +463,43 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             }
             updated_user_data.append(new_entry)
             updated_user_profile_data.append(new_file_entry)
+
+
+            # Update miner profile JSON files for each selected miner
+            miner_profile_dir = os.path.join("profiles", "miner_profile")
+            os.makedirs(miner_profile_dir, exist_ok=True)
+            for miner_id in selected_miners:
+                miner_profile_path = os.path.join(miner_profile_dir, f"{miner_id}.json")
+                miner_data = []
+                try:
+                    with open(miner_profile_path, 'r') as f:
+                        miner_data = json.load(f)
+                        if not isinstance(miner_data, list):
+                            miner_data = [miner_data]
+                except FileNotFoundError:
+                    logger.info(f"Miner profile not found, creating new: {miner_profile_path}")
+                    miner_data = []
+                except Exception as e:
+                    logger.error(f"Error reading miner profile for miner {miner_id}: {e}")
+                    miner_data = []
+
+                # Create new entry for miner profile
+                miner_entry = {
+                    "created_at": storage_request['created_at'],
+                    "file_hash": file_hash,
+                    "file_size_in_bytes": file_size if file_size else 0,
+                    "miner_node_id": miner_id,
+                    "selected_validator": storage_request['selected_validator']
+                }
+                miner_data.append(miner_entry)
+
+                # Write updated miner profile so it submits minerprofile updated
+                try:
+                    with open(miner_profile_path, 'w') as f:
+                        json.dump(miner_data, f, indent=4)
+                    logger.info(f"Updated miner profile for miner {miner_id}: {miner_profile_path}")
+                except Exception as e:
+                    logger.error(f"Error writing miner profile for miner {miner_id}: {e}")
         else:
             logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}. Cannot create new profile entry for {file_hash}.")
 
@@ -799,7 +836,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
                     miner_data = [miner_data]
         except Exception as e:
             logger.error(f"Error reading miner profile file {miner_file_path}: {e}")
-            continue
+            miner_data = []
 
         # Skip if the miner data is empty
         if not miner_data:
