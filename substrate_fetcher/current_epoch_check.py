@@ -407,13 +407,14 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         # Add new entry from user_storage_requests if found
         if storage_request:
             logger.info("Adding new entry from storage request")
+            selected_miners = request['selected_miners'] or [] 
             # Fetch file size for the processed request's file_hash
             file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
             logger.info(f"file_size_response : {file_size_response}")
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
-
+            
             # Convert file_hash to byte array
             file_hash_hex = file_hash.encode('utf-8').hex()
             file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
