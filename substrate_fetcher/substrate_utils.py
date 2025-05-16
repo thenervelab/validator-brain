@@ -17,16 +17,17 @@ parent_dir = os.path.dirname(script_path)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-def string_to_bounded_vec(s: str) -> List[int]:
-    """Converts a string to a list of byte values (BoundedVec<u8, ...> equivalent).
+def string_to_bounded_vec(s: str) -> str:
+    """Converts a string to a representation suitable for Substrate BoundedVec<u8, ...>.
+    The substrate-interface library will handle the actual encoding from this string.
 
     Args:
         s (str): The input string (e.g., an IPFS CID or node ID).
 
     Returns:
-        List[int]: A list of integers representing the byte values of the string.
+        str: The input string itself, to be processed by substrate-interface.
     """
-    return list(s.encode('utf-8'))
+    return s
 
 def find_hips_key(keystore_path: str) -> str:
     """Finds the HIPS key file in the keystore directory by looking for a file starting with '68697073'.
