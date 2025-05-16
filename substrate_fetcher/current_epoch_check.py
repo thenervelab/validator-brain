@@ -96,7 +96,6 @@ async def sync_storage_requests(block_number):
             FROM user_storage_requests
             """
         )
-
         for row in rows:
             owner = row['owner_account_id']
             original_file_hash = row['file_hash']
@@ -381,6 +380,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         total_file_size = 0
         total_files_pinned = 0
         updated_user_data = []
+        updated_user_profile_data = []
 
         # Process existing user_data entries
         for entry in user_data:
@@ -447,7 +447,21 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 "selected_validator": storage_request['selected_validator'],
                 "total_replicas": storage_request['total_replicas']
             }
+            new_file_entry = {
+                "created_at": storage_request['created_at'],
+                "file_hash": file_hash,
+                "file_name": storage_request['file_name'],
+                "file_size_in_bytes": file_size if file_size else 0,
+                "is_assigned": storage_request['is_assigned'],
+                "last_charged_at": storage_request['last_charged_at'],
+                "main_req_hash": main_req_hash,
+                "miner_ids": selected_miners,
+                "owner": storage_request['owner_account_id'],
+                "selected_validator": storage_request['selected_validator'],
+                "total_replicas": storage_request['total_replicas']
+            }
             updated_user_data.append(new_entry)
+            updated_user_profile_data()
         else:
             logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}. Cannot create new profile entry for {file_hash}.")
 
@@ -491,6 +505,17 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                     file_hash
                 )
                 logger.info(f"Deleted processed request from pending_pool: owner={owner}, file_hash={file_hash}")
+
+                # Delete from user_storage_requests
+                await conn.execute(
+                    """
+                    DELETE FROM user_storage_requests
+                    WHERE owner_account_id = $1 AND file_hash = $2
+                    """,
+                    owner,
+                    main_req_hash
+                )
+                logger.info(f"Deleted record from user_storage_requests: owner={owner}, file_hash={main_req_hash}")
         else:
             logger.warning(f"Transaction failed, retaining processed request in pending_pool: owner={owner}, file_hash={file_hash}")
             
