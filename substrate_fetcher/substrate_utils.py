@@ -138,15 +138,15 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
             # The correct way to handle the SS58 address - directly use it as is
             # The Substrate library will handle the SS58 conversion internally
             formatted_req = {
-                "miner_pin_requests": [
-                    {
-                        "miner_node_id": string_to_bounded_vec(item["miner_node_id"]),
-                        "cid": string_to_bounded_vec(item["cid"]),
-                        "files_count": item["files_count"]
-                    }
-                    # Use .get to handle cases where miner_pin_requests might be missing or None
-                    for item in req.get("miner_pin_requests", []) if req.get("miner_pin_requests") is not None
-                ],
+                # "miner_pin_requests": [
+                #     {
+                #         "miner_node_id": string_to_bounded_vec(item["miner_node_id"]),
+                #         "cid": string_to_bounded_vec(item["cid"]),
+                #         "files_count": item["files_count"]
+                #     }
+                #     # Use .get to handle cases where miner_pin_requests might be missing or None
+                #     for item in req.get("miner_pin_requests", []) if req.get("miner_pin_requests") is not None
+                # ],
                 "storage_request_owner": req["storage_request_owner"],
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
                 "file_size": int(req["file_size"]),
