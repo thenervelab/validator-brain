@@ -98,7 +98,16 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
     """Calls the update_pin_and_storage_requests extrinsic on the Substrate node using the HIPS key for signing.
 
     Args:
-        requests (List[Dict[str, Any]]): List of storage request updates.
+        requests (List[Dict[str, Any]]): List of storage request updates. Each dict should contain:
+            - miner_pin_requests: List[Dict[str, Any]] (optional)
+                - miner_node_id: str
+                - cid: str
+                - files_count: int
+            - storage_request_owner: str (SS58 address)
+            - storage_request_file_hash: str (IPFS CID)
+            - file_size: int
+            - user_profile_cid: str (IPFS CID)
+
 
     Returns:
         bool: True if the extrinsic was successfully submitted and finalized, False otherwise.
@@ -128,6 +137,15 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
             # The correct way to handle the SS58 address - directly use it as is
             # The Substrate library will handle the SS58 conversion internally
             formatted_req = {
+                "miner_pin_requests": [
+                    {
+                        "miner_node_id": string_to_bounded_vec(item["miner_node_id"]),
+                        "cid": string_to_bounded_vec(item["cid"]),
+                        "files_count": item["files_count"]
+                    }
+                    # Use .get to handle cases where miner_pin_requests might be missing or None
+                    for item in req.get("miner_pin_requests", []) if req.get("miner_pin_requests") is not None
+                ],
                 "storage_request_owner": req["storage_request_owner"],
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
                 "file_size": int(req["file_size"]),
