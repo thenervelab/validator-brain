@@ -339,8 +339,10 @@ async def upload_json_to_ipfs(
     if not await test_node_connectivity(api_url):
         return {'success': False, 'cid': None, 'error': "IPFS node is not reachable"}
 
+    logger.info("data_present=%s, file_path_present=%s, json_str_present=%s", 
+                     data_present, file_path_present, json_str_present)
     if sum(1 for x in (data_present, file_path_present, json_str_present)) != 1:
-        logger.debug("Validation failed: data_present=%s, file_path_present=%s, json_str_present=%s", 
+        logger.info("Validation failed: data_present=%s, file_path_present=%s, json_str_present=%s", 
                      data_present, file_path_present, json_str_present)
         return {'success': False, 'cid': None, 'error': "Exactly one of data, file_path, or json_str must be provided"}
 
