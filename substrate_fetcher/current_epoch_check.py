@@ -338,8 +338,19 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         owner = request['owner']
         file_hash = request['file_hash']
         main_req_hash = request['main_req_hash']
-        selected_miners = request['selected_miners'] or []  # Use selected_miners from pending_pool, default to empty list
         
+        # Parse selected_miners from database format (e.g., "{miner1,miner2}") to a Python list
+        db_selected_miners = request['selected_miners']
+        if isinstance(db_selected_miners, str):
+            # Strip curly braces and split by comma
+            parsed_miners = db_selected_miners.strip('{}').split(',')
+            # Filter out empty strings that can result from an empty array string like "{}"
+            selected_miners = [m for m in parsed_miners if m]
+        elif isinstance(db_selected_miners, list):
+            selected_miners = db_selected_miners  # Already a list
+        else:
+            selected_miners = [] # Default to empty list if None or other type
+
         # Load the user's profile JSON
         user_profile_path = os.path.join("profiles", "user_profile", f"{owner}.json")
         user_data = []
