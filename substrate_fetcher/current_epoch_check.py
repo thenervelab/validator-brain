@@ -450,7 +450,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         pin_request = [
             {
                 "storage_request_owner": owner,
-                "storage_request_file_hash": main_req_hash,
+                "storage_request_file_hash": processed_main_req_hash_encoded,
                 "file_size": total_file_size,
                 "user_profile_cid": user_profile_cid,
                 "total_files_pinned": total_files_pinned

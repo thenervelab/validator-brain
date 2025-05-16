@@ -126,9 +126,8 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
         formatted_requests = []
         for req in requests:
 
-            # Convert storage_request_owner from SS58 to AccountId (32-byte public key)
             owner_account_id = substrate.ss58_decode(req["storage_request_owner"])
-            if not owner_account_id or len(owner_account_id) != 32:
+            if not owner_account_id or len(owner_account_id) != 64:  # 32 bytes = 64 hex chars
                 logger.error(f"Invalid AccountId for owner {req['storage_request_owner']}")
                 return False
 
