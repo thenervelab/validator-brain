@@ -390,8 +390,11 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
             
+
             # Convert file_hash to byte array
-            file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
+            file_hash_hex = file_hash.encode('utf-8').hex()
+            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
+            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
 
             # Encode main_req_hash
             entry_main_req_hash = entry.get('main_req_hash')
@@ -400,7 +403,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             # Update the entry
             updated_entry = {
                 "created_at": entry['created_at'],
-                "file_hash": file_hash_bytes,
+                "file_hash": file_hash_vec,
                 "file_name": entry['file_name'],
                 "file_size_in_bytes": file_size if file_size else entry.get('file_size_in_bytes', 0),
                 "is_assigned": entry['is_assigned'],
@@ -423,7 +426,9 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             total_files_pinned += 1
 
             # Convert file_hash to byte array
-            file_hash_bytes = list(file_hash.encode('utf-8').hex())
+            file_hash_hex = file_hash.encode('utf-8').hex()
+            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
+            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
 
             # Encode main_req_hash
             processed_main_req_hash_encoded = main_req_hash.encode('utf-8').hex() if main_req_hash else None
@@ -431,7 +436,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             # Create new entry
             new_entry = {
                 "created_at": storage_request['created_at'],
-                "file_hash": file_hash_bytes,
+                "file_hash": file_hash_vec,
                 "file_name": storage_request['file_name'],
                 "file_size_in_bytes": file_size if file_size else 0,
                 "is_assigned": storage_request['is_assigned'],
@@ -767,7 +772,9 @@ async def update_miner_profiles_near_epoch_end(block_number):
         updated_miner_data = []
         for entry in miner_data:
             # Encode file_hash to byte array
-            file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
+            file_hash_hex = file_hash.encode('utf-8').hex()
+            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
+            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
 
             # Update totals
             file_size = entry.get('file_size_in_bytes', 0)
@@ -777,7 +784,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
             # Create updated entry
             updated_entry = {
                 "created_at": entry['created_at'],
-                "file_hash": file_hash_bytes,
+                "file_hash": file_hash_vec,
                 "file_size_in_bytes": file_size,
                 "miner_node_id": entry['miner_node_id'],
                 "selected_validator": entry['selected_validator']
