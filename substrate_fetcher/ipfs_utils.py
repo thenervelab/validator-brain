@@ -242,10 +242,28 @@ async def get_file_size(
                     }
 
                 try:
-                    data = await response.json()
-                    # /api/v0/dag/stat response structure: {"Size": <num>, "NumBlocks": <num>}
-                    if 'TotalSize' in data:
-                        size = data['TotalSize']
+                    # Read the full response text first
+                    response_text = await response.text()
+                    
+                    # Attempt to parse the first JSON object from the stream
+                    # IPFS sometimes returns multiple JSON objects, newline-delimited
+                    first_json_object = None
+                    for line in response_text.splitlines():
+                        line = line.strip()
+                        if line:
+                            try:
+                                first_json_object = json.loads(line)
+                                logger.debug(f"Successfully parsed line into JSON object: {first_json_object}")
+                                break  # Successfully parsed the first JSON object
+                            except json.JSONDecodeError as line_json_error:
+                                # If a line isn't a valid JSON object, continue to the next
+                                # or if the full response_text itself wasn't a single object,
+                                # this individual line parse might also fail.
+                                logger.warning(f"Could not parse line as JSON: {line_json_error}. Line: '{line[:100]}...'")
+                                continue
+                    
+                    if first_json_object and 'TotalSize' in first_json_object:
+                        size = first_json_object['TotalSize']
                         logger.info(f"Successfully fetched size for CID '{cid_str}': {size} bytes")
                         return {
                             'success': True,
@@ -253,25 +271,36 @@ async def get_file_size(
                             'size': size,
                             'error': None
                         }
-                    else:
-                        logger.warning(f"No 'Size' field in dag/stat response for CID '{cid_str}'. Data: {data}")
+                    elif first_json_object:
+                        logger.warning(f"No 'TotalSize' field in parsed dag/stat response for CID '{cid_str}'. Data: {first_json_object}")
                         return {
                             'success': False,
                             'cid': cid_str,
                             'size': None,
-                            'error': "No 'Size' field in API response"
+                            'error': "No 'TotalSize' field in API response"
                         }
-                except json.JSONDecodeError as e:
-                    # Log the raw text if JSON decoding fails
-                    raw_text = await response.text()
+                    else:
+                        # This case is hit if no line could be parsed as JSON
+                        logger.error(
+                            f"Failed to parse any JSON object from dag/stat response for CID '{cid_str}'. Raw response: '{response_text[:200]}...'"
+                        )
+                        return {
+                            'success': False,
+                            'cid': cid_str,
+                            'size': None,
+                            'error': f"Failed to parse API response as JSON. Raw: {response_text[:100]}..."
+                        }
+
+                except json.JSONDecodeError as e: # This catch might be redundant now but kept for safety
+                    raw_text = await response.text() # response might have been consumed by initial .text() call
                     logger.error(
-                        f"Failed to parse JSON response for CID '{cid_str}' from dag/stat: {e}. Raw response: '{raw_text[:200]}...'"
+                        f"Unexpected JSONDecodeError for CID '{cid_str}' from dag/stat: {e}. Raw response: '{raw_text[:200]}...'"
                     )
                     return {
                         'success': False,
                         'cid': cid_str,
                         'size': None,
-                        'error': f"Failed to parse API response as JSON: {str(e)}"
+                        'error': f"Failed to parse API response as JSON. Raw: {raw_text[:100]}..."
                     }
 
     except asyncio.TimeoutError:
