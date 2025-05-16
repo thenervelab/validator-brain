@@ -132,15 +132,18 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
                 logger.error(f"Invalid AccountId for owner {req['storage_request_owner']}")
                 return False
 
+            if not owner_account_id.startswith('0x'):
+                owner_account_id = '0x' + owner_account_id
+
             formatted_req = {
                 "storage_request_owner": owner_account_id,
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
-                "file_size": req["file_size"],
+                "file_size": int(req["file_size"]),
                 "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"])
             }
             formatted_requests.append(formatted_req)
 
-        logger.debug(f"Formatted {len(formatted_requests)} request(s)")
+        logger.info(f"Formatted {len(formatted_requests)} request(s)")
 
         # Compose the call
         call = substrate.compose_call(
