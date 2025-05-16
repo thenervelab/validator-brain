@@ -321,87 +321,120 @@ async def upload_json_to_ipfs(
     file_path: Optional[str] = None,
     json_str: Optional[str] = None,
     api_url: str = 'http://127.0.0.1:5001',
-    pin: bool = True
-) -> Dict:
+    pin: bool = True,
+    timeout: int = 20
+) -> Dict[str, Optional[str]]:
     """
-    Upload a JSON list, file, or pre-serialized JSON string to IPFS and return the CID.
-
+    Upload JSON data to IPFS and return the CID.
+    
     Args:
-        data (List[Dict], optional): JSON data to upload directly.
-        file_path (str, optional): Path to a JSON file to upload.
-        json_str (str, optional): Pre-serialized JSON string to upload.
-        api_url (str): The IPFS HTTP API endpoint (default: http://127.0.0.1:5001).
-        pin (bool): Pin the uploaded data locally (default: True).
-
+        data: JSON-serializable data to upload
+        file_path: Path to JSON file to upload
+        json_str: Pre-serialized JSON string to upload
+        api_url: IPFS API endpoint URL
+        pin: Whether to pin the content
+        timeout: Request timeout in seconds
+        
     Returns:
-        Dict: {'success': bool, 'cid': str or None, 'error': str or None}
+        Dictionary with success status, CID, and error message
     """
-    logger.info("Input check - data: %s, file_path: %s, json_str: %s",
-                data is not None, file_path is not None, json_str is not None)
-    if sum(1 for x in (data_present, file_path_present, json_str_present)) != 1:
-        logger.info("Validation failed: data_present=%s, file_path_present=%s, json_str_present=%s", 
-                     data_present, file_path_present, json_str_present)
-        return {'success': False, 'cid': None, 'error': "Exactly one of data, file_path, or json_str must be provided"}
+    # Validate exactly one input source is provided
+    input_sources = [data is not None, file_path is not None, json_str is not None]
+    if sum(input_sources) != 1:
+        return {
+            'success': False,
+            'cid': None,
+            'error': "Exactly one of data, file_path, or json_str must be provided"
+        }
 
-    async with aiohttp.ClientSession() as session:
-        try:
-            # Prepare data
-            if file_path:
-                logger.debug("Reading JSON file from %s", file_path)
-                try:
-                    with open(file_path, 'r') as f:
-                        json_str = f.read()
-                    filename = os.path.basename(file_path)
-                except Exception as e:
-                    logger.error("Error reading file %s: %s", file_path, e)
-                    return {'success': False, 'cid': None, 'error': f"Error reading file: {str(e)}"}
-            elif data is not None:
-                json_str = json.dumps(data)
-                filename = 'profiles.json'
-            elif json_str is not None:
-                filename = 'profiles.json'
+    try:
+        # Prepare the JSON data
+        if file_path:
+            async with aiofiles.open(file_path, 'r') as f:
+                json_str = await f.read()
+            filename = os.path.basename(file_path)
+        elif data is not None:
+            json_str = json.dumps(data)
+            filename = 'data.json'
+        else:
+            filename = 'data.json'
 
-            logger.debug("Uploading JSON data to IPFS at %s (size: %d bytes)", api_url, len(json_str))
+        # Prepare the request
+        url = f"{api_url}/api/v0/add?cid-version=1&pin={str(pin).lower()}"
+        boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+        
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/json\r\n\r\n"
+            f"{json_str}\r\n"
+            f"--{boundary}--\r\n"
+        ).encode('utf-8')
 
-            # Prepare multipart form data
-            form_data = aiohttp.FormData()
-            form_data.add_field('file', json_str, filename=filename, content_type='application/json')
+        headers = {
+            "Content-Type": f"multipart/form-data; boundary={boundary}"
+        }
 
-            # Upload to IPFS
+        # Execute the request
+        async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{api_url}/api/v0/add?pin={str(pin).lower()}",
-                data=form_data,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                logger.debug("Add response status: %s", resp.status)
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error("Add failed: %s - %s", resp.status, error_text)
-                    return {'success': False, 'cid': None, 'error': f"Upload failed: {error_text}"}
+                url,
+                headers=headers,
+                data=body,
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as response:
+                
+                if not response.ok:
+                    error_text = await response.text()
+                    return {
+                        'success': False,
+                        'cid': None,
+                        'error': f"IPFS API error: {response.status} - {error_text}"
+                    }
 
-                response_text = await resp.text()
-                logger.debug("Add response: %s", response_text[:200])
+                response_data = await response.json()
+                cid = response_data.get('Hash')
+                
+                if not cid:
+                    return {
+                        'success': False,
+                        'cid': None,
+                        'error': "No CID in response"
+                    }
+
+                # Validate CID
                 try:
-                    data = json.loads(response_text)
-                    cid = data.get('Hash')
-                    if cid:
-                        try:
-                            CID.decode(cid)
-                            return {'success': True, 'cid': cid, 'error': None}
-                        except ValueError:
-                            return {'success': False, 'cid': None, 'error': "Invalid CID returned"}
-                    else:
-                        return {'success': False, 'cid': None, 'error': "No CID returned"}
-                except json.JSONDecodeError:
-                    logger.error("Add returned non-JSON response: %s", response_text)
-                    return {'success': False, 'cid': None, 'error': "Non-JSON response from add"}
+                    CID.decode(cid)
+                    return {
+                        'success': True,
+                        'cid': cid,
+                        'error': None
+                    }
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'cid': None,
+                        'error': f"Invalid CID: {str(e)}"
+                    }
 
-        except asyncio.TimeoutError:
-            logger.error("Timeout uploading JSON to IPFS at %s", api_url)
-            return {'success': False, 'cid': None, 'error': "Timeout uploading JSON"}
-        except Exception as e:
-            logger.error("Error uploading JSON to IPFS at %s: %s", api_url, e)
-            return {'success': False, 'cid': None, 'error': str(e)}
+    except asyncio.TimeoutError:
+        return {
+            'success': False,
+            'cid': None,
+            'error': "Request timed out"
+        }
+    except aiohttp.ClientConnectorError:
+        return {
+            'success': False,
+            'cid': None,
+            'error': f"Could not connect to IPFS API at {api_url}"
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'cid': None,
+            'error': f"Unexpected error: {str(e)}"
+        }
 
 async def clean_profile_directory(
     api_url: str = 'http://127.0.0.1:5001',

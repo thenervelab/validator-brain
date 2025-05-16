@@ -132,20 +132,17 @@ async def sync_storage_requests(block_number):
                 )
 
                 if not exists:
-                    # Insert new record into pending_pool with file_name, selected_validator, and main_req_hash
+                    # Insert new record into pending_pool with file_name, selected_validator, main_req_hash, and empty selected_miners
                     await conn.execute(
                         """
-                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status)
-                        VALUES ($1, $2, $3, $4, $5, $6)
+                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status, selected_miners)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
                         """,
-                        owner, file_hash, file_name, selected_validator, original_file_hash, "pending"
+                        owner, file_hash, file_name, selected_validator, original_file_hash, "pending", []
                     )
-                    logger.info(f"Added new record to pending_pool: owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={original_file_hash}")
+                    logger.info(f"Added new record to pending_pool: owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={original_file_hash}, selected_miners=[]")
                 else:
                     logger.debug(f"Record already exists in pending_pool: owner={owner}, file_hash={file_hash}")
-
-    # Log the action call
-    logger.info(f"Performed action at block {block_number} (Transferred records to pending_pool)")
 
 async def get_offline_miners(pool: asyncpg.Pool) -> list:
     """Fetch all miners and identify offline ones with non-empty miner_profile_cid."""
@@ -380,13 +377,14 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
-
+            selected_miners = request['selected_miners'] or []  # Use selected_miners from pending_pool, default to empty list
+            
             # Convert file_hash to byte array
-            file_hash_bytes = list(entry['file_hash'].encode('utf-8'))
+            file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
 
             # Encode main_req_hash
             entry_main_req_hash = entry.get('main_req_hash')
-            main_req_hash_encoded = entry_main_req_hash.encode('utf-8') if entry_main_req_hash else None
+            main_req_hash_encoded = entry_main_req_hash.encode('utf-8').hex() if entry_main_req_hash else None
 
             # Update the entry
             updated_entry = {
@@ -397,7 +395,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 "is_assigned": entry['is_assigned'],
                 "last_charged_at": entry['last_charged_at'],
                 "main_req_hash": main_req_hash_encoded,
-                "miner_ids": entry['miner_ids'],
+                "miner_ids": selected_miners,
                 "owner": entry['owner'],
                 "selected_validator": entry['selected_validator'],
                 "total_replicas": entry['total_replicas']
@@ -414,10 +412,10 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             total_files_pinned += 1
 
             # Convert file_hash to byte array
-            file_hash_bytes = list(file_hash.encode('utf-8'))
+            file_hash_bytes = list(file_hash.encode('utf-8').hex())
 
             # Encode main_req_hash
-            processed_main_req_hash_encoded = main_req_hash.encode('utf-8') if main_req_hash else None
+            processed_main_req_hash_encoded = main_req_hash.encode('utf-8').hex() if main_req_hash else None
 
             # Create new entry
             new_entry = {
@@ -486,80 +484,6 @@ async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
             logger.info("No offline miners detected at epoch start")
     except Exception as e:
         logger.error(f"Error detecting offline miners: {e}")
-
-async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
-    """Orchestrates epoch tasks: detects offline miners, reconstructs profiles, and processes pending requests."""
-    await detect_offline_miners_at_epoch_start(pool)
-    await reconstruct_profiles_to_json(pool)
-
-    profiles_dir = "profiles"
-    miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
-
-    offline_miners = await get_offline_miners(pool)
-    if not offline_miners:
-        logger.info("No offline miners to process.")
-        return
-
-    async with pool.acquire() as conn:
-        for miner in offline_miners:
-            node_id = miner['node_id']
-            miner_file_path = os.path.join(miner_profile_dir, f"{node_id}.json")
-
-            if os.path.exists(miner_file_path):
-                try:
-                    with open(miner_file_path, 'r') as f:
-                        profile_data = json.load(f)
-                        if not isinstance(profile_data, list):
-                            profile_data = [profile_data]
-
-                    for entry in profile_data:
-                        file_hash = entry.get('file_hash')
-                        if file_hash:
-                            # Fetch the owner, file_name, selected_validator, and main_req_hash from user_profile
-                            user_info = await conn.fetchrow(
-                                """
-                                SELECT owner_account_id, file_name, selected_validator, main_req_hash
-                                FROM user_profile
-                                WHERE file_hash = $1
-                                LIMIT 1
-                                """,
-                                file_hash
-                            )
-                            if user_info:
-                                owner = user_info['owner_account_id']
-                                file_name = user_info['file_name']
-                                selected_validator = user_info['selected_validator']
-                                main_req_hash = user_info['main_req_hash']
-
-                                # Check if the record already exists in pending_pool
-                                exists = await conn.fetchval(
-                                    """
-                                    SELECT EXISTS (
-                                        SELECT 1 FROM pending_pool WHERE owner = $1 AND file_hash = $2
-                                    )""",
-                                    owner, file_hash
-                                )
-                                if not exists:
-                                    await conn.execute(
-                                        """
-                                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status)
-                                        VALUES ($1, $2, $3, $4, $5, $6)
-                                        """,
-                                        owner, file_hash, file_name, selected_validator, main_req_hash, "pending"
-                                    )
-                                    logger.info(f"Added pending request for owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={main_req_hash} from offline miner {node_id}")
-                                else:
-                                    logger.debug(f"Pending request already exists for owner={owner}, file_hash={file_hash}")
-                            else:
-                                logger.warning(f"No user info found for file_hash={file_hash} in user_profile")
-                        else:
-                            logger.warning(f"No file_hash found in entry: {entry}")
-                except Exception as e:
-                    logger.error(f"Error processing miner profile for {node_id}: {e}")
-            else:
-                logger.info(f"No miner profile file found for offline miner: {node_id}")
-
-    logger.info("Finished processing epoch tasks")
 
 async def assign_to_storage_miners(block_number):
     """Processes pending storage requests by assigning them to 5 random miners and updating profiles."""
@@ -700,18 +624,19 @@ async def assign_to_storage_miners(block_number):
                 except Exception as e:
                     logger.error(f"Error updating user profile file {user_file_path}: {e}")
 
-            # Update pending_pool status (mark as processed)
+            # Update pending_pool status (mark as processed) and set selected_miners
             await conn.execute(
                 """
                 UPDATE pending_pool
-                SET status = $1
+                SET status = $1, selected_miners = $4
                 WHERE owner = $2 AND file_hash = $3
                 """,
                 "processed",
                 owner,
-                file_hash
+                file_hash,
+                selected_miners
             )
-            logger.info(f"Processed request for owner={owner}, file_hash={file_hash}")
+            logger.info(f"Processed request for owner={owner}, file_hash={file_hash}, selected_miners={selected_miners}")
 
     logger.info(f"Performed action at block {block_number} (Processed {len(pending_requests)} requests)")
 
@@ -831,7 +756,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
         updated_miner_data = []
         for entry in miner_data:
             # Encode file_hash to byte array
-            file_hash_bytes = list(entry['file_hash'].encode('utf-8'))
+            file_hash_bytes = list(entry['file_hash'].encode('utf-8').hex())
 
             # Update totals
             file_size = entry.get('file_size_in_bytes', 0)
@@ -950,12 +875,12 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
                                 if not exists:
                                     await conn.execute(
                                         """
-                                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status)
-                                        VALUES ($1, $2, $3, $4, $5, $6)
+                                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status, selected_miners)
+                                        VALUES ($1, $2, $3, $4, $5, $6, $7)
                                         """,
-                                        owner, file_hash, file_name, selected_validator, main_req_hash, "pending"
+                                        owner, file_hash, file_name, selected_validator, main_req_hash, "pending", []
                                     )
-                                    logger.info(f"Added pending request for owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={main_req_hash} from offline miner {node_id}")
+                                    logger.info(f"Added pending request for owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={main_req_hash}, selected_miners=[] from offline miner {node_id}")
                                 else:
                                     logger.debug(f"Pending request already exists for owner={owner}, file_hash={file_hash}")
                             else:
