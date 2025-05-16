@@ -695,7 +695,7 @@ async def monitor_validator_epochs(pool):
             else:
                 await perform_action(current_block_number)
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
-                if current_block_number % 100 == 94:
+                if current_block_number % 20 == 10:
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                     await update_miner_profiles_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
@@ -729,7 +729,7 @@ async def monitor_validator_epochs(pool):
                 if account_id == hips_account_id:
                     # New match found, start a 100-block action period
                     in_action_period = True
-                    target_block_number = block_number + 100
+                    target_block_number = block_number + 20
                     logger.info(f"Match found: HIPS account {hips_account_id} is the current validator at block {block_number}")
                     logger.info(f"Will perform action until block {target_block_number} (current block: {current_block_number})")
                     await perform_rebalance_and_reconstruct_profiles(pool)
