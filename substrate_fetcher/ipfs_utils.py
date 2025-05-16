@@ -222,8 +222,24 @@ async def get_file_size(cid: str, api_url: str = 'http://127.0.0.1:5001') -> Dic
                     logger.error("DAG stat failed for CID %s: %s - %s", cid, resp.status, error_text)
                     return {'success': False, 'cid': cid, 'size': None, 'error': f"DAG stat failed: {error_text}"}
                 
-                data = await resp.json()
-                logger.debug("DAG stat response for CID %s: %s", cid, data)
+                # Read raw response text
+                raw_response = await resp.text()
+                logger.debug("Raw DAG stat response for CID %s: %s", cid, raw_response)
+
+                # Attempt to parse the first valid JSON object, handling extra data
+                data = None
+                for line in raw_response.splitlines():
+                    try:
+                        data = json.loads(line.strip())
+                        logger.debug("Parsed JSON for CID %s: %s", cid, data)
+                        break
+                    except json.JSONDecodeError as e:
+                        logger.warning("Skipping invalid JSON line for CID %s: %s (Error: %s)", cid, line, e)
+                        continue
+                if data is None:
+                    logger.error("No valid JSON found in response for CID %s: %s", cid, raw_response)
+                    return {'success': False, 'cid': cid, 'size': None, 'error': "No valid JSON in response"}
+
                 size = data.get('TotalSize', None)
                 if size is not None:
                     return {'success': True, 'cid': cid, 'size': size, 'error': None}
