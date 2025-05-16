@@ -450,7 +450,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         pin_request = [
             {
                 "storage_request_owner": owner,
-                "storage_request_file_hash": file_hash,
+                "storage_request_file_hash": main_req_hash,
                 "file_size": total_file_size,
                 "user_profile_cid": user_profile_cid,
                 "total_files_pinned": total_files_pinned
@@ -458,7 +458,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         ]
 
         # Call the chain function
-        logger.info(f"Submitting update_pin_and_storage_requests for owner {owner}...")
+        logger.info(f"Submitting update_pin_and_storage_requests for : {pin_request}...")
         pin_success = await call_update_pin_and_storage_requests(pin_request)
         logger.info(f"update_pin_and_storage_requests {'succeeded' if pin_success else 'failed'} for owner {owner}")
 
