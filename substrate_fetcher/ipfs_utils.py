@@ -319,15 +319,17 @@ async def create_or_update_profile_json(
 async def upload_json_to_ipfs(
     data: Optional[List[Dict]] = None,
     file_path: Optional[str] = None,
+    json_str: Optional[str] = None,
     api_url: str = 'http://127.0.0.1:5001',
     pin: bool = True
 ) -> Dict:
     """
-    Upload a JSON list or file to IPFS and return the CID.
+    Upload a JSON list, file, or pre-serialized JSON string to IPFS and return the CID.
 
     Args:
         data (List[Dict], optional): JSON data to upload directly.
         file_path (str, optional): Path to a JSON file to upload.
+        json_str (str, optional): Pre-serialized JSON string to upload.
         api_url (str): The IPFS HTTP API endpoint (default: http://127.0.0.1:5001).
         pin (bool): Pin the uploaded data locally (default: True).
 
@@ -337,8 +339,8 @@ async def upload_json_to_ipfs(
     if not await test_node_connectivity(api_url):
         return {'success': False, 'cid': None, 'error': "IPFS node is not reachable"}
 
-    if data is None and file_path is None:
-        return {'success': False, 'cid': None, 'error': "Either data or file_path must be provided"}
+    if sum(1 for x in (data is not None, file_path is not None, json_str is not None)) != 1:
+        return {'success': False, 'cid': None, 'error': "Exactly one of data, file_path, or json_str must be provided"}
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -352,8 +354,10 @@ async def upload_json_to_ipfs(
                 except Exception as e:
                     logger.error("Error reading file %s: %s", file_path, e)
                     return {'success': False, 'cid': None, 'error': f"Error reading file: {str(e)}"}
-            else:
+            elif data is not None:
                 json_str = json.dumps(data)
+                filename = 'profiles.json'
+            elif json_str is not None:
                 filename = 'profiles.json'
 
             logger.debug("Uploading JSON data to IPFS at %s (size: %d bytes)", api_url, len(json_str))

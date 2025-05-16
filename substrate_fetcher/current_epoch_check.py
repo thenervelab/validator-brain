@@ -490,7 +490,6 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
     logger.info(f"Finished processing pin and storage updates at block {block_number}")
 
-
 async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
     """Detect offline miners at the start of each epoch and log the result."""
     try:

@@ -704,7 +704,7 @@ async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[st
     """Saves UserStorageRequests data to the database, converting BoundedVec fields to strings."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            logger.info(f"Saving {requests} UserStorageRequests")
+            # logger.info(f"Saving {requests} UserStorageRequests")
             for (owner_account_id, file_hash), request in requests.items():
                 try:
                     if request is None:
@@ -756,7 +756,7 @@ async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[st
                         str(request["selected_validator"]),
                         bool(request["is_assigned"])
                     )
-                    logger.debug(f"Saved UserStorageRequest for {owner_account_id}, {file_hash_str}")
+                    # logger.debug(f"Saved UserStorageRequest for {owner_account_id}, {file_hash_str}")
                 except Exception as e:
                     logger.error(f"Error saving UserStorageRequest for {owner_account_id}, {file_hash}: {e}")
                     continue
