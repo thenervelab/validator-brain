@@ -336,8 +336,8 @@ async def upload_json_to_ipfs(
     Returns:
         Dict: {'success': bool, 'cid': str or None, 'error': str or None}
     """
-    logger.info("data_present=%s, file_path_present=%s, json_str_present=%s", 
-                     data_present, file_path_present, json_str_present)
+    logger.info("Input check - data: %s, file_path: %s, json_str: %s",
+                data is not None, file_path is not None, json_str is not None)
     if sum(1 for x in (data_present, file_path_present, json_str_present)) != 1:
         logger.info("Validation failed: data_present=%s, file_path_present=%s, json_str_present=%s", 
                      data_present, file_path_present, json_str_present)

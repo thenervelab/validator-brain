@@ -438,6 +438,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}")
 
         logger.info(f"Preparing to upload {len(updated_user_data)} entries to IPFS for owner {owner}")
+        logger.info(f"entries are {updated_user_data}")
         # Pin the updated user profile to IPFS
         pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_user_data, api_url=config.IPFS_NODE_URL)
         if not pin_response['success']:
