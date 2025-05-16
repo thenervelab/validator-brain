@@ -479,6 +479,21 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         pin_success = await call_update_pin_and_storage_requests(pin_request)
         logger.info(f"update_pin_and_storage_requests {'succeeded' if pin_success else 'failed'} for owner {owner}")
 
+        # If the transaction was successful, delete the processed request from pending_pool
+        if pin_success:
+            async with config.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    DELETE FROM pending_pool
+                    WHERE owner = $1 AND file_hash = $2
+                    """,
+                    owner,
+                    file_hash
+                )
+                logger.info(f"Deleted processed request from pending_pool: owner={owner}, file_hash={file_hash}")
+        else:
+            logger.warning(f"Transaction failed, retaining processed request in pending_pool: owner={owner}, file_hash={file_hash}")
+            
         # Update the local user profile file
         try:
             os.makedirs(os.path.dirname(user_profile_path), exist_ok=True)
