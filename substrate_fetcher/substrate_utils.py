@@ -125,18 +125,10 @@ async def call_update_pin_and_storage_requests(requests: List[Dict[str, Any]]) -
         # Format the requests to match the StorageRequestUpdate structure
         formatted_requests = []
         for req in requests:
-
-            owner_account_id = substrate.ss58_decode(req["storage_request_owner"])
-            logger.info(f"owner_account_id converted :  {owner_account_id}")
-            if not owner_account_id or len(owner_account_id) != 64:  # 32 bytes = 64 hex chars
-                logger.error(f"Invalid AccountId for owner {req['storage_request_owner']}")
-                return False
-
-            if not owner_account_id.startswith('0x'):
-                owner_account_id = '0x' + owner_account_id
-
+            # The correct way to handle the SS58 address - directly use it as is
+            # The Substrate library will handle the SS58 conversion internally
             formatted_req = {
-                "storage_request_owner": owner_account_id,
+                "storage_request_owner": req["storage_request_owner"],
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
                 "file_size": int(req["file_size"]),
                 "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"])
