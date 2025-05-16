@@ -244,8 +244,8 @@ async def get_file_size(
                 try:
                     data = await response.json()
                     # /api/v0/dag/stat response structure: {"Size": <num>, "NumBlocks": <num>}
-                    if 'Size' in data:
-                        size = data['Size']
+                    if 'TotalSize' in data:
+                        size = data['TotalSize']
                         logger.info(f"Successfully fetched size for CID '{cid_str}': {size} bytes")
                         return {
                             'success': True,
