@@ -437,14 +437,14 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 "is_assigned": storage_request['is_assigned'],
                 "last_charged_at": storage_request['last_charged_at'],
                 "main_req_hash": processed_main_req_hash_encoded,
-                "miner_ids": storage_request['miner_ids'] or [],
+                "miner_ids": selected_miners,
                 "owner": storage_request['owner_account_id'],
                 "selected_validator": storage_request['selected_validator'],
                 "total_replicas": storage_request['total_replicas']
             }
             updated_user_data.append(new_entry)
         else:
-            logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}")
+            logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}. Cannot create new profile entry for {file_hash}.")
 
         logger.info(f"Preparing to upload {len(updated_user_data)} entries to IPFS for owner {owner}")
         logger.info(f"entries are {updated_user_data}")
@@ -461,7 +461,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         pin_request = [
             {
                 "storage_request_owner": owner,
-                "storage_request_file_hash": processed_main_req_hash_encoded,
+                "storage_request_file_hash": main_req_hash,
                 "file_size": total_file_size,
                 "user_profile_cid": user_profile_cid,
                 "total_files_pinned": total_files_pinned
