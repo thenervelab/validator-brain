@@ -144,7 +144,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                             try:
                                 params = bytes.fromhex(params[2:])
                             except ValueError:
-                                logger.error(f"Invalid hex string for params in {module}.{item}: {params}")
+                                # logger.error(f"Invalid hex string for params in {module}.{item}: {params}")
                                 params = None
                         else:
                             logger.warning(f"Params for {module}.{item} is a string ({params}), treating as literal.")
@@ -154,7 +154,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                         multi_query_params.append((module, item))
 
             if multi_query_params:
-                logger.info(f"Query multi params: {multi_query_params}")
+                # logger.info(f"Query multi params: {multi_query_params}")
                 try:
                     result = await _execute_query_async(substrate.query, module, item, block_hash=block_hash)
                     logger.debug(f"Raw query_multi results: {result}")

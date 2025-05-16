@@ -782,7 +782,7 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
             try:
                 return bytes.fromhex(bounded_vec).decode('utf-8')
             except ValueError:
-                logger.warning(f"Invalid hex string format: {bounded_vec}, returning as string")
+                # logger.warning(f"Invalid hex string format: {bounded_vec}, returning as string")
                 return bounded_vec
 
         # Other types: force str conversion first
