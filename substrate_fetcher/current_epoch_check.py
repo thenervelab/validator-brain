@@ -418,7 +418,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             logger.info("Adding new entry from storage request")
             # Fetch file size for the processed request's file_hash
             file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
-            file_size = file_size_response.get('size', 0)
+            file_size = file_size_response.get('Size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
 
