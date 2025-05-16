@@ -334,6 +334,8 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         logger.info("No processed requests found to update pin and storage.")
         return
 
+    logger.info(f"Found {len(processed_requests)} processed requests to update")
+
     # Process each request
     for request in processed_requests:
         owner = request['owner']
@@ -373,10 +375,6 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
         # Process existing user_data entries
         for entry in user_data:
-            if entry.get('file_hash') != file_hash:
-                updated_user_data.append(entry)
-                continue
-
             # Fetch file size for this file_hash
             file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL)
             file_size = file_size_response.get('size', 0)
@@ -408,6 +406,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
         # Add new entry from user_storage_requests if found
         if storage_request:
+            logger.info("Adding new entry from storage request")
             # Fetch file size for the processed request's file_hash
             file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
             file_size = file_size_response.get('size', 0)
@@ -438,6 +437,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         else:
             logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}")
 
+        logger.info(f"Preparing to upload {len(updated_user_data)} entries to IPFS for owner {owner}")
         # Pin the updated user profile to IPFS
         pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_user_data, api_url=config.IPFS_NODE_URL)
         if not pin_response['success']:
@@ -468,7 +468,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             os.makedirs(os.path.dirname(user_profile_path), exist_ok=True)
             with open(user_profile_path, 'w') as f:
                 json.dump(updated_user_data, f, indent=4)
-            logger.debug(f"Updated user profile file with new CID: {user_profile_path}")
+            logger.info(f"Updated user profile file with new CID: {user_profile_path}")
         except Exception as e:
             logger.error(f"Error writing updated user profile file {user_profile_path}: {e}")
 
