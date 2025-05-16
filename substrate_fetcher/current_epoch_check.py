@@ -520,34 +520,32 @@ async def assign_to_storage_miners(block_number):
         # Fetch all registered StorageMiners (case-insensitive match)
         storage_miners = await conn.fetch(
             """
-            SELECT node_id
-            FROM registration
-            WHERE node_type ILIKE $1
+            SELECT node_id FROM registration WHERE node_type ILIKE 'StorageMiner'
             """,
-            "StorageMiner"
         )
         storage_miner_ids = [row['node_id'] for row in storage_miners]
+        print("Querying miners with node_ids:", storage_miner_ids)
         if not storage_miner_ids:
             logger.warning("No StorageMiners found in registration table.")
             return
 
-        # Fetch miners with pinning stats
-        miners_data = await conn.fetch(
-            """
-            SELECT node_id, miner_total_files_pinned
-            FROM miners
-            WHERE node_id = ANY($1)
-            """,
-            storage_miner_ids
-        )
+        # # Fetch miners with pinning stats
+        # miners_data = await conn.fetch(
+        #     """
+        #     SELECT node_id, miner_total_files_pinned
+        #     FROM miners
+        #     WHERE node_id = ANY($1)
+        #     """,
+        #     storage_miner_ids
+        # )
 
-        # Group miners by total_files_pinned (0 gets priority)
-        priority_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] == 0]
-        other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
-        available_miners = priority_miners + other_miners
+        # # Group miners by total_files_pinned (0 gets priority)
+        # priority_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] == 0]
+        # other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
+        available_miners = storage_miner_ids
 
-        if len(available_miners) < 5:
-            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 5). Skipping action.")
+        if len(available_miners) != 1:
+            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 1). Skipping action.")
             return
 
         # Fetch up to 10 pending requests, including file_name, selected_validator, and main_req_hash
@@ -572,7 +570,7 @@ async def assign_to_storage_miners(block_number):
             main_req_hash = request['main_req_hash']
 
             # Select 5 random miners, prioritizing those with miner_total_files_pinned = 0
-            selected_miners = random.sample(available_miners, 5) if len(available_miners) >= 5 else available_miners
+            selected_miners = random.sample(available_miners, 1) if len(available_miners) >= 1 else available_miners
             logger.info(f"Selected miners for request {file_hash}: {selected_miners}")
 
             # Update miner_profile JSON
@@ -642,7 +640,7 @@ async def assign_to_storage_miners(block_number):
                             "miner_ids": selected_miners,
                             "owner": owner,
                             "selected_validator": selected_validator,
-                            "total_replicas": 5
+                            "total_replicas": 1
                         })
 
                     with open(user_file_path, 'w') as f:
@@ -685,7 +683,7 @@ async def monitor_validator_epochs(pool):
             continue
 
         # Check pin check metrics every 1200th block
-        await update_pin_check_metrics_near_block(current_block_number)
+        # await update_pin_check_metrics_near_block(current_block_number)
 
         # If we're in an action period, continue logging until the epoch ends
         if in_action_period:
