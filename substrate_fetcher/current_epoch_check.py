@@ -462,11 +462,12 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         user_profile_cid = pin_response['cid']
         logger.info(f"Pinned updated user profile for owner {owner} to CID: {user_profile_cid}")
 
+        processed_main_req_hash_encoded = main_req_hash.encode('utf-8').hex() if main_req_hash else None
         # Construct the parameter for call_update_pin_and_storage_requests
         pin_request = [
             {
                 "storage_request_owner": owner,
-                "storage_request_file_hash": main_req_hash_encoded,
+                "storage_request_file_hash": processed_main_req_hash_encoded,
                 "file_size": total_file_size,
                 "user_profile_cid": user_profile_cid,
                 "total_files_pinned": total_files_pinned
