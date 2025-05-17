@@ -403,12 +403,12 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
             # Update the entry
             updated_entry = {
-                "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
+                "created_at": entry['created_at'],
                 "file_hash": file_hash_vec,
                 "file_name": entry['file_name'],
                 "file_size_in_bytes": file_size if file_size else entry.get('file_size_in_bytes', 0),
                 "is_assigned": entry['is_assigned'],
-                "last_charged_at": entry['last_charged_at'].isoformat() if isinstance(entry['last_charged_at'], datetime) else entry['last_charged_at'],
+                "last_charged_at": entry['last_charged_at'],
                 "main_req_hash": main_req_hash_encoded,
                 "miner_ids": selected_miners,
                 "owner": entry['owner'],
@@ -437,12 +437,12 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
             # Create new entry
             new_entry = {
-                "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
+                "created_at": entry['created_at'],
                 "file_hash": file_hash_vec,
                 "file_name": storage_request['file_name'],
                 "file_size_in_bytes": file_size if file_size else 0,
                 "is_assigned": storage_request['is_assigned'],
-                "last_charged_at": entry['last_charged_at'].isoformat() if isinstance(entry['last_charged_at'], datetime) else entry['last_charged_at'],
+                "last_charged_at": entry['last_charged_at'],
                 "main_req_hash": processed_main_req_hash_encoded,
                 "miner_ids": selected_miners,
                 "owner": storage_request['owner_account_id'],
@@ -450,12 +450,12 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 "total_replicas": storage_request['total_replicas']
             }
             new_file_entry = {
-                "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
+                "created_at": entry['created_at'],
                 "file_hash": file_hash,
                 "file_name": storage_request['file_name'],
                 "file_size_in_bytes": file_size if file_size else 0,
                 "is_assigned": storage_request['is_assigned'],
-                "last_charged_at": entry['last_charged_at'].isoformat() if isinstance(entry['last_charged_at'], datetime) else entry['last_charged_at'],
+                "last_charged_at": entry['last_charged_at'],
                 "main_req_hash": main_req_hash,
                 "miner_ids": selected_miners,
                 "owner": storage_request['owner_account_id'],
@@ -485,7 +485,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
                 # Create new entry for miner profile
                 miner_entry = {
-                    "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
+                    "created_at": entry['created_at'],
                     "file_hash": request['file_hash'],
                     "file_size_in_bytes": file_size if file_size else 0,
                     "miner_node_id": miner_id,
@@ -767,6 +767,7 @@ async def monitor_validator_epochs(pool):
                 await perform_action(current_block_number)
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
                 if current_block_number > (target_block_number - 50) :
+                    logger.info("tyring to submit tx : ..........")
                     if current_block_number % 5 == 0 :
                         await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                         await update_miner_profiles_near_epoch_end(current_block_number)
@@ -868,7 +869,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
 
             # Create updated entry
             updated_entry = {
-                "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
+                "created_at": entry['created_at'],
                 "file_hash": file_hash_vec,
                 "file_size_in_bytes": file_size,
                 "miner_node_id": entry['miner_node_id'],
