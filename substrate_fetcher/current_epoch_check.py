@@ -227,11 +227,11 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         for row in miner_rows:
             miner_node_id = row['miner_node_id']
             miner_data = {
-                "created_at": row['created_at'],
+                "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
                 "file_hash": row['file_hash'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "selected_validator": row['selected_validator'],
-                "updated_at": row['updated_at']
+                "updated_at": entry['updated_at'].isoformat() if isinstance(entry['updated_at'], datetime) else entry['updated_at']
             }
 
             miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
@@ -245,7 +245,6 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
                         if not isinstance(existing_data, list):
                             existing_data = [existing_data]
                 except Exception as e:
-                    logger.warning(f"Error reading existing miner profile file {miner_file_path}: {e}")
                     existing_data = []
 
             # Append new data
@@ -754,7 +753,7 @@ async def monitor_validator_epochs(pool):
             continue
 
         # Check pin check metrics every 1200th block
-        # await update_pin_check_metrics_near_block(current_block_number)
+        await update_pin_check_metrics_near_block(current_block_number)
 
         # If we're in an action period, continue logging until the epoch ends
         if in_action_period:
@@ -767,7 +766,7 @@ async def monitor_validator_epochs(pool):
                 await perform_action(current_block_number)
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
                 if current_block_number > (target_block_number - 50) :
-                    if current_block_number % 5 == 0 :
+                    # if current_block_number % 5 == 0 :
                         await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                         await update_miner_profiles_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
