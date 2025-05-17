@@ -227,11 +227,11 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         for row in miner_rows:
             miner_node_id = row['miner_node_id']
             miner_data = {
-                "created_at": entry['created_at'].isoformat() if isinstance(entry['created_at'], datetime) else entry['created_at'],
+                "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], datetime) else row['created_at'],
                 "file_hash": row['file_hash'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "selected_validator": row['selected_validator'],
-                "updated_at": entry['updated_at'].isoformat() if isinstance(entry['updated_at'], datetime) else entry['updated_at']
+                "updated_at": row['updated_at'].isoformat() if isinstance(entry['updated_at'], datetime) else row['updated_at']
             }
 
             miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
@@ -270,12 +270,12 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         for row in user_rows:
             user_id = row['user_id']
             user_data = {
-                "created_at": row['created_at'],
+                "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], datetime) else row['created_at'],
                 "file_hash": row['file_hash'],
                 "file_name": row['file_name'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "is_assigned": row['is_assigned'],
-                "last_charged_at": row['last_charged_at'],
+                "last_charged_at": row['last_charged_at'].isoformat() if isinstance(row['last_charged_at'], datetime) else row['last_charged_at'],
                 "main_req_hash": row['main_req_hash'],
                 "miner_ids": row['miner_ids'],
                 "owner": row['owner'],
@@ -766,7 +766,7 @@ async def monitor_validator_epochs(pool):
                 await perform_action(current_block_number)
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
                 if current_block_number > (target_block_number - 50) :
-                    # if current_block_number % 5 == 0 :
+                    if current_block_number % 10 == 0 :
                         await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                         await update_miner_profiles_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
