@@ -1,21 +1,13 @@
 # substrate_fetcher/ipfs_health_utils.py
 import asyncio
 import asyncpg
+import logging
 import json
 import aiohttp
 import random  # Added for selecting random block
-from typing import Dict, Optional, Tuple
-from datetime import datetime, timezone
-from loguru import logger
 from . import config
 
-# Ensure parent directory is in path for sibling module imports
-import os
-import sys
-script_path = os.path.abspath(os.path.dirname(__file__))
-parent_dir = os.path.dirname(script_path)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+logger = logging.getLogger(__name__)
 
 EPOCH_BLOCK_INTERVAL = 1200  # Define epoch length in blocks
 

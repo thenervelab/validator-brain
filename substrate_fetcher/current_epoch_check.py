@@ -1,7 +1,7 @@
 import asyncio
 import asyncpg
 from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests, call_update_miner_profiles, call_update_pin_check_metrics
-# import logging # Removed
+import logging
 import time
 import aiohttp
 import json
@@ -9,16 +9,12 @@ import os
 import shutil
 import random
 from typing import List, Dict
-from datetime import datetime, timezone # Added for timestamp conversion
 from . import config
 from . import utils
 from . import ipfs_utils
 from . import substrate_utils
-from loguru import logger # Added
-import aiofiles # Added for async file operations
-import aiofiles.os as aios # For async os operations if needed, though shutil.rmtree is sync
 
-# logger = logging.getLogger(__name__) # Removed
+logger = logging.getLogger(__name__)
 
 async def get_latest_block_number(pool):
     """Fetches the latest block number from the latest_block table."""
@@ -194,23 +190,23 @@ async def get_offline_miners(pool: asyncpg.Pool) -> list:
     return offline_miners
 
 async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
-    logger.info("Reconstructing profiles from database to JSON files...")
+    """Reconstructs miner and user profiles from the database into JSON files."""
+    # Define directories
     profiles_dir = "profiles"
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
     user_profile_dir = os.path.join(profiles_dir, "user_profile")
 
-    # shutil.rmtree is synchronous. If this is slow, it could be run in an executor.
-    # For simplicity, keeping it synchronous for now as it's usually fast unless a huge number of files.
+    # Delete the profiles directory if it exists
     if os.path.exists(profiles_dir):
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, shutil.rmtree, profiles_dir) # Run sync rmtree in executor
+            shutil.rmtree(profiles_dir)
             logger.info(f"Deleted existing profiles directory: {profiles_dir}")
         except Exception as e:
             logger.error(f"Error deleting profiles directory: {e}")
             return
+
+    # Create directories
     try:
-        # os.makedirs is synchronous and generally fast.
         os.makedirs(miner_profile_dir, exist_ok=True)
         os.makedirs(user_profile_dir, exist_ok=True)
         logger.info(f"Created directories: {miner_profile_dir}, {user_profile_dir}")
@@ -218,62 +214,51 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         logger.error(f"Error creating directories: {e}")
         return
 
-    def format_timestamp(ts_val):
-        if ts_val is None:
-            return None
-        if isinstance(ts_val, (int, float)):
-            try:
-                return datetime.fromtimestamp(ts_val, tz=timezone.utc).isoformat()
-            except Exception as e:
-                logger.warning(f"Could not convert int/float timestamp '{ts_val}' to datetime: {e}. Storing as is.")
-                return ts_val 
-        if isinstance(ts_val, datetime):
-            return ts_val.isoformat()
-        logger.warning(f"Timestamp '{ts_val}' is of unhandled type {type(ts_val)}. Storing as is.")
-        return ts_val
-
     async with pool.acquire() as conn:
-        logger.info("Processing miner profiles for JSON reconstruction...")
+        # Process miner profiles
         miner_rows = await conn.fetch(
             """
             SELECT miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator, updated_at
             FROM miner_profile
             """
         )
-        logger.info(f"Fetched {len(miner_rows)} rows from miner_profile table.")
 
         for row in miner_rows:
             miner_node_id = row['miner_node_id']
-            miner_data_entry = {
-                "created_at": format_timestamp(row['created_at']),
+            miner_data = {
+                "created_at": row['created_at'],
                 "file_hash": row['file_hash'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "selected_validator": row['selected_validator'],
-                "updated_at": format_timestamp(row['updated_at'])
+                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
             }
+
             miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
-            existing_entries = []
-            if await aiofiles.os.path.exists(miner_file_path): # Use aiofiles.os.path.exists
+
+            # Load existing data if the file exists
+            existing_data = []
+            if os.path.exists(miner_file_path):
                 try:
-                    async with aiofiles.open(miner_file_path, 'r') as f:
-                        content = await f.read()
-                        loaded_json = json.loads(content)
-                        if not isinstance(loaded_json, list):
-                            existing_entries = [loaded_json]
-                        else:
-                            existing_entries = loaded_json
+                    with open(miner_file_path, 'r') as f:
+                        existing_data = json.load(f)
+                        if not isinstance(existing_data, list):
+                            existing_data = [existing_data]
                 except Exception as e:
-                    logger.warning(f"Error reading or parsing existing miner profile file {miner_file_path}: {e}")
-                    existing_entries = []
-            existing_entries.append(miner_data_entry)
+                    logger.warning(f"Error reading existing miner profile file {miner_file_path}: {e}")
+                    existing_data = []
+
+            # Append new data
+            existing_data.append(miner_data)
+
+            # Write back to file
             try:
-                async with aiofiles.open(miner_file_path, 'w') as f:
-                    await f.write(json.dumps(existing_entries, indent=4))
+                with open(miner_file_path, 'w') as f:
+                    json.dump(existing_data, f, indent=4)
                 logger.debug(f"Updated miner profile file: {miner_file_path}")
             except Exception as e:
                 logger.error(f"Error writing miner profile file {miner_file_path}: {e}")
 
-        logger.info("Processing user profiles for JSON reconstruction...")
+        # Process user profiles
         user_rows = await conn.fetch(
             """
             SELECT user_id, created_at, file_hash, file_name, file_size_in_bytes, is_assigned, last_charged_at, 
@@ -281,42 +266,45 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
             FROM user_profile
             """
         )
-        logger.info(f"Fetched {len(user_rows)} rows from user_profile table.")
 
         for row in user_rows:
             user_id = row['user_id']
-            user_data_entry = {
-                "created_at": format_timestamp(row['created_at']),
+            user_data = {
+                "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], (int, float)) else row['created_at'],
                 "file_hash": row['file_hash'],
                 "file_name": row['file_name'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "is_assigned": row['is_assigned'],
-                "last_charged_at": format_timestamp(row['last_charged_at']),
+                "last_charged_at": row['last_charged_at'].isoformat() if isinstance(row['last_charged_at'], (int, float)) else row['last_charged_at'],
                 "main_req_hash": row['main_req_hash'],
                 "miner_ids": row['miner_ids'],
                 "owner": row['owner'],
                 "selected_validator": row['selected_validator'],
                 "total_replicas": row['total_replicas'],
-                "updated_at": format_timestamp(row['updated_at'])
+                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
             }
+
             user_file_path = os.path.join(user_profile_dir, f"{user_id}.json")
-            existing_entries = []
-            if await aiofiles.os.path.exists(user_file_path): # Use aiofiles.os.path.exists
+
+            # Load existing data if the file exists
+            existing_data = []
+            if os.path.exists(user_file_path):
                 try:
-                    async with aiofiles.open(user_file_path, 'r') as f:
-                        content = await f.read()
-                        loaded_json = json.loads(content)
-                        if not isinstance(loaded_json, list):
-                            existing_entries = [loaded_json]
-                        else:
-                            existing_entries = loaded_json
+                    with open(user_file_path, 'r') as f:
+                        existing_data = json.load(f)
+                        if not isinstance(existing_data, list):
+                            existing_data = [existing_data]
                 except Exception as e:
-                    logger.warning(f"Error reading or parsing existing user profile file {user_file_path}: {e}")
-                    existing_entries = []
-            existing_entries.append(user_data_entry)
+                    logger.warning(f"Error reading existing user profile file {user_file_path}: {e}")
+                    existing_data = []
+
+            # Append new data
+            existing_data.append(user_data)
+
+            # Write back to file
             try:
-                async with aiofiles.open(user_file_path, 'w') as f:
-                    await f.write(json.dumps(existing_entries, indent=4))
+                with open(user_file_path, 'w') as f:
+                    json.dump(existing_data, f, indent=4)
                 logger.debug(f"Updated user profile file: {user_file_path}")
             except Exception as e:
                 logger.error(f"Error writing user profile file {user_file_path}: {e}")
@@ -591,22 +579,41 @@ async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
         logger.error(f"Error detecting offline miners: {e}")
 
 async def assign_to_storage_miners(block_number):
-    """Processes pending storage requests by assigning them to 1 random miner and updating profiles."""
+    """Processes pending storage requests by assigning them to 5 random miners and updating profiles."""
     profiles_dir = "profiles"
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
     user_profile_dir = os.path.join(profiles_dir, "user_profile")
 
     async with config.db_pool.acquire() as conn:
-        storage_miners_rows = await conn.fetch(
+        # Fetch all registered StorageMiners (case-insensitive match)
+        storage_miners = await conn.fetch(
             """
             SELECT node_id FROM registration WHERE node_type ILIKE 'StorageMiner'
             """,
         )
-        available_miners = [row['node_id'] for row in storage_miners_rows]
-        logger.debug(f"Found registered StorageMiners with node_ids: {available_miners}")
-        
-        if not available_miners:
-            logger.warning("No StorageMiners available from registration table. Skipping assignment action.")
+        storage_miner_ids = [row['node_id'] for row in storage_miners]
+        print("Querying miners with node_ids:", storage_miner_ids)
+        if not storage_miner_ids:
+            logger.warning("No StorageMiners found in registration table.")
+            return
+
+        # # Fetch miners with pinning stats
+        # miners_data = await conn.fetch(
+        #     """
+        #     SELECT node_id, miner_total_files_pinned
+        #     FROM miners
+        #     WHERE node_id = ANY($1)
+        #     """,
+        #     storage_miner_ids
+        # )
+
+        # # Group miners by total_files_pinned (0 gets priority)
+        # priority_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] == 0]
+        # other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
+        available_miners = storage_miner_ids
+
+        if len(available_miners) != 1:
+            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 1). Skipping action.")
             return
 
         # Fetch up to 10 pending requests, including file_name, selected_validator, and main_req_hash
@@ -630,12 +637,12 @@ async def assign_to_storage_miners(block_number):
             selected_validator = request['selected_validator']
             main_req_hash = request['main_req_hash']
 
-            # Select 1 random miner
-            selected_miners = random.sample(available_miners, 1)
-            logger.info(f"Selected miner for request {file_hash}: {selected_miners}")
+            # Select 5 random miners, prioritizing those with miner_total_files_pinned = 0
+            selected_miners = random.sample(available_miners, 1) if len(available_miners) >= 1 else available_miners
+            logger.info(f"Selected miners for request {file_hash}: {selected_miners}")
 
             # Update miner_profile JSON
-            miner_file_path = os.path.join(miner_profile_dir, f"{selected_miners[0]}.json")  # Use selected miner
+            miner_file_path = os.path.join(miner_profile_dir, f"{selected_miners[0]}.json")  # Use first miner as reference
             if os.path.exists(miner_file_path):
                 try:
                     with open(miner_file_path, 'r') as f:
@@ -653,11 +660,10 @@ async def assign_to_storage_miners(block_number):
                             entry_found = True
                             break
                     if not entry_found:
-                        file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL, timeout=30)
                         miner_data.append({
                             "created_at": int(time.time()),
                             "file_hash": file_hash,
-                            "file_size_in_bytes": file_size_response.get('size', 0),
+                            "file_size_in_bytes": (await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
                             "miner_node_id": selected_miners[0],
                             "selected_validator": selected_validator,
                             "miner_ids": selected_miners,
@@ -691,12 +697,11 @@ async def assign_to_storage_miners(block_number):
                             entry_found = True
                             break
                     if not entry_found:
-                        file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL, timeout=30)
                         user_data.append({
                             "created_at": int(time.time()),
                             "file_hash": file_hash,
                             "file_name": file_name,
-                            "file_size_in_bytes": file_size_response.get('size', 0),
+                            "file_size_in_bytes": (await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
                             "is_assigned": True,
                             "last_charged_at": int(time.time()),
                             "main_req_hash": main_req_hash,
@@ -729,106 +734,80 @@ async def assign_to_storage_miners(block_number):
     logger.info(f"Performed action at block {block_number} (Processed {len(pending_requests)} requests)")
 
 async def monitor_validator_epochs(pool):
-    try:
-        keypair = load_hips_keypair(config.KEYSTORE_PATH)
-    except Exception as e:
-        logger.error(f"CRITICAL: Failed to load HIPS keypair from {config.KEYSTORE_PATH}, monitor_validator_epochs cannot start. Error: {e}")
-        return # Exit if keypair fails
+    """Monitors the current_epoch_validator table and logs for 100 blocks when HIPS key matches."""
+    keypair = load_hips_keypair(config.KEYSTORE_PATH)
     hips_account_id = keypair.ss58_address
     logger.info(f"Starting validator epoch monitor with HIPS account: {hips_account_id} at {time.strftime('%I:%M %p PKT, %B %d, %Y')}")
 
     in_action_period = False
-    validator_term_start_block = None 
-    validator_term_end_block = None   
-    processing_cutoff_block = None # Will be set when term starts
-    EPOCH_LENGTH = 100 
-    SUBMISSION_GRACE_PERIOD_BLOCKS = 30 # Stop processing new requests this many blocks before term ends
+    target_block_number = None
+    last_checked_block = None
 
     while True:
-        logger.debug(f"monitor_validator_epochs loop start. in_action_period: {in_action_period}, term_end: {validator_term_end_block}, cutoff: {processing_cutoff_block}")
         current_block_number = await get_latest_block_number(pool)
-        logger.info(f"Current block from DB: {current_block_number}")
-        
+        logger.info(f"Current block number: {current_block_number}")
         if current_block_number is None:
-            logger.warning("Cannot proceed: current_block_number is None. Retrying in 5 seconds...")
+            logger.info("Cannot proceed without current block number. Retrying in 5 seconds...")
             await asyncio.sleep(5)
             continue
 
+        # Check pin check metrics every 1200th block
+        # await update_pin_check_metrics_near_block(current_block_number)
+
+        # If we're in an action period, continue logging until the epoch ends
         if in_action_period:
-            logger.debug(f"In action period. Current: {current_block_number}, Term ends: {validator_term_end_block}, Cutoff: {processing_cutoff_block}")
-            if current_block_number > validator_term_end_block:
-                logger.info(f"Validator term officially ended. Current: {current_block_number}, Term End: {validator_term_end_block}")
+            if current_block_number >= target_block_number:
+                logger.info(f"Finished action period at block {current_block_number} (target: {target_block_number})")
                 in_action_period = False
-                validator_term_start_block = None
-                validator_term_end_block = None
-                processing_cutoff_block = None
+                target_block_number = None
+                last_checked_block = None
             else:
-                # Only perform actions if before the processing cutoff
-                if processing_cutoff_block is not None and current_block_number <= processing_cutoff_block:
-                    logger.info(f"Block {current_block_number}: Performing actions (before cutoff {processing_cutoff_block}).")
-                    await perform_action(current_block_number)
-                elif processing_cutoff_block is not None and current_block_number > processing_cutoff_block:
-                    logger.info(f"Block {current_block_number}: Past processing cutoff {processing_cutoff_block}. Focusing on submissions.")
-                
-                # Submission logic (last 5 blocks of 100-block epoch)
-                current_epoch_start_calc = ((current_block_number - 1) // EPOCH_LENGTH) * EPOCH_LENGTH + 1
-                current_epoch_end_calc = current_epoch_start_calc + EPOCH_LENGTH - 1
-                submission_window_start = current_epoch_end_calc - 4 
-                submission_window_end = current_epoch_end_calc     
-                logger.debug(f"Block: {current_block_number}, Term: [{validator_term_start_block}-{validator_term_end_block}], Epoch: [{current_epoch_start_calc}-{current_epoch_end_calc}], SubmitWin: [{submission_window_start}-{submission_window_end}]")
-                logger.info(f"current_epoch_start_calc : {current_epoch_start_calc}")
-                sample_tx_period = current_epoch_start_calc + 50
-                # if submission_window_start <= current_block_number <= submission_window_end:
-                if sample_tx_period == current_block_number:
-                    logger.info(f"Block {current_block_number} in submission window [{submission_window_start}-{submission_window_end}]. Triggering.")
+                await perform_action(current_block_number)
+                # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
+                if current_block_number % 5 == 0:
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                     await update_miner_profiles_near_epoch_end(current_block_number)
-            await asyncio.sleep(5) 
+            await asyncio.sleep(5)
             continue
 
-        # If not in an action period, check if we should become the validator
-        logger.info("Not in action period. Checking DB for current validator...")
+        # Fetch the latest validator entry (only one item in the table)
         async with pool.acquire() as conn:
-            logger.debug("Querying current_epoch_validator table...")
-            validator_info_row = await conn.fetchrow(
+            row = await conn.fetchrow(
                 """
-                SELECT account_id, block_number 
+                SELECT account_id, block_number, updated_at
                 FROM current_epoch_validator
                 ORDER BY updated_at DESC
                 LIMIT 1
                 """
             )
-            logger.debug(f"DB query result for validator_info_row: {validator_info_row}")
 
-            if validator_info_row: 
-                db_validator_account_id = validator_info_row['account_id']
-                db_validator_term_start_block = validator_info_row['block_number']
-                logger.info(f"Comparing HIPS ID: '{hips_account_id}' with DB Validator ID: '{db_validator_account_id}' (term starts: {db_validator_term_start_block})")
-                if db_validator_account_id == hips_account_id:
-                    if not validator_term_start_block or validator_term_start_block != db_validator_term_start_block:
-                        in_action_period = True
-                        validator_term_start_block = db_validator_term_start_block
-                        term_epoch_start_block = ((validator_term_start_block - 1) // EPOCH_LENGTH) * EPOCH_LENGTH + 1
-                        validator_term_end_block = term_epoch_start_block + EPOCH_LENGTH - 1 
-                        processing_cutoff_block = validator_term_end_block - SUBMISSION_GRACE_PERIOD_BLOCKS
-                        logger.info(f"MATCH: HIPS account is current validator. Assigned for epoch starting ~{term_epoch_start_block}. Term active until block {validator_term_end_block}. Processing cutoff at {processing_cutoff_block}.")
-                        await perform_rebalance_and_reconstruct_profiles(pool)
-                        if current_block_number <= processing_cutoff_block: # Perform initial action only if not past cutoff
-                             await perform_action(current_block_number)
-                        else:
-                            logger.info(f"Matched validator term, but already past processing cutoff ({current_block_number} > {processing_cutoff_block}). Skipping initial perform_action.")
+            if row:
+                account_id = row['account_id']
+                block_number = row['block_number']
+                updated_at = row['updated_at']
+                logger.info(f"Checking validator: account_id={account_id}, block_number={block_number}, updated_at={updated_at}")
+
+                # Skip if we've already checked this block number (same epoch)
+                if last_checked_block == block_number:
+                    logger.info(f"Already checked block {block_number}, skipping until epoch changes")
+                    await asyncio.sleep(5)
+                    continue
+
+                last_checked_block = block_number
+
+                if account_id == hips_account_id:
+                    # New match found, start a 100-block action period
+                    in_action_period = True
+                    target_block_number = block_number + 20
+                    logger.info(f"Match found: HIPS account {hips_account_id} is the current validator at block {block_number}")
+                    logger.info(f"Will perform action until block {target_block_number} (current block: {current_block_number})")
+                    await perform_rebalance_and_reconstruct_profiles(pool)
+                    await perform_action(current_block_number)
                 else:
-                    logger.info(f"NO MATCH: HIPS ID '{hips_account_id}' does not match DB Validator ID '{db_validator_account_id}'. Awaiting turn.")
-                    # Reset in_action_period if it was somehow true but IDs don't match
-                    if in_action_period: 
-                        logger.warning(f"State inconsistency: Was in_action_period=true, but HIPS ID does not match DB validator. Resetting.")
-                        in_action_period = False
-                        validator_term_start_block = None
-                        validator_term_end_block = None
+                    logger.info(f"No match: HIPS account {hips_account_id} is not the current validator at block {block_number}")
             else:
-                logger.info("No entries found in current_epoch_validator table. Cannot determine current validator.")
-        
-        await asyncio.sleep(15) 
+                logger.info("No entries found in current_epoch_validator table")
+        await asyncio.sleep(5)
 
 async def update_miner_profiles_near_epoch_end(block_number):
     """Updates miner profiles 5 blocks before epoch end and submits to chain."""
@@ -977,7 +956,7 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
                             # Fetch the owner, file_name, selected_validator, and main_req_hash from user_profile
                             user_info = await conn.fetchrow(
                                 """
-                                SELECT owner, file_name, selected_validator, main_req_hash 
+                                SELECT owner_account_id, file_name, selected_validator, main_req_hash
                                 FROM user_profile
                                 WHERE file_hash = $1
                                 LIMIT 1
@@ -985,7 +964,7 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
                                 file_hash
                             )
                             if user_info:
-                                owner = user_info['owner']
+                                owner = user_info['owner_account_id']
                                 file_name = user_info['file_name']
                                 selected_validator = user_info['selected_validator']
                                 main_req_hash = user_info['main_req_hash']

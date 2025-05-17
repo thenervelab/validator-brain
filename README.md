@@ -43,7 +43,7 @@ pip install -r requirements.txt
 ### 4. PostgreSQL Setup with Docker
 
 ```bash
-docker run -d --name postgres-substrate --restart always \
+docker run -d --name postgres-substrate \
   -e POSTGRES_USER=user \
   -e POSTGRES_PASSWORD=password \
   -e POSTGRES_DB=substrate_fetcher \

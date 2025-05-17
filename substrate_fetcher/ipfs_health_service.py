@@ -1,17 +1,14 @@
 # substrate_fetcher/ipfs_health_service.py
 import asyncio
-import asyncpg
+import logging
 import signal
 import sys
 import time
 import math
-from typing import List, Dict, Optional, Coroutine, Any, Tuple
-from loguru import logger
 from . import config
 from .ipfs_health_utils import perform_ipfs_ping, EPOCH_BLOCK_INTERVAL
 
-# Ensure parent directory is in path for sibling module imports
-import os
+logger = logging.getLogger(__name__)
 
 # Number of miners to process in parallel
 PING_BATCH_SIZE = 50
@@ -317,6 +314,11 @@ async def stop_ping_service():
 # Main entry point for running as a standalone service
 if __name__ == "__main__":
     # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
     logger.info("Starting IPFS health service")
 
     # Import here to avoid circular imports

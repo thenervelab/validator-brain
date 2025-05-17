@@ -9,7 +9,7 @@ import sys
 import os
 from typing import Any, Dict, List, Tuple
 from . import config
-from loguru import logger
+import logging
 import aiohttp
 from multiprocessing import Queue as MPQueue
 import os
@@ -23,7 +23,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Configure logging
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # Cache for IPFS content
 _ipfs_manifest_cache: Dict[str, Any] = {}
@@ -221,7 +221,7 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                         node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks,
                         miner_total_files_size, miner_total_files_pinned
                     )
-                    # print(f"Updated metrics for node_id: {node_id}")
+                    print(f"Updated metrics for node_id: {node_id}")
                 else:
                     # Insert new row (with only metrics for now)
                     await conn.execute(
@@ -344,11 +344,14 @@ def _preprocess_json_content(content: Any) -> Any:
     Returns:
         Any: Preprocessed content.
     """
+    # Handle lists (e.g., list of dictionaries)
     if isinstance(content, list):
         return [_preprocess_json_content(item) for item in content]
     
+    # Handle dictionaries
     if isinstance(content, dict):
         processed_content = content.copy()
+        # Check and decode file_name if it exists and is a list of integers
         if "file_name" in processed_content and isinstance(processed_content["file_name"], list):
             byte_list = processed_content["file_name"]
             if all(isinstance(x, int) for x in byte_list):
@@ -360,33 +363,24 @@ def _preprocess_json_content(content: Any) -> Any:
                 except UnicodeDecodeError as e:
                     logger.warning(f"Failed to decode file_name as UTF-8: {e}. Keeping as byte array.")
 
-        if "file_hash" in processed_content:
-            original_file_hash = processed_content["file_hash"]
-            logger.debug(f"Preprocessing file_hash: Original type {type(original_file_hash)}, value: '{original_file_hash}'")
-            if isinstance(original_file_hash, list) and all(isinstance(x, int) for x in original_file_hash):
-                byte_data = bytes(original_file_hash)
+        # Check and decode file_hash if it exists and is a list of integers
+        if "file_hash" in processed_content and isinstance(processed_content["file_hash"], list):
+            byte_list = processed_content["file_hash"]
+            if all(isinstance(x, int) for x in byte_list):
+                # Convert list of integers to bytes
+                byte_data = bytes(byte_list)
+                # Convert bytes to hex string as an intermediate step
                 hex_str = byte_data.hex()
                 try:
-                    decoded_str = byte_data.decode('utf-8') # Attempt to decode as UTF-8 string (e.g. CID string)
-                    # If it decodes as a hex string that itself needs decoding (less common for file_hash)
-                    # try:
-                    #     processed_content["file_hash"] = bytes.fromhex(decoded_str).decode('utf-8')
-                    # except ValueError:
-                    processed_content["file_hash"] = decoded_str # Assume it was a direct string like a CID
-                    logger.debug(f"Processed list file_hash to string: '{processed_content["file_hash"]}'")
+                    # Decode hex string to UTF-8
+                    decoded_str = byte_data.decode('utf-8')
+                    updated_decoded_str = bytes.fromhex(decoded_str).decode('utf-8')
+                    processed_content["file_hash"] = updated_decoded_str
                 except UnicodeDecodeError as e:
-                    logger.warning(f"Failed to decode list file_hash as UTF-8: {e}. Using hex string: '{hex_str}'.")
-                    processed_content["file_hash"] = hex_str
-            elif isinstance(original_file_hash, str):
-                # If it's already a string, ensure it's clean (e.g. no extra quotes from bad JSON)
-                cleaned_hash = original_file_hash.strip('" ') # Strip quotes and whitespace
-                if original_file_hash != cleaned_hash:
-                    logger.debug(f"Cleaned string file_hash from '{original_file_hash}' to '{cleaned_hash}'")
-                processed_content["file_hash"] = cleaned_hash
-            else:
-                logger.warning(f"file_hash is of unhandled type {type(original_file_hash)}: '{original_file_hash}'. Storing as string.")
-                processed_content["file_hash"] = str(original_file_hash)
+                    logger.warning(f"Failed to decode file_hash as UTF-8: {e}. Using hex string instead.")
+                    processed_content["file_hash"] = hex_str  # Fallback to hex string if UTF-8 fails
 
+        # Check and decode main_req_hash if it exists and is a hex string
         if "main_req_hash" in processed_content and isinstance(processed_content["main_req_hash"], str):
             hex_str = processed_content["main_req_hash"]
             try:
@@ -397,11 +391,12 @@ def _preprocess_json_content(content: Any) -> Any:
                 logger.error(f"Failed to decode main_req_hash for content: {e}")
                 processed_content["main_req_hash"] = hex_str  # Fallback to hex string if decoding fails
 
+        # Recursively process nested dictionaries
         for key, value in processed_content.items():
-            if key not in ["file_hash", "file_name", "main_req_hash"]: # Avoid reprocessing already handled keys
-                processed_content[key] = _preprocess_json_content(value)
+            processed_content[key] = _preprocess_json_content(value)
         return processed_content
     
+    # Handle strings (e.g., for CID cleaning)
     if isinstance(content, str):
         # Clean CID strings by removing surrounding \" if present
         if content.startswith('"') and content.endswith('"'):
@@ -784,7 +779,7 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
 
         # Handle string input
         elif isinstance(bounded_vec, str):
-            # logger.debug(f"BoundedVec is string: {bounded_vec}")
+            logger.debug(f"BoundedVec is string: {bounded_vec}")
             try:
                 return bytes.fromhex(bounded_vec).decode('utf-8')
             except ValueError:

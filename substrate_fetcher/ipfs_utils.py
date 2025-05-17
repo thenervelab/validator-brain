@@ -1,16 +1,15 @@
 import aiohttp
 import json
-# import logging # Removed
+import logging
 import asyncio
 import os
 import aiofiles
 from multiformats import CID
 from typing import Dict, Optional, List, Any, Union
-from loguru import logger # Added
 
-# Configure logging # Removed
-# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-# logger = logging.getLogger(__name__) # Removed
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 async def test_node_connectivity(api_url: str) -> bool:
     """Test if the IPFS node is reachable."""

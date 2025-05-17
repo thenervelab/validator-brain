@@ -3,12 +3,12 @@ import multiprocessing as mp
 from substrateinterface import SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
 from typing import Any
+import logging
 import os
 import sys
 import time
 import traceback
 from queue import Empty as QueueEmptyException
-from loguru import logger
 
 # Ensure parent directory is in path so imports work from anywhere
 script_path = os.path.abspath(os.path.dirname(__file__))
@@ -18,6 +18,13 @@ if parent_dir not in sys.path:
 
 from . import config
 from . import utils
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # --- Module-level state ---
 _substrate_instance: SubstrateInterface | None = None
@@ -238,20 +245,8 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                                 # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
                                 if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
                                     owner_account_id = str(key_storage_obj[0])  # SS58 address
-                                    file_hash_raw = key_storage_obj[1]
-                                    file_hash = utils.bounded_vec_to_string(file_hash_raw)
-                                    
-                                    # Log the raw value object and its .value attribute
-                                    logger.debug(f"UserStorageRequests: Owner: {owner_account_id}, RawFileHash: {file_hash_raw}, ProcessedFileHash: {file_hash}")
-                                    logger.debug(f"ValueStorageObj type: {type(value_storage_obj)}, content: {value_storage_obj}")
-                                    value = None # Initialize value
-                                    if hasattr(value_storage_obj, 'value'):
-                                        logger.debug(f"ValueStorageObj.value type: {type(value_storage_obj.value)}, content: {value_storage_obj.value}")
-                                        value = value_storage_obj.value
-                                    else:
-                                        logger.debug(f"ValueStorageObj has no .value attribute, using object directly.")
-                                        value = value_storage_obj # Assign value_storage_obj if no .value
-                                        
+                                    file_hash = utils.bounded_vec_to_string(key_storage_obj[1])  # Convert BoundedVec to string
+                                    value = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj
                                     user_storage_requests[(owner_account_id, file_hash)] = value
                                 else:
                                     logger.warning(f"Unexpected key format for UserStorageRequests: {key_storage_obj}")
@@ -376,7 +371,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             if block_numbers_result is not None:
                 for key_storage_obj, value_storage_obj in block_numbers_result:
                     entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                    # logger.debug(f"BlockNumbers for node {entry_key_param_str}: {value_storage_obj.value}")
+                    logger.debug(f"BlockNumbers for node {entry_key_param_str}: {value_storage_obj.value}")
                     # BlockNumbers might return a list or a single integer
                     block_value = value_storage_obj.value
                     if isinstance(block_value, list) and block_value:
