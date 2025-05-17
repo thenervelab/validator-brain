@@ -852,6 +852,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
         # Update each item in the miner profile
         updated_miner_data = []
         for entry in miner_data:
+            file_hash = entry['file_hash']
             # Encode file_hash to byte array
             file_hash_hex = file_hash.encode('utf-8').hex()
             file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
