@@ -376,7 +376,7 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
             if block_numbers_result is not None:
                 for key_storage_obj, value_storage_obj in block_numbers_result:
                     entry_key_param_str = '0x' + key_storage_obj.value.hex() if hasattr(key_storage_obj, 'value') and isinstance(key_storage_obj.value, bytes) else str(key_storage_obj)
-                    logger.debug(f"BlockNumbers for node {entry_key_param_str}: {value_storage_obj.value}")
+                    # logger.debug(f"BlockNumbers for node {entry_key_param_str}: {value_storage_obj.value}")
                     # BlockNumbers might return a list or a single integer
                     block_value = value_storage_obj.value
                     if isinstance(block_value, list) and block_value:

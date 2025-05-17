@@ -221,7 +221,7 @@ async def update_execution_unit_metrics(pool: asyncpg.Pool, metrics_data: Dict[s
                         node_id, ipfs_storage_max, ipfs_zfs_pool_size, successful_pin_checks, total_pin_checks,
                         miner_total_files_size, miner_total_files_pinned
                     )
-                    print(f"Updated metrics for node_id: {node_id}")
+                    # print(f"Updated metrics for node_id: {node_id}")
                 else:
                     # Insert new row (with only metrics for now)
                     await conn.execute(
