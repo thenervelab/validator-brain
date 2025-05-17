@@ -951,7 +951,7 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
                             # Fetch the owner, file_name, selected_validator, and main_req_hash from user_profile
                             user_info = await conn.fetchrow(
                                 """
-                                SELECT owner_account_id, file_name, selected_validator, main_req_hash
+                                SELECT user_id, file_name, selected_validator, main_req_hash
                                 FROM user_profile
                                 WHERE file_hash = $1
                                 LIMIT 1
@@ -959,7 +959,7 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
                                 file_hash
                             )
                             if user_info:
-                                owner = user_info['owner_account_id']
+                                owner = user_info['user_id']
                                 file_name = user_info['file_name']
                                 selected_validator = user_info['selected_validator']
                                 main_req_hash = user_info['main_req_hash']
