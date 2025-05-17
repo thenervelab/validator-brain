@@ -78,7 +78,6 @@ def load_hips_keypair(keystore_path: str) -> Keypair:
         logger.debug(f"Raw content from {key_path}: {raw}")  # Debug the raw content
         # Trim surrounding quotes if present (as in Rust)
         seed_phrase = raw.strip().strip('"')
-        logger.debug(f"Processed seed phrase: {seed_phrase}")  # Debug the processed phrase
 
         # Try to create keypair from seed (assuming hex or mnemonic)
         try:

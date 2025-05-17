@@ -15,6 +15,8 @@ from . import utils
 from . import ipfs_utils
 from . import substrate_utils
 from loguru import logger # Added
+import aiofiles # Added for async file operations
+import aiofiles.os as aios # For async os operations if needed, though shutil.rmtree is sync
 
 # logger = logging.getLogger(__name__) # Removed
 
@@ -197,14 +199,18 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
     user_profile_dir = os.path.join(profiles_dir, "user_profile")
 
+    # shutil.rmtree is synchronous. If this is slow, it could be run in an executor.
+    # For simplicity, keeping it synchronous for now as it's usually fast unless a huge number of files.
     if os.path.exists(profiles_dir):
         try:
-            shutil.rmtree(profiles_dir)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, shutil.rmtree, profiles_dir) # Run sync rmtree in executor
             logger.info(f"Deleted existing profiles directory: {profiles_dir}")
         except Exception as e:
             logger.error(f"Error deleting profiles directory: {e}")
             return
     try:
+        # os.makedirs is synchronous and generally fast.
         os.makedirs(miner_profile_dir, exist_ok=True)
         os.makedirs(user_profile_dir, exist_ok=True)
         logger.info(f"Created directories: {miner_profile_dir}, {user_profile_dir}")
@@ -217,7 +223,6 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
             return None
         if isinstance(ts_val, (int, float)):
             try:
-                # Assuming Unix timestamp (seconds since epoch)
                 return datetime.fromtimestamp(ts_val, tz=timezone.utc).isoformat()
             except Exception as e:
                 logger.warning(f"Could not convert int/float timestamp '{ts_val}' to datetime: {e}. Storing as is.")
@@ -239,28 +244,31 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
 
         for row in miner_rows:
             miner_node_id = row['miner_node_id']
-            miner_data = {
-                "created_at": format_timestamp(row['created_at']), # Use helper
+            miner_data_entry = {
+                "created_at": format_timestamp(row['created_at']),
                 "file_hash": row['file_hash'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "selected_validator": row['selected_validator'],
-                "updated_at": format_timestamp(row['updated_at']) # Use helper
+                "updated_at": format_timestamp(row['updated_at'])
             }
             miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
-            existing_data = []
-            if os.path.exists(miner_file_path):
+            existing_entries = []
+            if await aiofiles.os.path.exists(miner_file_path): # Use aiofiles.os.path.exists
                 try:
-                    with open(miner_file_path, 'r') as f:
-                        existing_data = json.load(f)
-                        if not isinstance(existing_data, list):
-                            existing_data = [existing_data]
+                    async with aiofiles.open(miner_file_path, 'r') as f:
+                        content = await f.read()
+                        loaded_json = json.loads(content)
+                        if not isinstance(loaded_json, list):
+                            existing_entries = [loaded_json]
+                        else:
+                            existing_entries = loaded_json
                 except Exception as e:
-                    logger.warning(f"Error reading existing miner profile file {miner_file_path}: {e}")
-                    existing_data = []
-            existing_data.append(miner_data)
+                    logger.warning(f"Error reading or parsing existing miner profile file {miner_file_path}: {e}")
+                    existing_entries = []
+            existing_entries.append(miner_data_entry)
             try:
-                with open(miner_file_path, 'w') as f:
-                    json.dump(existing_data, f, indent=4)
+                async with aiofiles.open(miner_file_path, 'w') as f:
+                    await f.write(json.dumps(existing_entries, indent=4))
                 logger.debug(f"Updated miner profile file: {miner_file_path}")
             except Exception as e:
                 logger.error(f"Error writing miner profile file {miner_file_path}: {e}")
@@ -277,35 +285,38 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
 
         for row in user_rows:
             user_id = row['user_id']
-            user_data = {
-                "created_at": format_timestamp(row['created_at']), # Use helper
+            user_data_entry = {
+                "created_at": format_timestamp(row['created_at']),
                 "file_hash": row['file_hash'],
                 "file_name": row['file_name'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "is_assigned": row['is_assigned'],
-                "last_charged_at": format_timestamp(row['last_charged_at']), # Use helper
+                "last_charged_at": format_timestamp(row['last_charged_at']),
                 "main_req_hash": row['main_req_hash'],
                 "miner_ids": row['miner_ids'],
                 "owner": row['owner'],
                 "selected_validator": row['selected_validator'],
                 "total_replicas": row['total_replicas'],
-                "updated_at": format_timestamp(row['updated_at']) # Use helper
+                "updated_at": format_timestamp(row['updated_at'])
             }
             user_file_path = os.path.join(user_profile_dir, f"{user_id}.json")
-            existing_data = []
-            if os.path.exists(user_file_path):
+            existing_entries = []
+            if await aiofiles.os.path.exists(user_file_path): # Use aiofiles.os.path.exists
                 try:
-                    with open(user_file_path, 'r') as f:
-                        existing_data = json.load(f)
-                        if not isinstance(existing_data, list):
-                            existing_data = [existing_data]
+                    async with aiofiles.open(user_file_path, 'r') as f:
+                        content = await f.read()
+                        loaded_json = json.loads(content)
+                        if not isinstance(loaded_json, list):
+                            existing_entries = [loaded_json]
+                        else:
+                            existing_entries = loaded_json
                 except Exception as e:
-                    logger.warning(f"Error reading existing user profile file {user_file_path}: {e}")
-                    existing_data = []
-            existing_data.append(user_data)
+                    logger.warning(f"Error reading or parsing existing user profile file {user_file_path}: {e}")
+                    existing_entries = []
+            existing_entries.append(user_data_entry)
             try:
-                with open(user_file_path, 'w') as f:
-                    json.dump(existing_data, f, indent=4)
+                async with aiofiles.open(user_file_path, 'w') as f:
+                    await f.write(json.dumps(existing_entries, indent=4))
                 logger.debug(f"Updated user profile file: {user_file_path}")
             except Exception as e:
                 logger.error(f"Error writing user profile file {user_file_path}: {e}")
@@ -386,7 +397,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         # Process existing user_data entries
         for entry in user_data:
             # Fetch file size for this file_hash
-            file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL)
+            file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL, timeout=30)
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
@@ -422,7 +433,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
         if storage_request:
             logger.info("Adding new entry from storage request")
             # Fetch file size for the processed request's file_hash
-            file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL)
+            file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL, timeout=30)
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
@@ -642,10 +653,11 @@ async def assign_to_storage_miners(block_number):
                             entry_found = True
                             break
                     if not entry_found:
+                        file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL, timeout=30)
                         miner_data.append({
                             "created_at": int(time.time()),
                             "file_hash": file_hash,
-                            "file_size_in_bytes": (await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
+                            "file_size_in_bytes": file_size_response.get('size', 0),
                             "miner_node_id": selected_miners[0],
                             "selected_validator": selected_validator,
                             "miner_ids": selected_miners,
@@ -679,11 +691,12 @@ async def assign_to_storage_miners(block_number):
                             entry_found = True
                             break
                     if not entry_found:
+                        file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL, timeout=30)
                         user_data.append({
                             "created_at": int(time.time()),
                             "file_hash": file_hash,
                             "file_name": file_name,
-                            "file_size_in_bytes": (await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL))['size'] or 0,
+                            "file_size_in_bytes": file_size_response.get('size', 0),
                             "is_assigned": True,
                             "last_charged_at": int(time.time()),
                             "main_req_hash": main_req_hash,
