@@ -282,7 +282,7 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
                 "owner": row['owner'],
                 "selected_validator": row['selected_validator'],
                 "total_replicas": row['total_replicas'],
-                "updated_at": row['updated_at']
+                "updated_at": row['updated_at'].isoformat() if isinstance(row['updated_at'], datetime) else row['updated_at']
             }
 
             user_file_path = os.path.join(user_profile_dir, f"{user_id}.json")
