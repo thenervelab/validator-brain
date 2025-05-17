@@ -779,7 +779,7 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
 
         # Handle string input
         elif isinstance(bounded_vec, str):
-            logger.debug(f"BoundedVec is string: {bounded_vec}")
+            # logger.debug(f"BoundedVec is string: {bounded_vec}")
             try:
                 return bytes.fromhex(bounded_vec).decode('utf-8')
             except ValueError:

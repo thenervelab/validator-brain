@@ -735,57 +735,53 @@ async def assign_to_storage_miners(block_number):
     logger.info(f"Performed action at block {block_number} (Processed {len(pending_requests)} requests)")
 
 async def monitor_validator_epochs(pool):
-    """Monitors the current_epoch_validator table and logs for 100 blocks when HIPS key matches."""
-    keypair = load_hips_keypair(config.KEYSTORE_PATH)
+    try:
+        keypair = load_hips_keypair(config.KEYSTORE_PATH)
+    except Exception as e:
+        logger.error(f"CRITICAL: Failed to load HIPS keypair from {config.KEYSTORE_PATH}, monitor_validator_epochs cannot start. Error: {e}")
+        return # Exit if keypair fails
     hips_account_id = keypair.ss58_address
     logger.info(f"Starting validator epoch monitor with HIPS account: {hips_account_id} at {time.strftime('%I:%M %p PKT, %B %d, %Y')}")
 
     in_action_period = False
-    validator_term_start_block = None # Store when our term started
-    validator_term_end_block = None   # Store when our term ends
-    EPOCH_LENGTH = 100 # Define epoch length
+    validator_term_start_block = None 
+    validator_term_end_block = None   
+    EPOCH_LENGTH = 100 
 
     while True:
+        logger.debug(f"monitor_validator_epochs loop start. in_action_period: {in_action_period}, current_validator_term_end_block: {validator_term_end_block}")
         current_block_number = await get_latest_block_number(pool)
-        # logger.info(f"Current block number: {current_block_number}") # Reduced verbosity
+        logger.info(f"Current block from DB: {current_block_number}") # Log (B)
+        
         if current_block_number is None:
-            logger.info("Cannot proceed without current block number. Retrying in 5 seconds...")
+            logger.warning("Cannot proceed: current_block_number is None. Retrying in 5 seconds...") # Log (C) style
             await asyncio.sleep(5)
             continue
 
-        # If we're in an action period, check if it should end or if it's time to submit
         if in_action_period:
+            logger.debug(f"In action period. Current block: {current_block_number}, Term ends: {validator_term_end_block}")
             if current_block_number > validator_term_end_block:
-                logger.info(f"Finished validator term at block {current_block_number} (term ended at {validator_term_end_block})")
+                logger.info(f"Validator term ended. Current: {current_block_number}, Term End: {validator_term_end_block}")
                 in_action_period = False
                 validator_term_start_block = None
                 validator_term_end_block = None
             else:
-                await perform_action(current_block_number) # Perform regular actions throughout the term
-                
-                # Determine current 100-block epoch boundaries
-                # Assuming block numbers start from 1 for epoch calculation
+                await perform_action(current_block_number)
                 current_epoch_start_calc = ((current_block_number - 1) // EPOCH_LENGTH) * EPOCH_LENGTH + 1
                 current_epoch_end_calc = current_epoch_start_calc + EPOCH_LENGTH - 1
-                
-                # Define the submission window: last 5 blocks of the 100-block epoch
-                submission_window_start = current_epoch_end_calc - 4 # e.g., block 96 for 1-100 epoch
-                submission_window_end = current_epoch_end_calc     # e.g., block 100 for 1-100 epoch
-
-                logger.debug(f"Block: {current_block_number}, Validator Term: [{validator_term_start_block}-{validator_term_end_block}], Current Epoch: [{current_epoch_start_calc}-{current_epoch_end_calc}], Submission Window: [{submission_window_start}-{submission_window_end}]")
-
+                submission_window_start = current_epoch_end_calc - 4 
+                submission_window_end = current_epoch_end_calc     
+                logger.debug(f"Block: {current_block_number}, Term: [{validator_term_start_block}-{validator_term_end_block}], Epoch: [{current_epoch_start_calc}-{current_epoch_end_calc}], SubmitWin: [{submission_window_start}-{submission_window_end}]")
                 if submission_window_start <= current_block_number <= submission_window_end:
-                    logger.info(f"Block {current_block_number} is within submission window [{submission_window_start}-{submission_window_end}] of epoch end. Triggering submissions.")
+                    logger.info(f"Block {current_block_number} in submission window [{submission_window_start}-{submission_window_end}]. Triggering.")
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                     await update_miner_profiles_near_epoch_end(current_block_number)
-                # else: # This would be too verbose otherwise
-                    # logger.debug(f"Block {current_block_number} not in submission window.")
-            await asyncio.sleep(5) # Check every 5 seconds, not related to block 5
+            await asyncio.sleep(5) 
             continue
 
-        # If not in an action period, check if we should become the validator
+        logger.info("Not in action period. Checking DB for current validator...") # Log (E)
         async with pool.acquire() as conn:
-            # Fetch the validator info - current_epoch_validator returns [account_id, block_number_their_term_started]
+            logger.debug("Querying current_epoch_validator table...") # Log (F) before query
             validator_info_row = await conn.fetchrow(
                 """
                 SELECT account_id, block_number 
@@ -794,37 +790,35 @@ async def monitor_validator_epochs(pool):
                 LIMIT 1
                 """
             )
+            logger.debug(f"DB query result for validator_info_row: {validator_info_row}") # Log (F) after query
 
-            if validator_info_row:
+            if validator_info_row: 
+                logger.info("Found entry in current_epoch_validator table.") # Log (G) part 1
                 db_validator_account_id = validator_info_row['account_id']
                 db_validator_term_start_block = validator_info_row['block_number']
-                
-                # Explicit logging for comparison
-                logger.info(f"Comparing HIPS ID: '{hips_account_id}' with DB Validator ID: '{db_validator_account_id}' (term starts: {db_validator_term_start_block})")
-
+                logger.info(f"Comparing HIPS ID: '{hips_account_id}' with DB Validator ID: '{db_validator_account_id}' (term starts: {db_validator_term_start_block})") # Log (H)
                 if db_validator_account_id == hips_account_id:
                     if not validator_term_start_block or validator_term_start_block != db_validator_term_start_block:
                         in_action_period = True
                         validator_term_start_block = db_validator_term_start_block
-                        validator_term_end_block = validator_term_start_block + 19 # Active for 20 blocks
+                        validator_term_end_block = validator_term_start_block + 19 
                         logger.info(f"MATCH: HIPS account is current validator. Term: Blocks {validator_term_start_block} - {validator_term_end_block}.")
                         await perform_rebalance_and_reconstruct_profiles(pool)
-                        # Perform initial action immediately upon becoming validator
                         await perform_action(current_block_number) 
-                    # else: # Already in action period, or term hasn't changed, handled above
-                        # logger.debug(f"Still in HIPS validator term or term hasn't changed.")
+                    else: 
+                        logger.debug(f"HIPS is validator, but term start block {db_validator_term_start_block} is same as current {validator_term_start_block}. No new action period started.")
                 else:
                     logger.info(f"NO MATCH: HIPS ID '{hips_account_id}' does not match DB Validator ID '{db_validator_account_id}'. Awaiting turn.")
-                    if in_action_period: # Should have been caught above, but as a safeguard
-                        logger.info(f"Transitioning out of action period. Current DB validator: {db_validator_account_id}")
+                    # Reset in_action_period if it was somehow true but IDs don't match
+                    if in_action_period: 
+                        logger.warning(f"State inconsistency: Was in_action_period=true, but HIPS ID does not match DB validator. Resetting.")
                         in_action_period = False
                         validator_term_start_block = None
                         validator_term_end_block = None
-                    # logger.debug(f"No match: HIPS account is not current validator ({db_validator_account_id})")
             else:
-                logger.info("No entries found in current_epoch_validator table")
+                logger.info("No entries found in current_epoch_validator table. Cannot determine current validator.") # Log (I) / Log (G) part 2
         
-        await asyncio.sleep(15) # Check validator status less frequently if not our term
+        await asyncio.sleep(15) 
 
 async def update_miner_profiles_near_epoch_end(block_number):
     """Updates miner profiles 5 blocks before epoch end and submits to chain."""
