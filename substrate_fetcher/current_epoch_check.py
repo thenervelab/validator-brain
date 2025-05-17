@@ -191,6 +191,7 @@ async def get_offline_miners(pool: asyncpg.Pool) -> list:
 
 async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
     """Reconstructs miner and user profiles from the database into JSON files."""
+    logger.info("reconstructing the profile: function called ......")
     # Define directories
     profiles_dir = "profiles"
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
@@ -569,6 +570,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
 
 async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
     """Detect offline miners at the start of each epoch and log the result."""
+    logger.info("detect offline miners fn called ......")
     try:
         offline_miners = await get_offline_miners(pool)
         if offline_miners:
@@ -914,21 +916,13 @@ async def update_miner_profiles_near_epoch_end(block_number):
 
     logger.info(f"Finished updating miner profiles at block {block_number}")
 
-async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
-    """Detect offline miners at the start of each epoch and log the result."""
-    try:
-        offline_miners = await get_offline_miners(pool)
-        if offline_miners:
-            logger.info(f"Offline miners detected at epoch start: {offline_miners}")
-        else:
-            logger.info("No offline miners detected at epoch start")
-    except Exception as e:
-        logger.error(f"Error detecting offline miners: {e}")
-
 async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
     """Orchestrates epoch tasks: detects offline miners, reconstructs profiles, and processes pending requests."""
+    logger.info("calling fn : detect offline miners ......")
     await detect_offline_miners_at_epoch_start(pool)
+    logger.info("calling fn : reconstructing the profile: function called ......")
     await reconstruct_profiles_to_json(pool)
+    logger.info("performing rebalance ofro offline miners .................")
 
     profiles_dir = "profiles"
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
