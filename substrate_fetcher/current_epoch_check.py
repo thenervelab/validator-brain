@@ -798,7 +798,9 @@ async def monitor_validator_epochs(pool):
             if validator_info_row:
                 db_validator_account_id = validator_info_row['account_id']
                 db_validator_term_start_block = validator_info_row['block_number']
-                # logger.info(f"DB Validator: {db_validator_account_id}, Term starts: {db_validator_term_start_block}")
+                
+                # Explicit logging for comparison
+                logger.info(f"Comparing HIPS ID: '{hips_account_id}' with DB Validator ID: '{db_validator_account_id}' (term starts: {db_validator_term_start_block})")
 
                 if db_validator_account_id == hips_account_id:
                     if not validator_term_start_block or validator_term_start_block != db_validator_term_start_block:
@@ -812,8 +814,9 @@ async def monitor_validator_epochs(pool):
                     # else: # Already in action period, or term hasn't changed, handled above
                         # logger.debug(f"Still in HIPS validator term or term hasn't changed.")
                 else:
+                    logger.info(f"NO MATCH: HIPS ID '{hips_account_id}' does not match DB Validator ID '{db_validator_account_id}'. Awaiting turn.")
                     if in_action_period: # Should have been caught above, but as a safeguard
-                        logger.info(f"No longer the HIPS validator. Current DB validator: {db_validator_account_id}")
+                        logger.info(f"Transitioning out of action period. Current DB validator: {db_validator_account_id}")
                         in_action_period = False
                         validator_term_start_block = None
                         validator_term_end_block = None
