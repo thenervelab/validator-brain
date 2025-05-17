@@ -580,41 +580,22 @@ async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
         logger.error(f"Error detecting offline miners: {e}")
 
 async def assign_to_storage_miners(block_number):
-    """Processes pending storage requests by assigning them to 5 random miners and updating profiles."""
+    """Processes pending storage requests by assigning them to 1 random miner and updating profiles."""
     profiles_dir = "profiles"
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
     user_profile_dir = os.path.join(profiles_dir, "user_profile")
 
     async with config.db_pool.acquire() as conn:
-        # Fetch all registered StorageMiners (case-insensitive match)
-        storage_miners = await conn.fetch(
+        storage_miners_rows = await conn.fetch(
             """
             SELECT node_id FROM registration WHERE node_type ILIKE 'StorageMiner'
             """,
         )
-        storage_miner_ids = [row['node_id'] for row in storage_miners]
-        print("Querying miners with node_ids:", storage_miner_ids)
-        if not storage_miner_ids:
-            logger.warning("No StorageMiners found in registration table.")
-            return
-
-        # # Fetch miners with pinning stats
-        # miners_data = await conn.fetch(
-        #     """
-        #     SELECT node_id, miner_total_files_pinned
-        #     FROM miners
-        #     WHERE node_id = ANY($1)
-        #     """,
-        #     storage_miner_ids
-        # )
-
-        # # Group miners by total_files_pinned (0 gets priority)
-        # priority_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] == 0]
-        # other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
-        available_miners = storage_miner_ids
-
-        if len(available_miners) != 1:
-            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 1). Skipping action.")
+        available_miners = [row['node_id'] for row in storage_miners_rows]
+        logger.debug(f"Found registered StorageMiners with node_ids: {available_miners}")
+        
+        if not available_miners:
+            logger.warning("No StorageMiners available from registration table. Skipping assignment action.")
             return
 
         # Fetch up to 10 pending requests, including file_name, selected_validator, and main_req_hash
@@ -638,12 +619,12 @@ async def assign_to_storage_miners(block_number):
             selected_validator = request['selected_validator']
             main_req_hash = request['main_req_hash']
 
-            # Select 5 random miners, prioritizing those with miner_total_files_pinned = 0
-            selected_miners = random.sample(available_miners, 1) if len(available_miners) >= 1 else available_miners
-            logger.info(f"Selected miners for request {file_hash}: {selected_miners}")
+            # Select 1 random miner
+            selected_miners = random.sample(available_miners, 1)
+            logger.info(f"Selected miner for request {file_hash}: {selected_miners}")
 
             # Update miner_profile JSON
-            miner_file_path = os.path.join(miner_profile_dir, f"{selected_miners[0]}.json")  # Use first miner as reference
+            miner_file_path = os.path.join(miner_profile_dir, f"{selected_miners[0]}.json")  # Use selected miner
             if os.path.exists(miner_file_path):
                 try:
                     with open(miner_file_path, 'r') as f:
