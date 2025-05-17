@@ -2,13 +2,27 @@ import aiohttp
 import json
 import random
 import asyncio
-import logging
+import os
 from multiformats import CID
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
+from pathlib import Path
+from loguru import logger
+from datetime import datetime, timedelta
+
+# Ensure parent directory is in path for sibling module imports
+script_path = os.path.abspath(os.path.dirname(__file__))
+parent_dir = os.path.dirname(script_path)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from substrate_fetcher import config, ipfs_utils # Assuming config and ipfs_utils are in substrate_fetcher
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+# logger = logging.getLogger(__name__)
+
+PROFILES_DIR = "profiles"
+MINER_PROFILES_DIR = Path(PROFILES_DIR) / "miner_profile"
 
 async def test_node_connectivity(api_url: str) -> bool:
     """Test if the IPFS node is reachable."""

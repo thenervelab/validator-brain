@@ -1,7 +1,7 @@
 import asyncio
 import asyncpg
 from substrate_fetcher.substrate_utils import load_hips_keypair, call_update_pin_and_storage_requests, call_update_miner_profiles, call_update_pin_check_metrics
-import logging
+# import logging # Removed
 import time
 import aiohttp
 import json
@@ -13,8 +13,9 @@ from . import config
 from . import utils
 from . import ipfs_utils
 from . import substrate_utils
+from loguru import logger # Added
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__) # Removed
 
 async def get_latest_block_number(pool):
     """Fetches the latest block number from the latest_block table."""

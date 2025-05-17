@@ -3,12 +3,12 @@ import multiprocessing as mp
 from substrateinterface import SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
 from typing import Any
-import logging
 import os
 import sys
 import time
 import traceback
 from queue import Empty as QueueEmptyException
+from loguru import logger
 
 # Ensure parent directory is in path so imports work from anywhere
 script_path = os.path.abspath(os.path.dirname(__file__))
@@ -18,13 +18,6 @@ if parent_dir not in sys.path:
 
 from . import config
 from . import utils
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # --- Module-level state ---
 _substrate_instance: SubstrateInterface | None = None

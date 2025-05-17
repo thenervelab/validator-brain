@@ -1,4 +1,4 @@
-import logging
+# import logging # Removed
 from substrateinterface import SubstrateInterface, Keypair
 from substrateinterface.exceptions import SubstrateRequestException
 from typing import List, Dict, Any
@@ -6,10 +6,11 @@ import asyncio
 import os
 import sys
 from . import config
+from loguru import logger # Added
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Configure logging # Removed
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# logger = logging.getLogger(__name__) # Removed
 
 # Ensure parent directory is in path so imports work from anywhere
 script_path = os.path.abspath(os.path.dirname(__file__))

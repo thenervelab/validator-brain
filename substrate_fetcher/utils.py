@@ -9,7 +9,7 @@ import sys
 import os
 from typing import Any, Dict, List, Tuple
 from . import config
-import logging
+from loguru import logger
 import aiohttp
 from multiprocessing import Queue as MPQueue
 import os
@@ -23,7 +23,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 # Configure logging
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 # Cache for IPFS content
 _ipfs_manifest_cache: Dict[str, Any] = {}

@@ -6,6 +6,7 @@ import signal
 from urllib.parse import urlparse
 from substrate_fetcher import config, utils, storage_fetcher, ipfs_health_service
 from substrate_fetcher.current_epoch_check import monitor_validator_epochs
+from loguru import logger
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
