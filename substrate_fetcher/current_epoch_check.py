@@ -776,8 +776,10 @@ async def monitor_validator_epochs(pool):
                 submission_window_start = current_epoch_end_calc - 4 
                 submission_window_end = current_epoch_end_calc     
                 logger.debug(f"Block: {current_block_number}, Term: [{validator_term_start_block}-{validator_term_end_block}], Epoch: [{current_epoch_start_calc}-{current_epoch_end_calc}], SubmitWin: [{submission_window_start}-{submission_window_end}]")
+                logger.info(f"current_epoch_start_calc : {current_epoch_start_calc}")
+                sample_tx_period = current_epoch_start_calc + 50
                 # if submission_window_start <= current_block_number <= submission_window_end:
-                if current_block_number % 50 == 0:
+                if sample_tx_period == current_block_number:
                     logger.info(f"Block {current_block_number} in submission window [{submission_window_start}-{submission_window_end}]. Triggering.")
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                     await update_miner_profiles_near_epoch_end(current_block_number)
