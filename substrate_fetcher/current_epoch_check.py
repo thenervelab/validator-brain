@@ -741,74 +741,87 @@ async def monitor_validator_epochs(pool):
     logger.info(f"Starting validator epoch monitor with HIPS account: {hips_account_id} at {time.strftime('%I:%M %p PKT, %B %d, %Y')}")
 
     in_action_period = False
-    target_block_number = None
-    last_checked_block = None
+    validator_term_start_block = None # Store when our term started
+    validator_term_end_block = None   # Store when our term ends
+    EPOCH_LENGTH = 100 # Define epoch length
 
     while True:
         current_block_number = await get_latest_block_number(pool)
-        logger.info(f"Current block number: {current_block_number}")
+        # logger.info(f"Current block number: {current_block_number}") # Reduced verbosity
         if current_block_number is None:
             logger.info("Cannot proceed without current block number. Retrying in 5 seconds...")
             await asyncio.sleep(5)
             continue
 
-        # Check pin check metrics every 1200th block
-        # await update_pin_check_metrics_near_block(current_block_number)
-
-        # If we're in an action period, continue logging until the epoch ends
+        # If we're in an action period, check if it should end or if it's time to submit
         if in_action_period:
-            if current_block_number >= target_block_number:
-                logger.info(f"Finished action period at block {current_block_number} (target: {target_block_number})")
+            if current_block_number > validator_term_end_block:
+                logger.info(f"Finished validator term at block {current_block_number} (term ended at {validator_term_end_block})")
                 in_action_period = False
-                target_block_number = None
-                last_checked_block = None
+                validator_term_start_block = None
+                validator_term_end_block = None
             else:
-                await perform_action(current_block_number)
-                # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
-                if current_block_number % 5 == 0:
+                await perform_action(current_block_number) # Perform regular actions throughout the term
+                
+                # Determine current 100-block epoch boundaries
+                # Assuming block numbers start from 1 for epoch calculation
+                current_epoch_start_calc = ((current_block_number - 1) // EPOCH_LENGTH) * EPOCH_LENGTH + 1
+                current_epoch_end_calc = current_epoch_start_calc + EPOCH_LENGTH - 1
+                
+                # Define the submission window: last 5 blocks of the 100-block epoch
+                submission_window_start = current_epoch_end_calc - 4 # e.g., block 96 for 1-100 epoch
+                submission_window_end = current_epoch_end_calc     # e.g., block 100 for 1-100 epoch
+
+                logger.debug(f"Block: {current_block_number}, Validator Term: [{validator_term_start_block}-{validator_term_end_block}], Current Epoch: [{current_epoch_start_calc}-{current_epoch_end_calc}], Submission Window: [{submission_window_start}-{submission_window_end}]")
+
+                if submission_window_start <= current_block_number <= submission_window_end:
+                    logger.info(f"Block {current_block_number} is within submission window [{submission_window_start}-{submission_window_end}] of epoch end. Triggering submissions.")
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                     await update_miner_profiles_near_epoch_end(current_block_number)
-            await asyncio.sleep(5)
+                # else: # This would be too verbose otherwise
+                    # logger.debug(f"Block {current_block_number} not in submission window.")
+            await asyncio.sleep(5) # Check every 5 seconds, not related to block 5
             continue
 
-        # Fetch the latest validator entry (only one item in the table)
+        # If not in an action period, check if we should become the validator
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
+            # Fetch the validator info - current_epoch_validator returns [account_id, block_number_their_term_started]
+            validator_info_row = await conn.fetchrow(
                 """
-                SELECT account_id, block_number, updated_at
+                SELECT account_id, block_number 
                 FROM current_epoch_validator
                 ORDER BY updated_at DESC
                 LIMIT 1
                 """
             )
 
-            if row:
-                account_id = row['account_id']
-                block_number = row['block_number']
-                updated_at = row['updated_at']
-                logger.info(f"Checking validator: account_id={account_id}, block_number={block_number}, updated_at={updated_at}")
+            if validator_info_row:
+                db_validator_account_id = validator_info_row['account_id']
+                db_validator_term_start_block = validator_info_row['block_number']
+                # logger.info(f"DB Validator: {db_validator_account_id}, Term starts: {db_validator_term_start_block}")
 
-                # Skip if we've already checked this block number (same epoch)
-                if last_checked_block == block_number:
-                    logger.info(f"Already checked block {block_number}, skipping until epoch changes")
-                    await asyncio.sleep(5)
-                    continue
-
-                last_checked_block = block_number
-
-                if account_id == hips_account_id:
-                    # New match found, start a 100-block action period
-                    in_action_period = True
-                    target_block_number = block_number + 20
-                    logger.info(f"Match found: HIPS account {hips_account_id} is the current validator at block {block_number}")
-                    logger.info(f"Will perform action until block {target_block_number} (current block: {current_block_number})")
-                    await perform_rebalance_and_reconstruct_profiles(pool)
-                    await perform_action(current_block_number)
+                if db_validator_account_id == hips_account_id:
+                    if not validator_term_start_block or validator_term_start_block != db_validator_term_start_block:
+                        in_action_period = True
+                        validator_term_start_block = db_validator_term_start_block
+                        validator_term_end_block = validator_term_start_block + 19 # Active for 20 blocks
+                        logger.info(f"MATCH: HIPS account is current validator. Term: Blocks {validator_term_start_block} - {validator_term_end_block}.")
+                        await perform_rebalance_and_reconstruct_profiles(pool)
+                        # Perform initial action immediately upon becoming validator
+                        await perform_action(current_block_number) 
+                    # else: # Already in action period, or term hasn't changed, handled above
+                        # logger.debug(f"Still in HIPS validator term or term hasn't changed.")
                 else:
-                    logger.info(f"No match: HIPS account {hips_account_id} is not the current validator at block {block_number}")
+                    if in_action_period: # Should have been caught above, but as a safeguard
+                        logger.info(f"No longer the HIPS validator. Current DB validator: {db_validator_account_id}")
+                        in_action_period = False
+                        validator_term_start_block = None
+                        validator_term_end_block = None
+                    # logger.debug(f"No match: HIPS account is not current validator ({db_validator_account_id})")
             else:
                 logger.info("No entries found in current_epoch_validator table")
-        await asyncio.sleep(5)
+        
+        await asyncio.sleep(15) # Check validator status less frequently if not our term
 
 async def update_miner_profiles_near_epoch_end(block_number):
     """Updates miner profiles 5 blocks before epoch end and submits to chain."""
