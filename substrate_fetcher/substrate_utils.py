@@ -493,7 +493,6 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
             formatted_profiles.append(formatted_profile)
 
         logger.info(f"Formatted {len(formatted_profiles)} miner profile(s)")
-        logger.info(f"Formatted  miner profile(s) are {formatted_profiles}")
         # Compose the call
         call = substrate.compose_call(
             call_module='IpfsPallet',
