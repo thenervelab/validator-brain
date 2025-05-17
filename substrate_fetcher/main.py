@@ -23,7 +23,7 @@ from . import current_epoch_check
 
 # Example global loguru configuration (can be expanded):
 logger.remove() # Optional: remove default stderr handler if you want to customize it fully
-logger.add(sys.stderr, level="INFO") # Add stderr handler with INFO level
+logger.add(sys.stderr, level="DEBUG") # CHANGED to DEBUG
 # You can add file logging here if needed, e.g.:
 # logger.add("substrate_fetcher_{time}.log", rotation="10 MB", level="DEBUG")
 
