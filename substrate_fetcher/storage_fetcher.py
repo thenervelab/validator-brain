@@ -238,8 +238,20 @@ async def fetch_all_chain_data(substrate, block_hash=None, block_number=None, ev
                                 # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
                                 if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
                                     owner_account_id = str(key_storage_obj[0])  # SS58 address
-                                    file_hash = utils.bounded_vec_to_string(key_storage_obj[1])  # Convert BoundedVec to string
-                                    value = value_storage_obj.value if hasattr(value_storage_obj, 'value') else value_storage_obj
+                                    file_hash_raw = key_storage_obj[1]
+                                    file_hash = utils.bounded_vec_to_string(file_hash_raw)
+                                    
+                                    # Log the raw value object and its .value attribute
+                                    logger.debug(f"UserStorageRequests: Owner: {owner_account_id}, RawFileHash: {file_hash_raw}, ProcessedFileHash: {file_hash}")
+                                    logger.debug(f"ValueStorageObj type: {type(value_storage_obj)}, content: {value_storage_obj}")
+                                    value = None # Initialize value
+                                    if hasattr(value_storage_obj, 'value'):
+                                        logger.debug(f"ValueStorageObj.value type: {type(value_storage_obj.value)}, content: {value_storage_obj.value}")
+                                        value = value_storage_obj.value
+                                    else:
+                                        logger.debug(f"ValueStorageObj has no .value attribute, using object directly.")
+                                        value = value_storage_obj # Assign value_storage_obj if no .value
+                                        
                                     user_storage_requests[(owner_account_id, file_hash)] = value
                                 else:
                                     logger.warning(f"Unexpected key format for UserStorageRequests: {key_storage_obj}")
