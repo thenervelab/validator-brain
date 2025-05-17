@@ -324,12 +324,10 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
     logger.info("Finished reconstructing profiles to JSON files")
 
 async def update_pin_and_storage_requests_near_epoch_end(block_number):
-    """Processes 'processed' requests 5 blocks before epoch end, updates profiles, and submits to chain."""
     logger.info(f"Checking for pin and storage update at block {block_number}...")
     
-    # Fetch all processed requests from pending_pool
     async with config.db_pool.acquire() as conn:
-        processed_requests = await conn.fetch(
+        processed_requests_db = await conn.fetch(
             """
             SELECT owner, file_hash, main_req_hash, selected_miners
             FROM pending_pool
@@ -338,244 +336,184 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             "processed"
         )
 
-    if not processed_requests:
+    if not processed_requests_db:
         logger.info("No processed requests found to update pin and storage.")
         return
 
-    logger.info(f"Found {len(processed_requests)} processed requests to update")
+    logger.info(f"Found {len(processed_requests_db)} processed requests to update")
 
-    # Process each request
-    for request in processed_requests:
-        owner = request['owner']
-        file_hash = request['file_hash']
-        main_req_hash = request['main_req_hash']
+    for request_db_item in processed_requests_db:
+        owner = request_db_item['owner']
+        # file_hash from pending_pool (the individual file part of a manifest)
+        individual_file_hash_from_pending_pool = request_db_item['file_hash'] 
+        main_req_hash = request_db_item['main_req_hash'] # This is the original user manifest CID
         
-        # Parse selected_miners from database format (e.g., "{miner1,miner2}") to a Python list
-        db_selected_miners = request['selected_miners']
+        db_selected_miners = request_db_item['selected_miners']
         if isinstance(db_selected_miners, str):
-            # Strip curly braces and split by comma
             parsed_miners = db_selected_miners.strip('{}').split(',')
-            # Filter out empty strings that can result from an empty array string like "{}"
             selected_miners = [m for m in parsed_miners if m]
         elif isinstance(db_selected_miners, list):
-            selected_miners = db_selected_miners  # Already a list
+            selected_miners = db_selected_miners
         else:
-            selected_miners = [] # Default to empty list if None or other type
+            selected_miners = []
 
-        # Load the user's profile JSON
         user_profile_path = os.path.join("profiles", "user_profile", f"{owner}.json")
-        user_data = []
+        user_profile_entries_from_file = [] # Stores dicts from the user's JSON file
         try:
-            with open(user_profile_path, 'r') as f:
-                user_data = json.load(f)
-                if not isinstance(user_data, list):
-                    user_data = [user_data]
+            async with aiofiles.open(user_profile_path, 'r') as f:
+                content = await f.read()
+                loaded_json = json.loads(content)
+                if not isinstance(loaded_json, list):
+                    user_profile_entries_from_file = [loaded_json]
+                else:
+                    user_profile_entries_from_file = loaded_json
+        except FileNotFoundError:
+            logger.info(f"User profile file not found (will be created if new request is processed): {user_profile_path}")
         except Exception as e:
             logger.error(f"Error reading user profile for owner {owner}: {e}")
-            user_data = []  # Use empty array on error
-
-        # Fetch matching user_storage_requests record
-        async with config.db_pool.acquire() as conn:
-            storage_request = await conn.fetchrow(
-                """
-                SELECT owner_account_id, file_name, total_replicas, last_charged_at, created_at,
+        
+        async with config.db_pool.acquire() as conn_sr:
+            storage_request_details_from_db = await conn_sr.fetchrow(
+                """SELECT owner_account_id, file_name, total_replicas, last_charged_at, created_at,
                        miner_ids, selected_validator, is_assigned
-                FROM user_storage_requests
-                WHERE file_hash = $1 AND owner_account_id = $2
-                """,
+                   FROM user_storage_requests WHERE file_hash = $1 AND owner_account_id = $2""",
                 main_req_hash, owner
             )
-            if not storage_request:
-                logger.warning(f"No user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}")
 
-        # Calculate total file size and total files pinned
-        total_file_size = 0
-        total_files_pinned = 0
-        updated_user_data = []
-        updated_user_profile_data = []
+        # --- Batch get_file_size --- 
+        cids_to_fetch_size_for = []
+        # Add CIDs from existing user profile entries
+        for i, entry_from_file in enumerate(user_profile_entries_from_file):
+            if isinstance(entry_from_file, dict) and entry_from_file.get('file_hash'):
+                cids_to_fetch_size_for.append({"id": f"existing_{i}", "cid": entry_from_file['file_hash'], "source_entry": entry_from_file})
+            else:
+                logger.warning(f"Skipping invalid or incomplete entry in {user_profile_path}: {entry_from_file}")
 
-        # Process existing user_data entries
-        for entry in user_data:
-            # Fetch file size for this file_hash
-            file_size_response = await ipfs_utils.get_file_size(entry['file_hash'], config.IPFS_NODE_URL, timeout=30)
-            file_size = file_size_response.get('size', 0)
-            total_file_size += file_size if file_size else 0
-            total_files_pinned += 1
-            
+        # Add CID for the current processed request (if it corresponds to a new file entry)
+        # This new entry uses individual_file_hash_from_pending_pool
+        if storage_request_details_from_db: # This implies we are adding/updating based on a main user_storage_requests row
+            cids_to_fetch_size_for.append({"id": "new_pending_request", "cid": individual_file_hash_from_pending_pool, "source_entry": None})
+        
+        file_size_tasks = [
+            ipfs_utils.get_file_size(item["cid"], config.IPFS_NODE_URL, timeout=30) 
+            for item in cids_to_fetch_size_for
+        ]
+        
+        logger.info(f"Batch fetching file sizes for {len(file_size_tasks)} CIDs for owner {owner}...")
+        size_results = await asyncio.gather(*file_size_tasks, return_exceptions=True)
+        logger.info(f"Finished batch fetching file sizes for owner {owner}.")
 
-            # Convert file_hash to byte array
-            file_hash_hex = file_hash.encode('utf-8').hex()
-            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
-            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
+        cid_to_size_map = {}
+        for i, result in enumerate(size_results):
+            original_item = cids_to_fetch_size_for[i]
+            if isinstance(result, Exception) or not result.get('success'):
+                logger.warning(f"Failed to get size for CID {original_item['cid']}: {result if isinstance(result, Exception) else result.get('error')}")
+                cid_to_size_map[original_item['cid']] = 0 # Default to 0 on error
+            else:
+                cid_to_size_map[original_item['cid']] = result.get('size', 0)
+        # --- End Batch get_file_size ---
 
-            # Encode main_req_hash
-            entry_main_req_hash = entry.get('main_req_hash')
-            main_req_hash_encoded = entry_main_req_hash.encode('utf-8').hex() if entry_main_req_hash else None
+        total_file_size_for_chain = 0
+        total_files_pinned_for_chain = 0
+        final_user_profile_data_for_ipfs = [] # Data to be pinned to IPFS (string CIDs)
+        final_user_profile_data_for_local_file = [] # Data for local JSON (string CIDs)
 
-            # Update the entry
-            updated_entry = {
-                "created_at": entry['created_at'],
-                "file_hash": file_hash_vec,
-                "file_name": entry['file_name'],
-                "file_size_in_bytes": file_size if file_size else entry.get('file_size_in_bytes', 0),
-                "is_assigned": entry['is_assigned'],
-                "last_charged_at": entry['last_charged_at'],
-                "main_req_hash": main_req_hash_encoded,
-                "miner_ids": selected_miners,
-                "owner": entry['owner'],
-                "selected_validator": entry['selected_validator'],
-                "total_replicas": entry['total_replicas']
-            }
-            updated_user_data.append(updated_entry)
-            updated_user_profile_data.append(entry)
+        # Process existing entries from file, updating them
+        for item_info in cids_to_fetch_size_for:
+            if item_info["id"].startswith("existing_"):
+                entry = item_info["source_entry"]
+                file_hash_str = entry['file_hash'] # Should already be a string CID
+                file_size = cid_to_size_map.get(file_hash_str, 0)
 
-        # Add new entry from user_storage_requests if found
-        if storage_request:
-            logger.info("Adding new entry from storage request")
-            # Fetch file size for the processed request's file_hash
-            file_size_response = await ipfs_utils.get_file_size(file_hash, config.IPFS_NODE_URL, timeout=30)
-            file_size = file_size_response.get('size', 0)
-            total_file_size += file_size if file_size else 0
-            total_files_pinned += 1
-
-            # Convert file_hash to byte array
-            file_hash_hex = file_hash.encode('utf-8').hex()
-            file_hash_bytes = bytes.fromhex(file_hash_hex)  # convert hex to bytes
-            file_hash_vec = list(file_hash_bytes)  # convert bytes to list of integers 
-
-            # Encode main_req_hash
-            processed_main_req_hash_encoded = main_req_hash.encode('utf-8').hex() if main_req_hash else None
-
-            # Create new entry
-            new_entry = {
-                "created_at": storage_request['created_at'],
-                "file_hash": file_hash_vec,
-                "file_name": storage_request['file_name'],
-                "file_size_in_bytes": file_size if file_size else 0,
-                "is_assigned": storage_request['is_assigned'],
-                "last_charged_at": storage_request['last_charged_at'],
-                "main_req_hash": processed_main_req_hash_encoded,
-                "miner_ids": selected_miners,
-                "owner": storage_request['owner_account_id'],
-                "selected_validator": storage_request['selected_validator'],
-                "total_replicas": storage_request['total_replicas']
-            }
-            new_file_entry = {
-                "created_at": storage_request['created_at'],
-                "file_hash": file_hash,
-                "file_name": storage_request['file_name'],
-                "file_size_in_bytes": file_size if file_size else 0,
-                "is_assigned": storage_request['is_assigned'],
-                "last_charged_at": storage_request['last_charged_at'],
-                "main_req_hash": main_req_hash,
-                "miner_ids": selected_miners,
-                "owner": storage_request['owner_account_id'],
-                "selected_validator": storage_request['selected_validator'],
-                "total_replicas": storage_request['total_replicas']
-            }
-            updated_user_data.append(new_entry)
-            updated_user_profile_data.append(new_file_entry)
-
-            # Update miner profile JSON files for each selected miner
-            miner_profile_dir = os.path.join("profiles", "miner_profile")
-            os.makedirs(miner_profile_dir, exist_ok=True)
-            for miner_id in selected_miners:
-                miner_profile_path = os.path.join(miner_profile_dir, f"{miner_id}.json")
-                miner_data = []
-                try:
-                    with open(miner_profile_path, 'r') as f:
-                        miner_data = json.load(f)
-                        if not isinstance(miner_data, list):
-                            miner_data = [miner_data]
-                except FileNotFoundError:
-                    logger.info(f"Miner profile not found, creating new: {miner_profile_path}")
-                    miner_data = []
-                except Exception as e:
-                    logger.error(f"Error reading miner profile for miner {miner_id}: {e}")
-                    miner_data = []
-
-                # Create new entry for miner profile
-                miner_entry = {
-                    "created_at": storage_request['created_at'],
-                    "file_hash": request['file_hash'],
-                    "file_size_in_bytes": file_size if file_size else 0,
-                    "miner_node_id": miner_id,
-                    "selected_validator": storage_request['selected_validator']
+                total_file_size_for_chain += file_size
+                total_files_pinned_for_chain += 1
+                
+                ipfs_entry = {
+                    "created_at": entry.get('created_at'),
+                    "file_hash": file_hash_str,
+                    "file_name": entry.get('file_name'),
+                    "file_size_in_bytes": file_size,
+                    "is_assigned": entry.get('is_assigned'),
+                    "last_charged_at": entry.get('last_charged_at'),
+                    "main_req_hash": entry.get('main_req_hash'), # This should be the manifest CID
+                    "miner_ids": selected_miners, # Update with current selected miners for this processed request context
+                    "owner": owner,
+                    "selected_validator": entry.get('selected_validator'),
+                    "total_replicas": entry.get('total_replicas')
                 }
-                miner_data.append(miner_entry)
+                final_user_profile_data_for_ipfs.append(ipfs_entry)
+                final_user_profile_data_for_local_file.append(ipfs_entry) # Same for local file
+            
+        # Add new entry for the current processed request, if applicable
+        new_entry_cid_info = next((item for item in cids_to_fetch_size_for if item["id"] == "new_pending_request"), None)
+        if storage_request_details_from_db and new_entry_cid_info:
+            file_hash_str = new_entry_cid_info["cid"] # This is individual_file_hash_from_pending_pool
+            file_size = cid_to_size_map.get(file_hash_str, 0)
 
-                # Write updated miner profile so it submits minerprofile updated
-                try:
-                    with open(miner_profile_path, 'w') as f:
-                        json.dump(miner_data, f, indent=4)
-                    logger.info(f"Updated miner profile for miner {miner_id}: {miner_profile_path}")
-                except Exception as e:
-                    logger.error(f"Error writing miner profile for miner {miner_id}: {e}")
-        else:
-            logger.warning(f"No matching user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}. Cannot create new profile entry for {file_hash}.")
+            total_file_size_for_chain += file_size
+            total_files_pinned_for_chain += 1
 
-        logger.info(f"Preparing to upload {len(updated_user_data)} entries to IPFS for owner {owner}")
-        logger.info(f"entries are {updated_user_data}")
-        # Pin the updated user profile to IPFS
-        pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_user_data, api_url=config.IPFS_NODE_URL)
-        if not pin_response['success']:
-            logger.error(f"Failed to pin updated user profile for owner {owner}: {pin_response['error']}")
+            new_ipfs_entry = {
+                "created_at": format_timestamp(storage_request_details_from_db['created_at']),
+                "file_hash": file_hash_str,
+                "file_name": storage_request_details_from_db['file_name'],
+                "file_size_in_bytes": file_size,
+                "is_assigned": True if selected_miners else False,
+                "last_charged_at": format_timestamp(storage_request_details_from_db['last_charged_at']),
+                "main_req_hash": main_req_hash, # The user's manifest CID
+                "miner_ids": selected_miners,
+                "owner": owner,
+                "selected_validator": str(storage_request_details_from_db['selected_validator']),
+                "total_replicas": storage_request_details_from_db['total_replicas']
+            }
+            final_user_profile_data_for_ipfs.append(new_ipfs_entry)
+            final_user_profile_data_for_local_file.append(new_ipfs_entry) # Same for local file
+        elif not storage_request_details_from_db:
+            logger.warning(f"No user_storage_requests record found for main_req_hash {main_req_hash} and owner {owner}. Not adding new entry to profile.")
+
+        if not final_user_profile_data_for_ipfs:
+            logger.warning(f"No profile data to upload to IPFS for owner {owner} regarding main_req_hash {main_req_hash}. Skipping chain submission for this item.")
             continue
 
-        user_profile_cid = pin_response['cid']
-        logger.info(f"Pinned updated user profile for owner {owner} to CID: {user_profile_cid}")
+        logger.info(f"Uploading {len(final_user_profile_data_for_ipfs)} profile entries to IPFS for owner {owner}")
+        pin_response = await ipfs_utils.upload_json_to_ipfs(data=final_user_profile_data_for_ipfs, api_url=config.IPFS_NODE_URL)
+        if not pin_response.get('success') or not pin_response.get('cid'):
+            logger.error(f"Failed to pin updated user profile for owner {owner} (main_req_hash: {main_req_hash}): {pin_response.get('error')}")
+            continue
+        user_profile_cid_on_ipfs = pin_response['cid']
+        logger.info(f"Pinned user profile for owner {owner} (main_req_hash: {main_req_hash}) to IPFS CID: {user_profile_cid_on_ipfs}")
 
-        processed_main_req_hash_encoded = main_req_hash.encode('utf-8').hex() if main_req_hash else None
-        # Construct the parameter for call_update_pin_and_storage_requests
-        pin_request = [
-            {
-                "storage_request_owner": owner,
-                "storage_request_file_hash": processed_main_req_hash_encoded,
-                "file_size": total_file_size,
-                "user_profile_cid": user_profile_cid,
-                "total_files_pinned": total_files_pinned
-            }
-        ]
+        extrinsic_params = [{
+            "storage_request_owner": owner,
+            "storage_request_file_hash": main_req_hash, # The user's original manifest CID
+            "file_size": total_file_size_for_chain,
+            "user_profile_cid": user_profile_cid_on_ipfs,
+             # "total_files_pinned": total_files_pinned_for_chain # This field might not be in your extrinsic, verify
+        }]
+        # Ensure miner_pin_requests is included if needed by your extrinsic definition
+        # extrinsic_params[0]["miner_pin_requests"] = [] # Example if it needs to be an empty list
 
-        # Call the chain function
-        logger.info(f"Submitting update_pin_and_storage_requests for : {pin_request}...")
-        pin_success = await call_update_pin_and_storage_requests(pin_request)
-        logger.info(f"update_pin_and_storage_requests {'succeeded' if pin_success else 'failed'} for owner {owner}")
+        logger.info(f"Submitting update_pin_and_storage_requests for {owner} (main_req_hash: {main_req_hash}): {extrinsic_params}")
+        pin_success = await call_update_pin_and_storage_requests(extrinsic_params)
+        logger.info(f"Extrinsic update_pin_and_storage_requests for {owner} (main_req_hash: {main_req_hash}): {'succeeded' if pin_success else 'failed'}")
 
-        # If the transaction was successful, delete the processed request from pending_pool
         if pin_success:
-            async with config.db_pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    DELETE FROM pending_pool
-                    WHERE owner = $1 AND file_hash = $2
-                    """,
-                    owner,
-                    file_hash
-                )
-                logger.info(f"Deleted processed request from pending_pool: owner={owner}, file_hash={file_hash}")
-
-                # Delete from user_storage_requests
-                await conn.execute(
-                    """
-                    DELETE FROM user_storage_requests
-                    WHERE owner_account_id = $1 AND file_hash = $2
-                    """,
-                    owner,
-                    main_req_hash
-                )
-                logger.info(f"Deleted record from user_storage_requests: owner={owner}, file_hash={main_req_hash}")
+            async with config.db_pool.acquire() as conn_del:
+                await conn_del.execute("DELETE FROM pending_pool WHERE owner = $1 AND file_hash = $2", owner, individual_file_hash_from_pending_pool)
+                logger.info(f"Deleted processed item from pending_pool: owner={owner}, individual_file_hash={individual_file_hash_from_pending_pool}")
+                # Optionally, consider if user_storage_requests for main_req_hash should be marked differently or removed
+                # await conn_del.execute("DELETE FROM user_storage_requests WHERE owner_account_id = $1 AND file_hash = $2", owner, main_req_hash)
+                # logger.info(f"Deleted from user_storage_requests: owner={owner}, main_req_hash={main_req_hash}")
         else:
-            logger.warning(f"Transaction failed, retaining processed request in pending_pool: owner={owner}, file_hash={file_hash}")
+            logger.warning(f"Transaction failed for {owner}, retaining item in pending_pool: individual_file_hash={individual_file_hash_from_pending_pool}")
             
-        # Update the local user profile file
         try:
             os.makedirs(os.path.dirname(user_profile_path), exist_ok=True)
-            with open(user_profile_path, 'w') as f:
-                json.dump(updated_user_profile_data, f, indent=4)
-            logger.info(f"Updated user profile file with new CID: {user_profile_path}")
+            async with aiofiles.open(user_profile_path, 'w') as f:
+                await f.write(json.dumps(final_user_profile_data_for_local_file, indent=4))
+            logger.info(f"Updated local user profile file: {user_profile_path}")
         except Exception as e:
-            logger.error(f"Error writing updated user profile file {user_profile_path}: {e}")
+            logger.error(f"Error writing local user profile file {user_profile_path}: {e}")
 
     logger.info(f"Finished processing pin and storage updates at block {block_number}")
 
@@ -740,27 +678,37 @@ async def monitor_validator_epochs(pool):
     in_action_period = False
     validator_term_start_block = None 
     validator_term_end_block = None   
+    processing_cutoff_block = None # Will be set when term starts
     EPOCH_LENGTH = 100 
+    SUBMISSION_GRACE_PERIOD_BLOCKS = 30 # Stop processing new requests this many blocks before term ends
 
     while True:
-        logger.debug(f"monitor_validator_epochs loop start. in_action_period: {in_action_period}, current_validator_term_end_block: {validator_term_end_block}")
+        logger.debug(f"monitor_validator_epochs loop start. in_action_period: {in_action_period}, term_end: {validator_term_end_block}, cutoff: {processing_cutoff_block}")
         current_block_number = await get_latest_block_number(pool)
-        logger.info(f"Current block from DB: {current_block_number}") # Log (B)
+        logger.info(f"Current block from DB: {current_block_number}")
         
         if current_block_number is None:
-            logger.warning("Cannot proceed: current_block_number is None. Retrying in 5 seconds...") # Log (C) style
+            logger.warning("Cannot proceed: current_block_number is None. Retrying in 5 seconds...")
             await asyncio.sleep(5)
             continue
 
         if in_action_period:
-            logger.debug(f"In action period. Current block: {current_block_number}, Term ends: {validator_term_end_block}")
+            logger.debug(f"In action period. Current: {current_block_number}, Term ends: {validator_term_end_block}, Cutoff: {processing_cutoff_block}")
             if current_block_number > validator_term_end_block:
-                logger.info(f"Validator term ended. Current: {current_block_number}, Term End: {validator_term_end_block}")
+                logger.info(f"Validator term officially ended. Current: {current_block_number}, Term End: {validator_term_end_block}")
                 in_action_period = False
                 validator_term_start_block = None
                 validator_term_end_block = None
+                processing_cutoff_block = None
             else:
-                await perform_action(current_block_number)
+                # Only perform actions if before the processing cutoff
+                if processing_cutoff_block is not None and current_block_number <= processing_cutoff_block:
+                    logger.info(f"Block {current_block_number}: Performing actions (before cutoff {processing_cutoff_block}).")
+                    await perform_action(current_block_number)
+                elif processing_cutoff_block is not None and current_block_number > processing_cutoff_block:
+                    logger.info(f"Block {current_block_number}: Past processing cutoff {processing_cutoff_block}. Focusing on submissions.")
+                
+                # Submission logic (last 5 blocks of 100-block epoch)
                 current_epoch_start_calc = ((current_block_number - 1) // EPOCH_LENGTH) * EPOCH_LENGTH + 1
                 current_epoch_end_calc = current_epoch_start_calc + EPOCH_LENGTH - 1
                 submission_window_start = current_epoch_end_calc - 4 
@@ -773,9 +721,10 @@ async def monitor_validator_epochs(pool):
             await asyncio.sleep(5) 
             continue
 
-        logger.info("Not in action period. Checking DB for current validator...") # Log (E)
+        # If not in an action period, check if we should become the validator
+        logger.info("Not in action period. Checking DB for current validator...")
         async with pool.acquire() as conn:
-            logger.debug("Querying current_epoch_validator table...") # Log (F) before query
+            logger.debug("Querying current_epoch_validator table...")
             validator_info_row = await conn.fetchrow(
                 """
                 SELECT account_id, block_number 
@@ -784,23 +733,25 @@ async def monitor_validator_epochs(pool):
                 LIMIT 1
                 """
             )
-            logger.debug(f"DB query result for validator_info_row: {validator_info_row}") # Log (F) after query
+            logger.debug(f"DB query result for validator_info_row: {validator_info_row}")
 
             if validator_info_row: 
-                logger.info("Found entry in current_epoch_validator table.") # Log (G) part 1
                 db_validator_account_id = validator_info_row['account_id']
                 db_validator_term_start_block = validator_info_row['block_number']
-                logger.info(f"Comparing HIPS ID: '{hips_account_id}' with DB Validator ID: '{db_validator_account_id}' (term starts: {db_validator_term_start_block})") # Log (H)
+                logger.info(f"Comparing HIPS ID: '{hips_account_id}' with DB Validator ID: '{db_validator_account_id}' (term starts: {db_validator_term_start_block})")
                 if db_validator_account_id == hips_account_id:
                     if not validator_term_start_block or validator_term_start_block != db_validator_term_start_block:
                         in_action_period = True
                         validator_term_start_block = db_validator_term_start_block
-                        validator_term_end_block = validator_term_start_block + 99 
-                        logger.info(f"MATCH: HIPS account is current validator. Term: Blocks {validator_term_start_block} - {validator_term_end_block}.")
+                        term_epoch_start_block = ((validator_term_start_block - 1) // EPOCH_LENGTH) * EPOCH_LENGTH + 1
+                        validator_term_end_block = term_epoch_start_block + EPOCH_LENGTH - 1 
+                        processing_cutoff_block = validator_term_end_block - SUBMISSION_GRACE_PERIOD_BLOCKS
+                        logger.info(f"MATCH: HIPS account is current validator. Assigned for epoch starting ~{term_epoch_start_block}. Term active until block {validator_term_end_block}. Processing cutoff at {processing_cutoff_block}.")
                         await perform_rebalance_and_reconstruct_profiles(pool)
-                        await perform_action(current_block_number) 
-                    else: 
-                        logger.debug(f"HIPS is validator, but term start block {db_validator_term_start_block} is same as current {validator_term_start_block}. No new action period started.")
+                        if current_block_number <= processing_cutoff_block: # Perform initial action only if not past cutoff
+                             await perform_action(current_block_number)
+                        else:
+                            logger.info(f"Matched validator term, but already past processing cutoff ({current_block_number} > {processing_cutoff_block}). Skipping initial perform_action.")
                 else:
                     logger.info(f"NO MATCH: HIPS ID '{hips_account_id}' does not match DB Validator ID '{db_validator_account_id}'. Awaiting turn.")
                     # Reset in_action_period if it was somehow true but IDs don't match
@@ -810,7 +761,7 @@ async def monitor_validator_epochs(pool):
                         validator_term_start_block = None
                         validator_term_end_block = None
             else:
-                logger.info("No entries found in current_epoch_validator table. Cannot determine current validator.") # Log (I) / Log (G) part 2
+                logger.info("No entries found in current_epoch_validator table. Cannot determine current validator.")
         
         await asyncio.sleep(15) 
 
