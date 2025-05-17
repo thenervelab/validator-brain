@@ -485,7 +485,7 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                 # Create new entry for miner profile
                 miner_entry = {
                     "created_at": storage_request['created_at'],
-                    "file_hash": file_hash,
+                    "file_hash": request['file_hash'],
                     "file_size_in_bytes": file_size if file_size else 0,
                     "miner_node_id": miner_id,
                     "selected_validator": storage_request['selected_validator']

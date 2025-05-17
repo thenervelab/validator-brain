@@ -478,7 +478,7 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
 
         # Load HIPS keypair
         keypair = load_hips_keypair(config.KEYSTORE_PATH)
-        logger.info(f"Using account {keypair.ss58_address} for signing")
+        logger.info(f"Using account {keypair.ss58_address} for signing miner profile ")
 
         # Format miner profiles to match MinerProfileItem structure
         formatted_profiles = []
@@ -489,6 +489,7 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
                 "files_count": profile["files_count"],
                 "files_size": profile["files_size"]
             }
+            logger.info("added profile")
             formatted_profiles.append(formatted_profile)
 
         logger.debug(f"Formatted {len(formatted_profiles)} miner profile(s)")
