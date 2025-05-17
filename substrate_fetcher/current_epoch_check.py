@@ -313,6 +313,7 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
 
 async def update_pin_and_storage_requests_near_epoch_end(block_number):
     """Processes 'processed' requests 5 blocks before epoch end, updates profiles, and submits to chain."""
+    logger.info(f"Checking for pin and storage update at block {block_number}...")
     
     # Fetch all processed requests from pending_pool
     async with config.db_pool.acquire() as conn:
@@ -328,6 +329,8 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
     if not processed_requests:
         logger.info("No processed requests found to update pin and storage.")
         return
+
+    logger.info(f"Found {len(processed_requests)} processed requests to update")
 
     # Process each request
     for request in processed_requests:
@@ -609,8 +612,8 @@ async def assign_to_storage_miners(block_number):
         # other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
         available_miners = storage_miner_ids
 
-        if len(available_miners) != 5:
-            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 5). Skipping action.")
+        if len(available_miners) != 1:
+            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 1). Skipping action.")
             return
 
         # Fetch up to 10 pending requests, including file_name, selected_validator, and main_req_hash
@@ -635,7 +638,7 @@ async def assign_to_storage_miners(block_number):
             main_req_hash = request['main_req_hash']
 
             # Select 5 random miners, prioritizing those with miner_total_files_pinned = 0
-            selected_miners = random.sample(available_miners, 5) if len(available_miners) >= 5 else available_miners
+            selected_miners = random.sample(available_miners, 1) if len(available_miners) >= 1 else available_miners
             logger.info(f"Selected miners for request {file_hash}: {selected_miners}")
 
             # Update miner_profile JSON
@@ -749,7 +752,7 @@ async def monitor_validator_epochs(pool):
             continue
 
         # Check pin check metrics every 1200th block
-        await update_pin_check_metrics_near_block(current_block_number)
+        # await update_pin_check_metrics_near_block(current_block_number)
 
         # If we're in an action period, continue logging until the epoch ends
         if in_action_period:
@@ -761,7 +764,7 @@ async def monitor_validator_epochs(pool):
             else:
                 await perform_action(current_block_number)
                 # Check if we're 5 blocks before the epoch end (block_number % 100 == 94)
-                if current_block_number % 100 == 94:
+                if current_block_number % 5 == 0:
                     await update_pin_and_storage_requests_near_epoch_end(current_block_number)
                     await update_miner_profiles_near_epoch_end(current_block_number)
             await asyncio.sleep(5)
@@ -795,7 +798,7 @@ async def monitor_validator_epochs(pool):
                 if account_id == hips_account_id:
                     # New match found, start a 100-block action period
                     in_action_period = True
-                    target_block_number = block_number + 100
+                    target_block_number = block_number + 20
                     logger.info(f"Match found: HIPS account {hips_account_id} is the current validator at block {block_number}")
                     logger.info(f"Will perform action until block {target_block_number} (current block: {current_block_number})")
                     await perform_rebalance_and_reconstruct_profiles(pool)
@@ -808,19 +811,23 @@ async def monitor_validator_epochs(pool):
 
 async def update_miner_profiles_near_epoch_end(block_number):
     """Updates miner profiles 5 blocks before epoch end and submits to chain."""
-   
+    logger.info(f"Updating miner profiles at block {block_number}...")
+
     miner_profile_dir = os.path.join("profiles", "miner_profile")
     if not os.path.exists(miner_profile_dir):
         logger.warning(f"Miner profile directory not found: {miner_profile_dir}")
         return
+    logger.info("found miner profile dir ...")
     # List to store miner profile data for the chain function
     miner_profiles = []
 
     # Iterate through all JSON files in the miner profile directory
     for filename in os.listdir(miner_profile_dir):
         if not filename.endswith('.json'):
+            logger.info("miner profile is not a json...")
             continue
 
+        logger.info("miner profile is not a json...")
         miner_file_path = os.path.join(miner_profile_dir, filename)
         try:
             with open(miner_file_path, 'r') as f:
@@ -830,6 +837,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
                     miner_data = [miner_data]
                     logger.info("miner profile is a list...")
         except Exception as e:
+            logger.info("miner profile was empty...")
             miner_data = []
 
         # Skip if the miner data is empty
@@ -864,14 +872,18 @@ async def update_miner_profiles_near_epoch_end(block_number):
                 "selected_validator": entry['selected_validator']
             }
             updated_miner_data.append(updated_entry)
+            logger.info(f"updated miner entry is {updated_entry}...")
 
         # Pin the updated miner profile to IPFS
+        logger.info(f"trying to submit for getting json  tx now : {updated_miner_data}...")
         pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_miner_data, api_url=config.IPFS_NODE_URL)
+        logger.info(f"pin_response : {pin_response}")
         if not pin_response['success']:
             logger.error(f"Failed to pin updated miner profile for {filename}: {pin_response['error']}")
             continue
 
         new_cid = pin_response['cid']
+        logger.info(f"Pinned updated miner profile for {filename} to CID: {new_cid}")
 
         # Add to miner_profiles list
         miner_node_id = updated_miner_data[0]['miner_node_id']  # Assuming all entries have the same miner_node_id
@@ -882,15 +894,19 @@ async def update_miner_profiles_near_epoch_end(block_number):
             "files_size": total_file_size
         })
 
+        logger.info(f"updated miner profile file  : {new_cid}") 
         # Optionally, update the local file with the new data
         try:
             with open(miner_file_path, 'w') as f:
                 json.dump(updated_miner_data, f, indent=4)
+            logger.debug(f"Updated miner profile file: {miner_file_path}")
         except Exception as e:
             logger.error(f"Error writing updated miner profile file {miner_file_path}: {e}")
 
     # Call the chain function if there are profiles to submit
     if miner_profiles:
+        logger.info(f"Submitting update_miner_profiles with {len(miner_profiles)} profiles...")
+        logger.info(f"trying to submit for updating profile now : {miner_profiles}...")
         success = await call_update_miner_profiles(miner_profiles)
         logger.info(f"update_miner_profiles {'succeeded' if success else 'failed'}")
     else:
