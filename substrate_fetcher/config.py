@@ -26,7 +26,7 @@ TYPE_REGISTRY = {
                 ["file_name", "BoundedVec<u8, 350>"],
                 ["last_charged_at", "u32"],
                 ["created_at", "u32"],
-                ["miner_ids", "Option<BoundedVec<BoundedVec<u8, 64>, 5>>"],
+                ["miner_ids", "Option<Vec<Vec<u8>>>"],
                 ["selected_validator", "AccountId32"],
                 ["is_assigned", "bool"]
             ]
