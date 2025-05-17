@@ -876,7 +876,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
 
         # Pin the updated miner profile to IPFS
         logger.info(f"trying to submit for getting json  tx now : {updated_miner_data}...")
-        pin_response = await utils.upload_json_to_ipfs(data=updated_miner_data, api_url=config.IPFS_NODE_URL)
+        pin_response = await ipfs_utils.upload_json_to_ipfs(data=updated_miner_data, api_url=config.IPFS_NODE_URL)
         logger.info(f"pin_response : {pin_response}")
         if not pin_response['success']:
             logger.error(f"Failed to pin updated miner profile for {filename}: {pin_response['error']}")
