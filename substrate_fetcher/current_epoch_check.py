@@ -9,6 +9,7 @@ import os
 import shutil
 import random
 from typing import List, Dict
+from datetime import datetime, timezone # Added for timestamp conversion
 from . import config
 from . import utils
 from . import ipfs_utils
@@ -191,13 +192,11 @@ async def get_offline_miners(pool: asyncpg.Pool) -> list:
     return offline_miners
 
 async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
-    """Reconstructs miner and user profiles from the database into JSON files."""
-    # Define directories
+    logger.info("Reconstructing profiles from database to JSON files...")
     profiles_dir = "profiles"
     miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
     user_profile_dir = os.path.join(profiles_dir, "user_profile")
 
-    # Delete the profiles directory if it exists
     if os.path.exists(profiles_dir):
         try:
             shutil.rmtree(profiles_dir)
@@ -205,8 +204,6 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         except Exception as e:
             logger.error(f"Error deleting profiles directory: {e}")
             return
-
-    # Create directories
     try:
         os.makedirs(miner_profile_dir, exist_ok=True)
         os.makedirs(user_profile_dir, exist_ok=True)
@@ -215,28 +212,41 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         logger.error(f"Error creating directories: {e}")
         return
 
+    def format_timestamp(ts_val):
+        if ts_val is None:
+            return None
+        if isinstance(ts_val, (int, float)):
+            try:
+                # Assuming Unix timestamp (seconds since epoch)
+                return datetime.fromtimestamp(ts_val, tz=timezone.utc).isoformat()
+            except Exception as e:
+                logger.warning(f"Could not convert int/float timestamp '{ts_val}' to datetime: {e}. Storing as is.")
+                return ts_val 
+        if isinstance(ts_val, datetime):
+            return ts_val.isoformat()
+        logger.warning(f"Timestamp '{ts_val}' is of unhandled type {type(ts_val)}. Storing as is.")
+        return ts_val
+
     async with pool.acquire() as conn:
-        # Process miner profiles
+        logger.info("Processing miner profiles for JSON reconstruction...")
         miner_rows = await conn.fetch(
             """
             SELECT miner_node_id, created_at, file_hash, file_size_in_bytes, selected_validator, updated_at
             FROM miner_profile
             """
         )
+        logger.info(f"Fetched {len(miner_rows)} rows from miner_profile table.")
 
         for row in miner_rows:
             miner_node_id = row['miner_node_id']
             miner_data = {
-                "created_at": row['created_at'],
+                "created_at": format_timestamp(row['created_at']), # Use helper
                 "file_hash": row['file_hash'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "selected_validator": row['selected_validator'],
-                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
+                "updated_at": format_timestamp(row['updated_at']) # Use helper
             }
-
             miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
-
-            # Load existing data if the file exists
             existing_data = []
             if os.path.exists(miner_file_path):
                 try:
@@ -247,11 +257,7 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
                 except Exception as e:
                     logger.warning(f"Error reading existing miner profile file {miner_file_path}: {e}")
                     existing_data = []
-
-            # Append new data
             existing_data.append(miner_data)
-
-            # Write back to file
             try:
                 with open(miner_file_path, 'w') as f:
                     json.dump(existing_data, f, indent=4)
@@ -259,7 +265,7 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
             except Exception as e:
                 logger.error(f"Error writing miner profile file {miner_file_path}: {e}")
 
-        # Process user profiles
+        logger.info("Processing user profiles for JSON reconstruction...")
         user_rows = await conn.fetch(
             """
             SELECT user_id, created_at, file_hash, file_name, file_size_in_bytes, is_assigned, last_charged_at, 
@@ -267,27 +273,25 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
             FROM user_profile
             """
         )
+        logger.info(f"Fetched {len(user_rows)} rows from user_profile table.")
 
         for row in user_rows:
             user_id = row['user_id']
             user_data = {
-                "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], (int, float)) else row['created_at'],
+                "created_at": format_timestamp(row['created_at']), # Use helper
                 "file_hash": row['file_hash'],
                 "file_name": row['file_name'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "is_assigned": row['is_assigned'],
-                "last_charged_at": row['last_charged_at'].isoformat() if isinstance(row['last_charged_at'], (int, float)) else row['last_charged_at'],
+                "last_charged_at": format_timestamp(row['last_charged_at']), # Use helper
                 "main_req_hash": row['main_req_hash'],
                 "miner_ids": row['miner_ids'],
                 "owner": row['owner'],
                 "selected_validator": row['selected_validator'],
                 "total_replicas": row['total_replicas'],
-                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
+                "updated_at": format_timestamp(row['updated_at']) # Use helper
             }
-
             user_file_path = os.path.join(user_profile_dir, f"{user_id}.json")
-
-            # Load existing data if the file exists
             existing_data = []
             if os.path.exists(user_file_path):
                 try:
@@ -298,11 +302,7 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
                 except Exception as e:
                     logger.warning(f"Error reading existing user profile file {user_file_path}: {e}")
                     existing_data = []
-
-            # Append new data
             existing_data.append(user_data)
-
-            # Write back to file
             try:
                 with open(user_file_path, 'w') as f:
                     json.dump(existing_data, f, indent=4)
