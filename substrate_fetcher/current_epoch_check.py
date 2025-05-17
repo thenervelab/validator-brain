@@ -801,7 +801,7 @@ async def monitor_validator_epochs(pool):
                     if not validator_term_start_block or validator_term_start_block != db_validator_term_start_block:
                         in_action_period = True
                         validator_term_start_block = db_validator_term_start_block
-                        validator_term_end_block = validator_term_start_block + 90 
+                        validator_term_end_block = validator_term_start_block + 99 
                         logger.info(f"MATCH: HIPS account is current validator. Term: Blocks {validator_term_start_block} - {validator_term_end_block}.")
                         await perform_rebalance_and_reconstruct_profiles(pool)
                         await perform_action(current_block_number) 
