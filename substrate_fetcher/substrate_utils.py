@@ -492,8 +492,8 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
             logger.info("added profile")
             formatted_profiles.append(formatted_profile)
 
-        logger.debug(f"Formatted {len(formatted_profiles)} miner profile(s)")
-
+        logger.info(f"Formatted {len(formatted_profiles)} miner profile(s)")
+        logger.info(f"Formatted  miner profile(s) are {formatted_profiles}")
         # Compose the call
         call = substrate.compose_call(
             call_module='IpfsPallet',
@@ -505,7 +505,7 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
 
         # Create and sign extrinsic
         extrinsic = substrate.create_signed_extrinsic(call, keypair)
-        logger.debug(f"Created extrinsic: {extrinsic}")
+        logger.info(f"Created extrinsic: {extrinsic}")
 
         # Submit and wait for finalization
         receipt = substrate.submit_extrinsic(
@@ -515,10 +515,7 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
         )
 
         if receipt.is_success:
-            logger.info(f"Extrinsic successful in block {receipt.block_hash}")
-            # Log all events for debugging
-            for event in receipt.triggered_events:
-                logger.debug(f"Event: {event.value}")
+            logger.info(f"Extrinsic successful for miner Profile in block {receipt.block_hash}")
             return True
         else:
             logger.error(f"Extrinsic failed: {receipt.error_message}")
