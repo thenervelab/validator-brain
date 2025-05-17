@@ -464,7 +464,6 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             updated_user_data.append(new_entry)
             updated_user_profile_data.append(new_file_entry)
 
-
             # Update miner profile JSON files for each selected miner
             miner_profile_dir = os.path.join("profiles", "miner_profile")
             os.makedirs(miner_profile_dir, exist_ok=True)
@@ -567,7 +566,6 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             logger.error(f"Error writing updated user profile file {user_profile_path}: {e}")
 
     logger.info(f"Finished processing pin and storage updates at block {block_number}")
-
 
 async def detect_offline_miners_at_epoch_start(pool: asyncpg.Pool):
     """Detect offline miners at the start of each epoch and log the result."""
@@ -819,23 +817,27 @@ async def update_miner_profiles_near_epoch_end(block_number):
     if not os.path.exists(miner_profile_dir):
         logger.warning(f"Miner profile directory not found: {miner_profile_dir}")
         return
-
+    logger.info("found miner profile dir ...")
     # List to store miner profile data for the chain function
     miner_profiles = []
 
     # Iterate through all JSON files in the miner profile directory
     for filename in os.listdir(miner_profile_dir):
         if not filename.endswith('.json'):
+            logger.info("miner profile is not a json...")
             continue
 
+        logger.info("miner profile is not a json...")
         miner_file_path = os.path.join(miner_profile_dir, filename)
         try:
             with open(miner_file_path, 'r') as f:
+                logger.info("miner profile opened...")
                 miner_data = json.load(f)
                 if not isinstance(miner_data, list):
                     miner_data = [miner_data]
+                    logger.info("miner profile is a list...")
         except Exception as e:
-            logger.error(f"Error reading miner profile file {miner_file_path}: {e}")
+            logger.info("miner profile was empty...")
             miner_data = []
 
         # Skip if the miner data is empty
@@ -869,8 +871,10 @@ async def update_miner_profiles_near_epoch_end(block_number):
                 "selected_validator": entry['selected_validator']
             }
             updated_miner_data.append(updated_entry)
+            logger.info(f"updated miner entry is {updated_entry}...")
 
         # Pin the updated miner profile to IPFS
+        logger.info(f"trying to submit for getting json  tx now : {updated_miner_data}...")
         pin_response = await utils.upload_json_to_ipfs(data=updated_miner_data, api_url=config.IPFS_NODE_URL)
         if not pin_response['success']:
             logger.error(f"Failed to pin updated miner profile for {filename}: {pin_response['error']}")
@@ -888,6 +892,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
             "files_size": total_file_size
         })
 
+        logger.info(f"updated miner profile file  : {new_cid}") 
         # Optionally, update the local file with the new data
         try:
             with open(miner_file_path, 'w') as f:
@@ -899,6 +904,7 @@ async def update_miner_profiles_near_epoch_end(block_number):
     # Call the chain function if there are profiles to submit
     if miner_profiles:
         logger.info(f"Submitting update_miner_profiles with {len(miner_profiles)} profiles...")
+        logger.info(f"trying to submit for updating profile now : {miner_profiles}...")
         success = await call_update_miner_profiles(miner_profiles)
         logger.info(f"update_miner_profiles {'succeeded' if success else 'failed'}")
     else:

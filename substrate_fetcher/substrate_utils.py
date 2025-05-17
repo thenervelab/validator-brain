@@ -476,12 +476,6 @@ async def call_update_miner_profiles(miner_profiles: List[Dict[str, Any]]) -> bo
         )
         logger.info(f"Connected to Substrate node at {config.NODE_URL}")
 
-        # Verify pallet exists in metadata
-        metadata = substrate.get_metadata()
-        if 'IpfsPallet' not in [p.name for p in metadata.pallets]:
-            logger.error("IpfsPallet not found in chain metadata!")
-            return False
-
         # Load HIPS keypair
         keypair = load_hips_keypair(config.KEYSTORE_PATH)
         logger.info(f"Using account {keypair.ss58_address} for signing")

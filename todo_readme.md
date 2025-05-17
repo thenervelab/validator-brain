@@ -12,3 +12,4 @@
 # make epoch number dynamic
 
 # check profile recinstruction
+# delete epoch entry if it is less than current block
