@@ -232,7 +232,7 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
                 "file_hash": row['file_hash'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "selected_validator": row['selected_validator'],
-                "updated_at": row['updated_at'].isoformat() if isinstance(entry['updated_at'], datetime) else row['updated_at']
+                "updated_at": row['updated_at'].isoformat() if isinstance(row['updated_at'], datetime) else row['updated_at']
             }
 
             miner_file_path = os.path.join(miner_profile_dir, f"{miner_node_id}.json")
