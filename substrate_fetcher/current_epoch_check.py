@@ -614,8 +614,8 @@ async def assign_to_storage_miners(block_number):
         # other_miners = [m['node_id'] for m in miners_data if m['miner_total_files_pinned'] > 0]
         available_miners = storage_miner_ids
 
-        if len(available_miners) != 1:
-            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 1). Skipping action.")
+        if len(available_miners) < 5:
+            logger.warning(f"Insufficient miners available (found {len(available_miners)}, need 5). Skipping action.")
             return
 
         # Fetch up to 10 pending requests, including file_name, selected_validator, and main_req_hash
@@ -640,7 +640,7 @@ async def assign_to_storage_miners(block_number):
             main_req_hash = request['main_req_hash']
 
             # Select 5 random miners, prioritizing those with miner_total_files_pinned = 0
-            selected_miners = random.sample(available_miners, 1) if len(available_miners) >= 1 else available_miners
+            selected_miners = random.sample(available_miners, 5) if len(available_miners) >= 5 else available_miners
             logger.info(f"Selected miners for request {file_hash}: {selected_miners}")
 
             # Update miner_profile JSON
