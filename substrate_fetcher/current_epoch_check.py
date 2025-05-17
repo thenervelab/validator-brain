@@ -271,18 +271,18 @@ async def reconstruct_profiles_to_json(pool: asyncpg.Pool):
         for row in user_rows:
             user_id = row['user_id']
             user_data = {
-                "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], (int, float)) else row['created_at'],
+                "created_at": row['created_at'],
                 "file_hash": row['file_hash'],
                 "file_name": row['file_name'],
                 "file_size_in_bytes": row['file_size_in_bytes'],
                 "is_assigned": row['is_assigned'],
-                "last_charged_at": row['last_charged_at'].isoformat() if isinstance(row['last_charged_at'], (int, float)) else row['last_charged_at'],
+                "last_charged_at": row['last_charged_at'],
                 "main_req_hash": row['main_req_hash'],
                 "miner_ids": row['miner_ids'],
                 "owner": row['owner'],
                 "selected_validator": row['selected_validator'],
                 "total_replicas": row['total_replicas'],
-                "updated_at": row['updated_at'].isoformat() if row['updated_at'] else None
+                "updated_at": row['updated_at']
             }
 
             user_file_path = os.path.join(user_profile_dir, f"{user_id}.json")
