@@ -594,7 +594,7 @@ async def assign_to_storage_miners(block_number):
             """,
         )
         storage_miner_ids = [row['node_id'] for row in storage_miners]
-        print("Querying miners with node_ids:", storage_miner_ids)
+        # print("Querying miners with node_ids:", storage_miner_ids)
         if not storage_miner_ids:
             logger.warning("No StorageMiners found in registration table.")
             return
@@ -924,74 +924,74 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
     await detect_offline_miners_at_epoch_start(pool)
     logger.info("calling fn : reconstructing the profile: function called ......")
     await reconstruct_profiles_to_json(pool)
-    logger.info("performing rebalance ofro offline miners .................")
+    # logger.info("performing rebalance ofro offline miners .................")
 
-    profiles_dir = "profiles"
-    miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
+    # profiles_dir = "profiles"
+    # miner_profile_dir = os.path.join(profiles_dir, "miner_profile")
 
-    offline_miners = await get_offline_miners(pool)
-    if not offline_miners:
-        logger.info("No offline miners to process.")
-        return
+    # offline_miners = await get_offline_miners(pool)
+    # if not offline_miners:
+    #     logger.info("No offline miners to process.")
+    #     return
 
-    async with pool.acquire() as conn:
-        for miner in offline_miners:
-            node_id = miner['node_id']
-            miner_file_path = os.path.join(miner_profile_dir, f"{node_id}.json")
+    # async with pool.acquire() as conn:
+    #     for miner in offline_miners:
+    #         node_id = miner['node_id']
+    #         miner_file_path = os.path.join(miner_profile_dir, f"{node_id}.json")
 
-            if os.path.exists(miner_file_path):
-                try:
-                    with open(miner_file_path, 'r') as f:
-                        profile_data = json.load(f)
-                        if not isinstance(profile_data, list):
-                            profile_data = [profile_data]
+    #         if os.path.exists(miner_file_path):
+    #             try:
+    #                 with open(miner_file_path, 'r') as f:
+    #                     profile_data = json.load(f)
+    #                     if not isinstance(profile_data, list):
+    #                         profile_data = [profile_data]
 
-                    for entry in profile_data:
-                        file_hash = entry.get('file_hash')
-                        if file_hash:
-                            # Fetch the owner, file_name, selected_validator, and main_req_hash from user_profile
-                            user_info = await conn.fetchrow(
-                                """
-                                SELECT user_id, file_name, selected_validator, main_req_hash
-                                FROM user_profile
-                                WHERE file_hash = $1
-                                LIMIT 1
-                                """,
-                                file_hash
-                            )
-                            if user_info:
-                                owner = user_info['user_id']
-                                file_name = user_info['file_name']
-                                selected_validator = user_info['selected_validator']
-                                main_req_hash = user_info['main_req_hash']
+    #                 for entry in profile_data:
+    #                     file_hash = entry.get('file_hash')
+    #                     if file_hash:
+    #                         # Fetch the owner, file_name, selected_validator, and main_req_hash from user_profile
+    #                         user_info = await conn.fetchrow(
+    #                             """
+    #                             SELECT user_id, file_name, selected_validator, main_req_hash
+    #                             FROM user_profile
+    #                             WHERE file_hash = $1
+    #                             LIMIT 1
+    #                             """,
+    #                             file_hash
+    #                         )
+    #                         if user_info:
+    #                             owner = user_info['user_id']
+    #                             file_name = user_info['file_name']
+    #                             selected_validator = user_info['selected_validator']
+    #                             main_req_hash = user_info['main_req_hash']
 
-                                # Check if the record already exists in pending_pool
-                                exists = await conn.fetchval(
-                                    """
-                                    SELECT EXISTS (
-                                        SELECT 1 FROM pending_pool WHERE owner = $1 AND file_hash = $2
-                                    )""",
-                                    owner, file_hash
-                                )
-                                if not exists:
-                                    await conn.execute(
-                                        """
-                                        INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status, selected_miners)
-                                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                                        """,
-                                        owner, file_hash, file_name, selected_validator, main_req_hash, "pending", []
-                                    )
-                                    logger.info(f"Added pending request for owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={main_req_hash}, selected_miners=[] from offline miner {node_id}")
-                                else:
-                                    logger.debug(f"Pending request already exists for owner={owner}, file_hash={file_hash}")
-                            else:
-                                logger.warning(f"No user info found for file_hash={file_hash} in user_profile")
-                        else:
-                            logger.warning(f"No file_hash found in entry: {entry}")
-                except Exception as e:
-                    logger.error(f"Error processing miner profile for {node_id}: {e}")
-            else:
-                logger.info(f"No miner profile file found for offline miner: {node_id}")
+    #                             # Check if the record already exists in pending_pool
+    #                             exists = await conn.fetchval(
+    #                                 """
+    #                                 SELECT EXISTS (
+    #                                     SELECT 1 FROM pending_pool WHERE owner = $1 AND file_hash = $2
+    #                                 )""",
+    #                                 owner, file_hash
+    #                             )
+    #                             if not exists:
+    #                                 await conn.execute(
+    #                                     """
+    #                                     INSERT INTO pending_pool (owner, file_hash, file_name, selected_validator, main_req_hash, status, selected_miners)
+    #                                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    #                                     """,
+    #                                     owner, file_hash, file_name, selected_validator, main_req_hash, "pending", []
+    #                                 )
+    #                                 logger.info(f"Added pending request for owner={owner}, file_hash={file_hash}, file_name={file_name}, main_req_hash={main_req_hash}, selected_miners=[] from offline miner {node_id}")
+    #                             else:
+    #                                 logger.debug(f"Pending request already exists for owner={owner}, file_hash={file_hash}")
+    #                         else:
+    #                             logger.warning(f"No user info found for file_hash={file_hash} in user_profile")
+    #                     else:
+    #                         logger.warning(f"No file_hash found in entry: {entry}")
+    #             except Exception as e:
+    #                 logger.error(f"Error processing miner profile for {node_id}: {e}")
+    #         else:
+    #             logger.info(f"No miner profile file found for offline miner: {node_id}")
 
     logger.info("Finished processing epoch tasks")
 
