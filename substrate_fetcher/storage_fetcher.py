@@ -40,6 +40,18 @@ _ipfs_content = None
 _previous_ipfs_profiles = {}
 _latest_data = None  # Store latest block data
 
+# Define common connection errors at module level
+CONNECTION_ERRORS = (
+    BrokenPipeError,
+    ConnectionRefusedError,
+    WebSocketConnectionClosedException,
+    WebSocketBadStatusException,
+    SubstrateRequestException, # Already handled specifically in _execute_query_async but good to have here for _get_substrate_interface
+    socket.error,
+    ConnectionError, # General connection error
+    asyncio.TimeoutError, # For operations that might time out during connection phase
+)
+
 def get_status():
     return _current_status
 
@@ -58,16 +70,6 @@ def _update_status(new_status: str):
 def _get_substrate_interface(force_reconnect=False) -> SubstrateInterface | None:
     """Initializes and returns a SubstrateInterface instance, with reconnection logic."""
     global _substrate_instance, _last_connection_error, _connection_attempt_count
-
-    # Define errors that should trigger reconnection
-    connection_errors = (
-        BrokenPipeError,
-        ConnectionRefusedError,
-        WebSocketConnectionClosedException,
-        WebSocketBadStatusException,
-        SubstrateRequestException,
-        socket.error,
-    )
 
     def connect():
         """Try connecting to the substrate node and validate with a block query."""
@@ -90,7 +92,7 @@ def _get_substrate_interface(force_reconnect=False) -> SubstrateInterface | None
             print(f"Successfully connected to node: Block #{block_number} (Genesis: {genesis_hash})")
             _update_status("Connected")
             return instance
-        except connection_errors as e:
+        except CONNECTION_ERRORS as e:
             if str(e) != str(_last_connection_error):
                 print(f"⚠️ Connection error: {e}")
                 _last_connection_error = str(e)
@@ -119,7 +121,7 @@ def _get_substrate_interface(force_reconnect=False) -> SubstrateInterface | None
         # Check for broken connection during runtime and reconnect
         try:
             _substrate_instance.query('System', 'Number')
-        except connection_errors as e:
+        except CONNECTION_ERRORS as e:
             print(f"⚠️ Runtime connection lost: {e}. Reconnecting...")
             _substrate_instance = connect()
             if _substrate_instance:
@@ -147,7 +149,12 @@ async def _execute_query_async(query_fn, *args, **kwargs):
     except Exception as e:
         fn_name = getattr(query_fn, '__name__', 'query')
         logger.error(f"An unexpected error occurred during {fn_name}: {e} (Type: {type(e).__name__})")
-        if "ConnectionClosed" in str(e) or "Socket" in str(e):
+        # Check against the module-level CONNECTION_ERRORS
+        if isinstance(e, CONNECTION_ERRORS) or \
+           "ConnectionClosed" in str(e) or \
+           "Socket" in str(e) or \
+           "Broken pipe" in str(e): # Explicitly check for "Broken pipe" string as a fallback
+            logger.info(f"Attempting to force reconnect due to error: {type(e).__name__}")
             _get_substrate_interface(force_reconnect=True)
         return None
 
