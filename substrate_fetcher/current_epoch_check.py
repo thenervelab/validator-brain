@@ -390,7 +390,6 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
             file_size = file_size_response.get('size', 0)
             total_file_size += file_size if file_size else 0
             total_files_pinned += 1
-            
 
             # Convert file_hash to byte array
             file_hash_hex = file_hash.encode('utf-8').hex()
@@ -483,10 +482,13 @@ async def update_pin_and_storage_requests_near_epoch_end(block_number):
                     logger.error(f"Error reading miner profile for miner {miner_id}: {e}")
                     miner_data = []
 
+                logger.info(f"cid added to miner porfile main_req_hash was {main_req_hash}")
+                logger.info(f"cid added to miner porfile is {file_hash}")
+                
                 # Create new entry for miner profile
                 miner_entry = {
                     "created_at": storage_request['created_at'],
-                    "file_hash": request['file_hash'],
+                    "file_hash": file_hash,
                     "file_size_in_bytes": file_size if file_size else 0,
                     "miner_node_id": miner_id,
                     "selected_validator": storage_request['selected_validator']
