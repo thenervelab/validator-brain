@@ -73,6 +73,7 @@ def _get_substrate_interface(force_reconnect=False) -> SubstrateInterface | None
 
     def connect():
         """Try connecting to the substrate node and validate with a block query."""
+        global _connection_attempt_count, _last_connection_error  # Add global declaration here
         _update_status(f"Connecting to {config.NODE_URL}...")
         if _connection_attempt_count % 5 == 0 or str(_last_connection_error) != "Connecting":
             print(f"Attempting to connect to Substrate node: {config.NODE_URL} (Attempt {_connection_attempt_count + 1})")
