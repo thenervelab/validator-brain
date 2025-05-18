@@ -803,7 +803,7 @@ async def monitor_validator_epochs(pool):
                 if account_id == hips_account_id:
                     # New match found, start a 100-block action period
                     in_action_period = True
-                    target_block_number = block_number + 90
+                    target_block_number = block_number + 100
                     logger.info(f"Match found: HIPS account {hips_account_id} is the current validator at block {block_number}")
                     logger.info(f"Will perform action until block {target_block_number} (current block: {current_block_number})")
                     await perform_rebalance_and_reconstruct_profiles(pool)
