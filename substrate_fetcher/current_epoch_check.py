@@ -755,7 +755,7 @@ async def monitor_validator_epochs(pool):
             await asyncio.sleep(5)
             continue
 
-        # Check pin check metrics every 1200th block
+        # Check pin check metrics every 100th block
         await update_pin_check_metrics_near_block(current_block_number)
 
         # If we're in an action period, continue logging until the epoch ends
@@ -997,11 +997,11 @@ async def perform_rebalance_and_reconstruct_profiles(pool: asyncpg.Pool):
     logger.info("Finished processing epoch tasks")
 
 async def update_pin_check_metrics_near_block(block_number):
-    """Updates pin check metrics every 1200th block and submits to chain."""
+    """Updates pin check metrics every 100th block and submits to chain."""
     logger.info(f"Checking pin check metrics at block {block_number}...")
     
-    if block_number % 1200 != 0:
-        logger.debug(f"Block {block_number} is not a 1200th block, skipping metric update")
+    if block_number % 100 != 0:
+        logger.debug(f"Block {block_number} is not a 100th block, skipping metric update")
         return
 
     # Fetch all miner metrics from miner_epoch_health
