@@ -9,6 +9,8 @@ import sys
 import time
 import traceback
 from queue import Empty as QueueEmptyException
+from websocket._exceptions import WebSocketConnectionClosedException, WebSocketBadStatusException
+import socket
 
 # Ensure parent directory is in path so imports work from anywhere
 script_path = os.path.abspath(os.path.dirname(__file__))
@@ -56,49 +58,74 @@ def _update_status(new_status: str):
 def _get_substrate_interface(force_reconnect=False) -> SubstrateInterface | None:
     """Initializes and returns a SubstrateInterface instance, with reconnection logic."""
     global _substrate_instance, _last_connection_error, _connection_attempt_count
-    if _substrate_instance is None or force_reconnect:
-        if _substrate_instance and force_reconnect:
-            try:
-                _substrate_instance.close()
-            except Exception:
-                pass
-            _substrate_instance = None
 
+    # Define errors that should trigger reconnection
+    connection_errors = (
+        BrokenPipeError,
+        ConnectionRefusedError,
+        WebSocketConnectionClosedException,
+        WebSocketBadStatusException,
+        SubstrateRequestException,
+        socket.error,
+    )
+
+    def connect():
+        """Try connecting to the substrate node and validate with a block query."""
         _update_status(f"Connecting to {config.NODE_URL}...")
         if _connection_attempt_count % 5 == 0 or str(_last_connection_error) != "Connecting":
             print(f"Attempting to connect to Substrate node: {config.NODE_URL} (Attempt {_connection_attempt_count + 1})")
         _connection_attempt_count += 1
         _last_connection_error = "Connecting"
         try:
-            _substrate_instance = SubstrateInterface(url=config.NODE_URL, type_registry=config.TYPE_REGISTRY if 'TYPE_REGISTRY' in dir(config) else None)
-            genesis_hash = _substrate_instance.get_block_hash(0)
+            instance = SubstrateInterface(
+                url=config.NODE_URL,
+                type_registry=config.TYPE_REGISTRY if hasattr(config, 'TYPE_REGISTRY') else None
+            )
+            genesis_hash = instance.get_block_hash(0)
             if not genesis_hash:
                 raise ConnectionError("Failed to retrieve genesis hash.")
-            block_number = _substrate_instance.query('System', 'Number').value
+            block_number = instance.query('System', 'Number').value
             if block_number is None:
                 raise ConnectionError("Failed to retrieve current block number.")
             print(f"Successfully connected to node: Block #{block_number} (Genesis: {genesis_hash})")
             _update_status("Connected")
-            _last_connection_error = None
-            _connection_attempt_count = 0
-        except ConnectionRefusedError as e:
+            return instance
+        except connection_errors as e:
             if str(e) != str(_last_connection_error):
-                print(f"⚠️ Connection refused: Ensure the Substrate node is running at {config.NODE_URL}.")
-                _last_connection_error = str(e)
-            _update_status("Connection Refused")
-            _substrate_instance = None
-        except SubstrateRequestException as e:
-            if str(e) != str(_last_connection_error):
-                print(f"⚠️ Substrate request error during connection: {e}")
-                _last_connection_error = str(e)
-            _update_status(f"Connection Substrate Error: {e}")
-            _substrate_instance = None
-        except Exception as e:
-            if str(e) != str(_last_connection_error):
-                print(f"⚠️ Failed to connect to Substrate node: {e} (Type: {type(e).__name__})")
+                print(f"⚠️ Connection error: {e}")
                 _last_connection_error = str(e)
             _update_status(f"Connection Error: {type(e).__name__}")
+            return None
+        except Exception as e:
+            if str(e) != str(_last_connection_error):
+                print(f"⚠️ Unexpected error during connection: {e} (Type: {type(e).__name__})")
+                _last_connection_error = str(e)
+            _update_status(f"Connection Error: {type(e).__name__}")
+            return None
+
+    # Handle forced reconnect or first connection
+    if _substrate_instance is None or force_reconnect:
+        if _substrate_instance:
+            try:
+                _substrate_instance.close()
+            except Exception:
+                pass
             _substrate_instance = None
+        _substrate_instance = connect()
+        if _substrate_instance:
+            _last_connection_error = None
+            _connection_attempt_count = 0
+    else:
+        # Check for broken connection during runtime and reconnect
+        try:
+            _substrate_instance.query('System', 'Number')
+        except connection_errors as e:
+            print(f"⚠️ Runtime connection lost: {e}. Reconnecting...")
+            _substrate_instance = connect()
+            if _substrate_instance:
+                _last_connection_error = None
+                _connection_attempt_count = 0
+
     return _substrate_instance
 
 async def _execute_query_async(query_fn, *args, **kwargs):
