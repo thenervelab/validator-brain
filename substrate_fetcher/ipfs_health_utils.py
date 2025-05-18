@@ -213,19 +213,9 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
     except Exception as e_req:
         logger.error(f"Request error during DHT findprovs for {effective_cid_checked} (Node: {node_id}): {e_req}")
 
-    # 3. Log to database
+    # 3. update the database
     async with db_pool.acquire() as conn:
         try:
-            # Log the attempt to pin_check_log (using effective_cid_checked)
-            await conn.execute(
-                """
-                INSERT INTO pin_check_log (node_id, ipfs_peer_id, cid, is_pinned, epoch_at_check, check_timestamp)
-                VALUES ($1, $2, $3, $4, $5, NOW());
-                """,
-                node_id, ipfs_peer_id, effective_cid_checked, pin_check_successful, epoch_number
-            )
-            logger.debug(f"Logged pin check ({effective_cid_checked}) attempt for {node_id} in epoch {epoch_number} to pin_check_log.")
-
             # Update aggregate stats in miner_epoch_health
             success_val = 1 if pin_check_successful else 0
             failure_val = 0 if pin_check_successful else 1
