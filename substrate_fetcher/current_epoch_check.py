@@ -756,7 +756,7 @@ async def monitor_validator_epochs(pool):
             continue
 
         # Check pin check metrics every 100th block
-        await update_pin_check_metrics_near_block(current_block_number)
+        # await update_pin_check_metrics_near_block(current_block_number)
 
         # If we're in an action period, continue logging until the epoch ends
         if in_action_period:
