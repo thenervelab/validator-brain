@@ -251,7 +251,7 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
 async def run_all_health_checks_for_epoch(db_pool: asyncpg.Pool, epoch_number: int, stop_event=None):
     """
     Iterates through miners in miner_epoch_health for the current epoch 
-    and calls ping and pin check functions.
+    and calls ping and pin check functions, using a random file_hash from miner_profile.
     """
     stop_event = stop_event or asyncio.Event()  # Fallback to a new event if none provided
 
@@ -278,10 +278,30 @@ async def run_all_health_checks_for_epoch(db_pool: asyncpg.Pool, epoch_number: i
         node_id = miner['node_id']
         ipfs_peer_id = miner['ipfs_peer_id']
         
-        example_cid_to_check = "QmRAQB6YaCyBw3YyYfW3QL4U2Hq1mD2p3X1Dvn2Z2xK7aQ"
+        # Fetch a random file_hash from miner_profile for this miner
+        async with db_pool.acquire() as conn:
+            file_hash_record = await conn.fetchrow(
+                """
+                SELECT file_hash
+                FROM miner_profile
+                WHERE miner_node_id = $1
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                node_id
+            )
+
+        if not file_hash_record:
+            logger.warning(f"No file_hash found in miner_profile for miner {node_id}. Skipping pin check.")
+            # Perform only the ping check
+            await perform_ipfs_ping(db_pool, node_id, ipfs_peer_id, epoch_number, stop_event=stop_event)
+            continue
+
+        file_hash_to_check = file_hash_record['file_hash']
+        logger.info(f"Selected random file_hash {file_hash_to_check} for miner {node_id} pin check.")
 
         # Perform health checks
         await perform_ipfs_ping(db_pool, node_id, ipfs_peer_id, epoch_number, stop_event=stop_event)
-        await perform_ipfs_pin_check(db_pool, node_id, ipfs_peer_id, example_cid_to_check, epoch_number, stop_event=stop_event)
+        await perform_ipfs_pin_check(db_pool, node_id, ipfs_peer_id, file_hash_to_check, epoch_number, stop_event=stop_event)
         
     logger.info(f"Completed one round of orchestrated health checks for epoch {epoch_number}.")

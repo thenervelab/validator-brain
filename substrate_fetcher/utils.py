@@ -708,7 +708,6 @@ async def save_user_storage_requests(pool: asyncpg.Pool, requests: Dict[Tuple[st
             for (owner_account_id, file_hash), request in requests.items():
                 try:
                     if request is None:
-                        logger.info(f"Skipping None request for owner {owner_account_id}, file_hash {file_hash}")
                         continue
 
                     required_fields = [
