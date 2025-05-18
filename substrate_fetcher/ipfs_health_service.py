@@ -6,7 +6,7 @@ import sys
 import time
 import math
 from . import config
-from .ipfs_health_utils import perform_ipfs_ping, EPOCH_BLOCK_INTERVAL
+from .ipfs_health_utils import perform_ipfs_ping
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def get_current_block_and_epoch():
             # Try to get latest block number from our tracked state
             result = await conn.fetchrow(
                 "SELECT MAX(block_number) as block, MAX(block_number) / $1 as epoch FROM current_epoch_validator",
-                EPOCH_BLOCK_INTERVAL
+                config.EPOCH_BLOCK_INTERVAL
             )
             
             if result and result['block']:

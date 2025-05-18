@@ -1000,7 +1000,7 @@ async def update_pin_check_metrics_near_block(block_number):
     """Updates pin check metrics every 100th block and submits to chain."""
     logger.info(f"Checking pin check metrics at block {block_number}...")
     
-    if block_number % 100 != 0:
+    if block_number % config.EPOCH_BLOCK_INTERVAL != 0:
         logger.debug(f"Block {block_number} is not a 100th block, skipping metric update")
         return
 

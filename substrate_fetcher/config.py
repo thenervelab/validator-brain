@@ -128,3 +128,4 @@ IPFS_FETCH_TIMEOUT = 60  # Timeout for IPFS fetch in seconds
 
 # Define the keystore path
 KEYSTORE_PATH = "/opt/hippius/data/chains/hippius-mainnet/keystore/"
+EPOCH_BLOCK_INTERVAL = 100  # Define epoch length in blocks

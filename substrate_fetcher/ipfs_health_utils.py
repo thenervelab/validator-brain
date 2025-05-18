@@ -9,7 +9,6 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-EPOCH_BLOCK_INTERVAL = 100  # Define epoch length in blocks
 
 async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, epoch_number: int, block_number: int = None, stop_event=None):
     """
