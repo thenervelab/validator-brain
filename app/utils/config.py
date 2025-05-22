@@ -2,6 +2,48 @@
 import os
 
 
+# Blockchain node URL
+NODE_URL = os.environ.get("NODE_URL", "wss://rpc.hippius.network")
+
+# Storage items to fetch from the blockchain
+# Format: (module_name, storage_item_name, [params])
+STORAGE_ITEMS_TO_FETCH = [
+    ("IpfsPallet", "CurrentEpochValidator"),
+    ("Validator", "CurrentValidator"),
+    ("ExecutionUnit", "Validators"),
+]
+
+# Storage maps to fetch all entries
+# Format: (module_name, storage_map_name)
+STORAGE_MAPS_TO_FETCH_ALL = [
+    # Registration
+    ("Registration", "NodeRegistration"),
+    ("Registration", "ColdkeyNodeRegistration"),
+    
+    # Storage requests
+    ("IpfsPallet", "UserStorageRequests"),
+    ("IpfsPallet", "StorageMiners"),
+    ("IpfsPallet", "Miners"),
+    ("StorageMiners", "Miners"),
+    ("Storage", "Miners"),
+    ("IpfsStorage", "StorageMiners"),
+    ("IpfsStorage", "Miners"),
+    
+    # Block numbers and profiles
+    ("ExecutionUnit", "BlockNumbers"),
+    ("ExecutionUnit", "NodeMetrics"),
+    ("IpfsPallet", "MinerProfile"),
+    ("IpfsPallet", "UserProfile"),
+    
+    # Storage metrics
+    ("IpfsPallet", "MinerTotalFilesSize"),
+    ("IpfsPallet", "MinerTotalFilesPinned"),
+]
+
+# Subscription retry delay (seconds)
+SUBSCRIPTION_RETRY_DELAY = 5
+
+
 def get_ipfs_node_url():
     """
     Get the IPFS node URL from environment variables or use default.
