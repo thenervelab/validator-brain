@@ -1,4 +1,0 @@
-substrate-interface
-asyncpg
-aiofiles
-httpx
