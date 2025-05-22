@@ -1,0 +1,73 @@
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: ipfs-node
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+      - "8080:8080"
+    volumes:
+      - ipfs_data:/data/ipfs
+    environment:
+      - IPFS_PROFILE=server
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17
+    container_name: postgres-substrate
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=hippius
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d hippius"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ipfs-validator
+    depends_on:
+      ipfs:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - IPFS_NODE_URL=http://ipfs:5001
+      - IPFS_GATEWAY_URL=http://ipfs:8080
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=hippius
+    volumes:
+      - keystore_data:/opt/hippius/data/chains/hippius-mainnet/keystore/
+      - .:/app
+    develop:
+      watch:
+        - action: sync+restart
+          path: .
+          target: /app
+    restart: unless-stopped
+
+volumes:
+  ipfs_data:
+    name: ipfs-data
+  postgres_data:
+    name: postgres-data
+  keystore_data:
+    name: keystore-data

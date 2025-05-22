@@ -1,8 +1,4 @@
 substrate-interface
-aiohttp
-base58
 asyncpg
-psutil
-multiformats
 aiofiles
-websocket-client
+httpx
