@@ -128,3 +128,9 @@ dmypy.json
 /.idea/inspectionProfiles/Project_Default.xml
 /.idea/ruff.xml
 /.idea/vcs.xml
+
+# Project specific
+keystore/
+logs/
+validator.log
+.dbmate.schema.yml

@@ -22,15 +22,15 @@ services:
     image: postgres:17
     container_name: postgres-substrate
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=hippius
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-substrate_fetcher}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d hippius"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-substrate_fetcher}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,19 +49,20 @@ services:
     environment:
       - IPFS_NODE_URL=http://ipfs:5001
       - IPFS_GATEWAY_URL=http://ipfs:8080
+      - NODE_URL=${NODE_URL:-wss://rpc.hippius.network}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=hippius
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-substrate_fetcher}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - KEYSTORE_PATH=${KEYSTORE_PATH:-/app/keystore}
+      - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID:-test_validator}
+      - EPOCH_BLOCK_INTERVAL=${EPOCH_BLOCK_INTERVAL:-100}
+    ports:
+      - "8000:8000"
     volumes:
-      - keystore_data:/opt/hippius/data/chains/hippius-mainnet/keystore/
-      - .:/app
-    develop:
-      watch:
-        - action: sync+restart
-          path: .
-          target: /app
+      - keystore_data:/app/keystore
     restart: unless-stopped
 
 volumes:
