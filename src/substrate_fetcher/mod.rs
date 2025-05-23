@@ -105,6 +105,8 @@ impl SubstrateFetcher {
             Config::get().rpc_url
         );
 
+        let verification_limit = 5; // Process 5 miners at a time
+
         while let Some(block) = blocks.next().await {
             match block {
                 Ok(block) => {
