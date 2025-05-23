@@ -105,10 +105,6 @@ impl SubstrateFetcher {
             Config::get().rpc_url
         );
 
-        // Variables for miner verification pagination
-        let mut verification_offset = 0;
-        let verification_limit = 5; // Process 5 miners at a time
-
         while let Some(block) = blocks.next().await {
             match block {
                 Ok(block) => {
@@ -221,8 +217,6 @@ impl SubstrateFetcher {
                         if block_number % 20 == 0 {
                             // Set is_paused to true before verification
                             *self.is_paused.lock().unwrap() = true;
-                            // Clone verification offset for the task
-                            let offset = verification_offset;
                             let session_clone = self.session.clone();
                             let ipfs_entries_clone = self.ipfs_entries.clone();
                             let ipfs_client_clone = self.ipfs_client.clone();
@@ -248,18 +242,11 @@ impl SubstrateFetcher {
                                 &app_state_arc,
                                 3,
                                 2,
-                                offset,
                                 verification_limit,
                             )
                             .await
                             {
                                 Ok(metrics) => {
-                                    println!(
-                                        "Verified {} miners (offset={}, limit={})",
-                                        metrics.len(),
-                                        offset,
-                                        verification_limit
-                                    );
 
                                     // If enough metrics collected, submit them to the chain
                                     if !metrics.is_empty() {
@@ -297,14 +284,6 @@ impl SubstrateFetcher {
                                     // Set is_paused back to false on verification failure
                                     *self.is_paused.lock().unwrap() = false;
                                 }
-                            }
-
-                            // Increment offset for next verification round, reset when it gets high enough
-                            // This ensures we eventually verify all miners in the epoch
-                            verification_offset += verification_limit;
-                            if verification_offset > 50 {
-                                // Reset after checking 50+ miners
-                                verification_offset = 0;
                             }
                         }
 

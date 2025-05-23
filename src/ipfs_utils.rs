@@ -1051,22 +1051,16 @@ pub async fn verify_miners_subset(
     state: &Arc<AppState>,
     cids_per_miner: usize,          // Number of CIDs to check per miner
     _blocks_to_check_per_cid: usize, // Number of blocks to check per CID
-    offset: usize,                  // Offset for pagination
     limit: usize,                   // Number of miners to process in this interval
 ) -> Result<Vec<MinerPinMetrics>, String> {
-    println!(
-        "Starting miner verification with limit={}, offset={}",
-        limit, offset
-    );
     println!("======================================");
 
     // Use only 'StorageMiner' type nodes
-    let miners_query = "SELECT node_id, ipfs_node_id FROM blockchain.ipfs_registration WHERE node_type = 'StorageMiner' LIMIT $1 OFFSET $2";
+    let miners_query = "SELECT node_id, ipfs_node_id FROM blockchain.ipfs_registration WHERE node_type = 'StorageMiner' LIMIT $1";
 
     // Use sqlx query pattern
     let rows: Vec<(String, String)> = sqlx::query_as(miners_query)
         .bind(limit as i32)
-        .bind(offset as i32)
         .fetch_all(&*state.session)
         .await
         .map_err(|e| format!("Failed to fetch registered miners: {}", e))?;
@@ -1282,13 +1276,6 @@ pub async fn verify_miners_subset(
 
     println!("======================================");
     println!("Miner verification summary:");
-    println!(
-        " - Verified {} miners with pagination: offset={}, limit={}",
-        results.len(),
-        offset,
-        limit
-    );
-
     // Count how many miners had successful verifications
     let miners_with_successful_checks = results
         .iter()
