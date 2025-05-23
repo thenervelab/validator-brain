@@ -1,27 +1,24 @@
 """Database connection management."""
+
 import logging
 import os
 from typing import Optional
 
 import asyncpg
 
-from app.db.sql import load_query
-
-# Configure logging
 logger = logging.getLogger(__name__)
 
-# Global database pool
 db_pool = None
 
 
 async def init_db_pool(dsn: Optional[str] = None, init_schema: bool = True):
     """
     Initialize the global database connection pool and optionally create schema.
-    
+
     Args:
         dsn: Database connection string. If not provided, uses environment variables.
         init_schema: Whether to initialize the database schema if tables don't exist.
-    
+
     Returns:
         The initialized database pool
     """
@@ -44,7 +41,9 @@ async def init_db_pool(dsn: Optional[str] = None, init_schema: bool = True):
     try:
         # Create the connection pool
         logger.info(f"Initializing database pool with DSN: {dsn}")
-        db_pool = await asyncpg.create_pool(dsn=dsn, min_size=5, max_size=20, command_timeout=60)
+        db_pool = await asyncpg.create_pool(
+            dsn=dsn, min_size=5, max_size=20, command_timeout=60
+        )
         logger.info("Database pool initialized successfully")
 
         # Initialize schema if requested - this is now managed by dbmate
@@ -73,7 +72,9 @@ async def check_tables_exist():
 
             if not table_exists:
                 logger.warning("Database schema not initialized! Tables missing.")
-                logger.warning("Please run migrations using dbmate before starting the application.")
+                logger.warning(
+                    "Please run migrations using dbmate before starting the application."
+                )
             else:
                 logger.info("Database schema exists")
 
@@ -94,7 +95,7 @@ async def close_db_pool():
 def get_db_pool():
     """
     Get the global database pool. Raises an exception if not initialized.
-    
+
     Returns:
         The global asyncpg connection pool
     """

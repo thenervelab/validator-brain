@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipfs-service-validator"
-version = "1.0.0"
+version = "0.0.1"
 description = "Validator for Hippius network"
 readme = "README.md"
 requires-python = ">=3.9,<3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "veggies", email = "radu@corcel.io"},
+    {name = "veggies", email = "veggies@hippius.com"},
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,27 +20,22 @@ classifiers = [
 ]
 
 dependencies = [
-    # Web Framework
-    "fastapi==0.104.1",
-    "uvicorn[standard]==0.23.2",
-    "asyncpg==0.28.0",
-    "httpx==0.24.1",
-    "python-dotenv==1.0.0",
-    "pydantic==2.4.2",
-    "pydantic-settings==2.0.3",
-    "email-validator==2.0.0",
-    "python-multipart==0.0.6",
-    "aiofiles==23.2.1",
-    "substrate-interface==1.6.0",
-    "websockets==10.4",
+    "fastapi",
+    "uvicorn[standard]",
+    "asyncpg",
+    "httpx",
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    "aiofiles",
+    "substrate-interface",
+    "websockets",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==7.4.3",
-    "pytest-asyncio==0.21.1",
+    "pytest",
+    "pytest-asyncio",
     "ruff",
-    "pre-commit==3.5.0",
-    "sqlfluff==2.3.4",
-    "watchdog==3.0.0",
+    "pre-commit",
 ]
