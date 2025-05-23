@@ -59,9 +59,11 @@ services:
       - KEYSTORE_PATH=${KEYSTORE_PATH:-/app/keystore}
       - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID:-test_validator}
       - EPOCH_BLOCK_INTERVAL=${EPOCH_BLOCK_INTERVAL:-100}
+      - ALWAYS_VALIDATE=1
     ports:
       - "8000:8000"
     volumes:
+      - .:/app
       - keystore_data:/app/keystore
     restart: unless-stopped
 

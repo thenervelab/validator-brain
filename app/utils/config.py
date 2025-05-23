@@ -16,26 +16,13 @@ STORAGE_ITEMS_TO_FETCH = [
 # Storage maps to fetch all entries
 # Format: (module_name, storage_map_name)
 STORAGE_MAPS_TO_FETCH_ALL = [
-    # Registration
-    ("Registration", "NodeRegistration"),
-    ("Registration", "ColdkeyNodeRegistration"),
-    
-    # Storage requests
-    ("IpfsPallet", "UserStorageRequests"),
-    ("IpfsPallet", "StorageMiners"),
-    ("IpfsPallet", "Miners"),
-    ("StorageMiners", "Miners"),
-    ("Storage", "Miners"),
-    ("IpfsStorage", "StorageMiners"),
-    ("IpfsStorage", "Miners"),
-    
-    # Block numbers and profiles
-    ("ExecutionUnit", "BlockNumbers"),
     ("ExecutionUnit", "NodeMetrics"),
+    ("ExecutionUnit", "BlockNumbers"),
     ("IpfsPallet", "MinerProfile"),
     ("IpfsPallet", "UserProfile"),
-    
-    # Storage metrics
+    ("Registration", "NodeRegistration"),
+    ("Registration", "ColdkeyNodeRegistration"),
+    ("IpfsPallet", "UserStorageRequests"),
     ("IpfsPallet", "MinerTotalFilesSize"),
     ("IpfsPallet", "MinerTotalFilesPinned"),
 ]

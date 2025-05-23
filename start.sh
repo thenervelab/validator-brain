@@ -1,36 +1,23 @@
 #!/bin/bash
-# Start script for the IPFS Service Validator
+set -e
 
-# Check if poetry is installed
-if command -v poetry &> /dev/null; then
-    echo "Starting with Poetry..."
-    poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    exit $?
+# Wait for PostgreSQL to be ready
+until nc -z ${POSTGRES_HOST:-localhost} ${POSTGRES_PORT:-5432}; do
+  echo "Waiting for PostgreSQL at ${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}..."
+  sleep 1
+done
+
+# Set up DATABASE_URL if not already set
+if [ -z "$DATABASE_URL" ]; then
+  export DATABASE_URL="postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable"
+  echo "Set DATABASE_URL to $DATABASE_URL"
 fi
 
-# Check if we're in a virtual environment
-if [[ -z "$VIRTUAL_ENV" ]]; then
-    echo "No active virtual environment detected."
-    
-    if [[ -d "venv" ]]; then
-        echo "Found 'venv' directory, activating..."
-        source venv/bin/activate
-    else
-        echo "Creating a new virtual environment..."
-        python3 -m venv venv
-        source venv/bin/activate
-        
-        echo "Installing dependencies..."
-        pip install -e ".[dev]"
-    fi
-else
-    echo "Using virtual environment: $VIRTUAL_ENV"
-    
-    if [[ ! -f "$VIRTUAL_ENV/bin/uvicorn" ]]; then
-        echo "Installing dependencies in the active virtual environment..."
-        pip install -e ".[dev]"
-    fi
-fi
+echo "Checking for migration files:"
+ls -la /app/db/migrations
+find /app -type f -name "*.sql"
 
-echo "Starting IPFS Service Validator..."
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+echo "Running migrations..."
+cd /app && dbmate up
+
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
