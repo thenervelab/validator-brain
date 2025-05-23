@@ -1,0 +1,31 @@
+[package]
+name = "ipfs-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+hex = "0.4"
+parity-scale-codec = "3.6"
+sp-core = "21.0.0"
+reqwest = { version = "0.11", features = ["json"] }
+bs58 = "0.4"
+axum = "0.6"
+serde = { version = "1", features = ["derive"] }
+scylla = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+futures = "0.3"
+sp-keyring = { version = "12.0", optional = true }  # Only if you need dev accounts
+subxt = { version = "0.38", features = ["substrate-compat"] }
+rand = "0.8"
+log = "0.4"
+env_logger = "0.9"
+cid = "0.10" # For CID parsing
+sha2 = "0.10"
+multihash = "0.16"
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls", "macros", "json"] }
+dotenv = "0.15"
+scopeguard = "1.2"
+blake3 = "1.5"
+governor = "0.6"

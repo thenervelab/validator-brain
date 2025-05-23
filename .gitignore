@@ -1,0 +1,10 @@
+./target
+/target
+last_processed_block.txt
+target
+./src/sample.rs
+src/sample.rs
+src/update-fns.rs
+env
+.env
+./.env
