@@ -105,8 +105,6 @@ impl SubstrateFetcher {
             Config::get().rpc_url
         );
 
-        let verification_limit = 5; // Process 5 miners at a time
-
         while let Some(block) = blocks.next().await {
             match block {
                 Ok(block) => {
@@ -215,80 +213,6 @@ impl SubstrateFetcher {
                             }
                         }
 
-                        // Perform miner verification every 20 blocks, regardless of validator status
-                        if block_number % 20 == 0 {
-                            // Set is_paused to true before verification
-                            *self.is_paused.lock().unwrap() = true;
-                            let session_clone = self.session.clone();
-                            let ipfs_entries_clone = self.ipfs_entries.clone();
-                            let ipfs_client_clone = self.ipfs_client.clone();
-                            let ipfs_node_url_clone = self.ipfs_node_url.clone();
-                            let substrate_fetcher_clone = Arc::new(self.clone());
-                            // Configure rate limiting (e.g., 5 requests per second)
-                            let quota = Quota::per_second(NonZeroU32::new(5).unwrap());
-                            let rate_limiter = Arc::new(RateLimiter::direct(quota));
-
-                            let app_state = AppState {
-                                session: session_clone,
-                                ipfs_entries: ipfs_entries_clone,
-                                ipfs_client: ipfs_client_clone,
-                                ipfs_node_url: ipfs_node_url_clone,
-                                substrate_fetcher: substrate_fetcher_clone,
-                                rate_limiter,
-                            };
-
-                            let app_state_arc = Arc::new(app_state);
-
-                            // Run the miner verification inline
-                            match verify_miners_subset(
-                                &app_state_arc,
-                                3,
-                                2,
-                                verification_limit,
-                            )
-                            .await
-                            {
-                                Ok(metrics) => {
-
-                                    // If enough metrics collected, submit them to the chain
-                                    if !metrics.is_empty() {
-                                        // Create another AppState for the transaction submission
-                                        let app_state_for_tx = app_state_arc.clone();
-                                        match submit_update_pin_check_metrics_transaction(
-                                            &app_state_for_tx,
-                                            metrics,
-                                        )
-                                        .await
-                                        {
-                                            Ok(_) => {
-                                                println!(
-                                                    "Successfully submitted miner verification metrics"
-                                                );
-                                                // Set is_paused back to false on successful transaction
-                                                *self.is_paused.lock().unwrap() = false;
-                                            }
-                                            Err(e) => {
-                                                eprintln!(
-                                                    "Failed to submit miner verification metrics: {}",
-                                                    e
-                                                );
-                                                // Set is_paused back to false on successful transaction
-                                                *self.is_paused.lock().unwrap() = false;
-                                            }
-                                        }
-                                    } else {
-                                        // Set is_paused back to false if no metrics to submit
-                                        *self.is_paused.lock().unwrap() = false;
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to verify miners: {}", e);
-                                    // Set is_paused back to false on verification failure
-                                    *self.is_paused.lock().unwrap() = false;
-                                }
-                            }
-                        }
-
                         // Process data only every 15 blocks
                         if block_number % 15 == 0 {
                             println!(
@@ -332,6 +256,78 @@ impl SubstrateFetcher {
                                 }
                             }
                         }
+                    }else{
+
+                        // Perform miner verification only at starting of epoch and when operations are not paused
+                        // Set is_paused to true before verification
+                        *self.is_paused.lock().unwrap() = true;
+                        let session_clone = self.session.clone();
+                        let ipfs_entries_clone = self.ipfs_entries.clone();
+                        let ipfs_client_clone = self.ipfs_client.clone();
+                        let ipfs_node_url_clone = self.ipfs_node_url.clone();
+                        let substrate_fetcher_clone = Arc::new(self.clone());
+                        // Configure rate limiting (e.g., 5 requests per second)
+                        let quota = Quota::per_second(NonZeroU32::new(5).unwrap());
+                        let rate_limiter = Arc::new(RateLimiter::direct(quota));
+
+                        let app_state = AppState {
+                            session: session_clone,
+                            ipfs_entries: ipfs_entries_clone,
+                            ipfs_client: ipfs_client_clone,
+                            ipfs_node_url: ipfs_node_url_clone,
+                            substrate_fetcher: substrate_fetcher_clone,
+                            rate_limiter,
+                        };
+
+                        let app_state_arc = Arc::new(app_state);
+
+                        // Run the miner verification inline
+                        match verify_miners_subset(
+                            &app_state_arc,
+                            1,
+                            10, // process 10 concurrent miners at once 
+                        )
+                        .await
+                        {
+                            Ok(metrics) => {
+                                // If enough metrics collected, submit them to the chain
+                                if !metrics.is_empty() {
+                                    // Create another AppState for the transaction submission
+                                    let app_state_for_tx = app_state_arc.clone();
+                                    match submit_update_pin_check_metrics_transaction(
+                                        &app_state_for_tx,
+                                        metrics,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            println!(
+                                                "Successfully submitted miner verification metrics"
+                                            );
+                                            // Set is_paused back to false on successful transaction
+                                            *self.is_paused.lock().unwrap() = false;
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "Failed to submit miner verification metrics: {}",
+                                                e
+                                            );
+                                            // Set is_paused back to false on successful transaction
+                                            *self.is_paused.lock().unwrap() = false;
+                                        }
+                                    }
+                                } else {
+                                    // Set is_paused back to false if no metrics to submit
+                                    *self.is_paused.lock().unwrap() = false;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to verify miners: {}", e);
+                                // Set is_paused back to false on verification failure
+                                *self.is_paused.lock().unwrap() = false;
+                            }
+                        }
+                        
                     }
                 }
                 Err(e) => {
@@ -1395,8 +1391,6 @@ impl SubstrateFetcher {
         Ok(())
     }
 
-    // store json object of user profile having this cid 
-    // here cid is decoded 
     async fn update_cids_info(
         &self,
         hash_key: &str,
@@ -1405,7 +1399,7 @@ impl SubstrateFetcher {
         // Parse item_value to JsonValue for sqlx binding
         let json_item_value: JsonValue = serde_json::from_str(item_value)?;
 
-        let query = "INSERT INTO blockchain.cidsInfo (hash_key, item_value) VALUES ($1, $2)";
+        let query = "INSERT INTO blockchain.cidsInfo (hash_key, item_value) VALUES ($1, $2) ON CONFLICT (hash_key) DO NOTHING";
 
         // Adapted for sqlx
         sqlx::query(query)
@@ -1415,7 +1409,7 @@ impl SubstrateFetcher {
             .await?;
         Ok(())
     }
-
+    
     async fn fetch_and_update_registration_data(
         &self,
         block_hash: subxt::utils::H256,

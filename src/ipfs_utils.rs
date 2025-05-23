@@ -15,6 +15,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::task;
 use tokio::time::Duration;
+use futures::stream::{self, StreamExt};
+use tokio::sync::Semaphore;
 
 // // Fetch and parse the badbits.deny blacklist
 // pub async fn fetch_badbits_blacklist() -> Result<HashSet<String>, String> {
@@ -626,7 +628,6 @@ pub async fn fetch_ipfs_content(state: &AppState, cid: &str) -> Result<Vec<u8>, 
 // }
 
 
-
 /// Checks if a miner is online by pinging their peer ID via the IPFS API.
 async fn is_miner_online(state: &AppState, peer_id: &str) -> Result<bool, String> {
     println!("Checking if IPFS node {} is online", peer_id);
@@ -1045,249 +1046,60 @@ async fn check_peer_info(state: &AppState, peer_id: &str) -> Result<bool, String
 //     Ok(Cid::new_v1(0x55, hash)) // 0x55 is the raw codec
 // }
 
-/// Verifies a subset of StorageMiners for the current epoch interval.
-/// Called every 50 blocks to process a portion of miners.
+/// Verifies a subset of StorageMiners with parallel processing
 pub async fn verify_miners_subset(
     state: &Arc<AppState>,
-    cids_per_miner: usize,          // Number of CIDs to check per miner
-    _blocks_to_check_per_cid: usize, // Number of blocks to check per CID
-    limit: usize,                   // Number of miners to process in this interval
+    cids_per_miner: usize,
+    max_concurrent: usize, // Maximum concurrent verifications
 ) -> Result<Vec<MinerPinMetrics>, String> {
     println!("======================================");
+    println!("Starting parallel miner verification");
 
-    // Use only 'StorageMiner' type nodes
-    let miners_query = "SELECT node_id, ipfs_node_id FROM blockchain.ipfs_registration WHERE node_type = 'StorageMiner' LIMIT $1";
-
-    // Use sqlx query pattern
+    // Fetch all miners (unchanged from original)
+    let miners_query = "SELECT node_id, ipfs_node_id FROM blockchain.ipfs_registration WHERE node_type = 'StorageMiner' ORDER BY RANDOM()";
     let rows: Vec<(String, String)> = sqlx::query_as(miners_query)
-        .bind(limit as i32)
         .fetch_all(&*state.session)
         .await
         .map_err(|e| format!("Failed to fetch registered miners: {}", e))?;
-
+    
     println!("Found {} registered miners for verification", rows.len());
     println!("======================================");
 
-    let mut results = Vec::new();
+    // Create semaphore to limit concurrent operations
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+    let state = Arc::clone(state);
 
-    // Process each miner
-    for (idx, (node_id, ipfs_node_id)) in rows.iter().enumerate() {
-        println!("======================================");
-        println!(
-            "Processing miner [{}/{}]: node_id={}, ipfs_node_id={}",
-            idx + 1,
-            rows.len(),
-            node_id,
-            ipfs_node_id
-        );
-
-        // Create metrics for this miner
-        let mut metrics = MinerPinMetrics {
-            node_id: node_id.clone().into_bytes(),
-            successful_pin_checks: 0,
-            total_pin_checks: 0,
-        };
-
-        // First check if the miner's IPFS node is online
-        println!("Checking if miner's IPFS node is online...");
-        let is_online = match is_miner_online(state, ipfs_node_id).await {
-            Ok(true) => {
-                println!("✅ Miner's IPFS node {} is ONLINE", ipfs_node_id);
-                metrics.total_pin_checks += 1;
-                metrics.successful_pin_checks += 1;
-                true
-            }
-            Ok(false) => {
-                println!("❌ Miner's IPFS node {} is OFFLINE", ipfs_node_id);
-                false
-            }
-            Err(e) => {
+    // Process miners in parallel streams
+    let results: Vec<MinerPinMetrics> = stream::iter(rows.into_iter().enumerate())
+        .map(|(idx, (node_id, ipfs_node_id))| {
+            let state = Arc::clone(&state);
+            let semaphore = Arc::clone(&semaphore);
+            async move {
+                // Acquire permit for concurrency control
+                let _permit = semaphore.acquire().await.unwrap();
+                
+                println!("======================================");
                 println!(
-                    "⚠️ Error checking if miner's IPFS node {} is online: {}",
-                    ipfs_node_id, e
+                    "Processing miner [{}]: node_id={}, ipfs_node_id={}",
+                    idx + 1,
+                    node_id,
+                    ipfs_node_id
                 );
-                false
+
+                // Process miner (moved to separate function for clarity)
+                process_miner(&state, &node_id, &ipfs_node_id, cids_per_miner).await
             }
-        };
+        })
+        .buffer_unordered(max_concurrent) // Process up to max_concurrent at once
+        .collect()
+        .await;
 
-        if !is_online {
-            println!("Skipping verification for offline miner {}", node_id);
-            results.push(metrics);
-            continue;
-        }
-
-        // Fetch miner profile CID
-        let profile_query =
-            "SELECT storage_value FROM blockchain.ipfs_minerprofile WHERE storage_key = $1";
-
-        // Use sqlx query pattern
-        let profile_cid: Option<String> = sqlx::query_scalar::<_, String>(profile_query)
-            .bind(node_id)
-            .fetch_optional(&*state.session)
-            .await
-            .map_err(|e| format!("Failed to fetch miner profile: {}", e))?;
-
-        match &profile_cid {
-            Some(cid) => println!("Found miner profile with CID: {}", cid),
-            None => println!("No profile found for miner node_id={}", node_id),
-        }
-
-        // Check if the miner has a profile
-        match profile_cid {
-            Some(cid) => {
-                // Fetch profile content
-                match fetch_ipfs_content(state, &cid).await {
-                    Ok(content) => {
-                        println!(
-                            "Successfully fetched profile content ({} bytes)",
-                            content.len()
-                        );
-                        match serde_json::from_slice::<Vec<serde_json::Value>>(&content) {
-                            Ok(pin_items) => {
-                                println!("Miner has {} pinned items in profile", pin_items.len());
-
-                                // Sample CIDs to verify
-                                let sample_size = std::cmp::min(cids_per_miner, pin_items.len());
-                                if sample_size > 0 {
-                                    println!(
-                                        "Will verify {} CIDs from miner's profile",
-                                        sample_size
-                                    );
-
-                                    // Use rand::SeedableRng instead of thread_rng() for tokio tasks
-                                    let mut rng = rand::rngs::StdRng::from_entropy();
-                                    let indices: Vec<usize> = (0..pin_items.len()).collect();
-                                    let sampled_indices: Vec<usize> = indices
-                                        .choose_multiple(&mut rng, sample_size)
-                                        .cloned()
-                                        .collect();
-
-                                    for (check_idx, idx) in sampled_indices.iter().enumerate() {
-                                        if let Some(file_hash) = pin_items[*idx].get("file_hash") {
-                                            if file_hash.is_array() {
-                                                let file_hash_bytes: Vec<u8> = file_hash
-                                                    .as_array()
-                                                    .unwrap()
-                                                    .iter()
-                                                    .filter_map(|v| v.as_u64().map(|n| n as u8))
-                                                    .collect();
-
-                                                let cid_vec = hex::decode(&file_hash_bytes)
-                                                    .map_err(|e| {
-                                                        format!("Invalid file hash: {}", e)
-                                                    })?;
-
-                                                let file_hash_str = match String::from_utf8(
-                                                    cid_vec.clone(),
-                                                ) {
-                                                    Ok(s) => s,
-                                                    Err(_) => {
-                                                        println!(
-                                                            "Cannot convert file hash bytes to string, skipping"
-                                                        );
-                                                        continue;
-                                                    }
-                                                };
-
-                                                // Verify that miner has the CID
-                                                metrics.total_pin_checks += 1;
-                                                println!("------------------------------");
-                                                println!(
-                                                    "Verification check [{}/{}] for miner {}:",
-                                                    check_idx + 1,
-                                                    sample_size,
-                                                    node_id
-                                                );
-                                                println!("CID: {}", file_hash_str);
-                                                println!("IPFS node ID: {}", ipfs_node_id);
-
-                                                // IMPORTANT: Use ipfs_node_id here instead of node_id
-                                                match check_cid_is_pinned(
-                                                    state,
-                                                    &ipfs_node_id,
-                                                    &file_hash_str,
-                                                )
-                                                .await
-                                                {
-                                                    Ok(true) => {
-                                                        metrics.successful_pin_checks += 1;
-                                                        println!(
-                                                            "✅ Verification SUCCESSFUL - miner {} has CID {} ({}/{})",
-                                                            node_id,
-                                                            file_hash_str,
-                                                            metrics.successful_pin_checks,
-                                                            metrics.total_pin_checks
-                                                        );
-                                                    }
-                                                    Ok(false) => {
-                                                        println!(
-                                                            "❌ Verification FAILED - miner {} does not have CID {} ({}/{})",
-                                                            node_id,
-                                                            file_hash_str,
-                                                            metrics.successful_pin_checks,
-                                                            metrics.total_pin_checks
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!(
-                                                            "⚠️ Verification ERROR - miner {} / CID {}: {}",
-                                                            node_id, file_hash_str, e
-                                                        );
-                                                    }
-                                                }
-                                                println!("------------------------------");
-                                            } else {
-                                                println!(
-                                                    "file_hash is not an array, skipping item"
-                                                );
-                                            }
-                                        } else {
-                                            println!("No file_hash found in item, skipping");
-                                        }
-                                    }
-                                } else {
-                                    println!("No CIDs to verify in miner's profile");
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to parse miner profile: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // Verify that miner has the CID
-                        eprintln!("Failed to fetch miner profile content: {}", e);
-                    }
-                }
-            }
-            None => {
-                eprintln!("No profile found for miner {}", node_id);
-            }
-        }
-
-        // Add miner's verification results to the overall results
-        println!(
-            "Miner {} verification results: {}/{} successful checks",
-            node_id, metrics.successful_pin_checks, metrics.total_pin_checks
-        );
-        results.push(metrics);
-        println!("======================================");
-    }
-
+    // Generate summary (unchanged from original)
     println!("======================================");
     println!("Miner verification summary:");
-    // Count how many miners had successful verifications
-    let miners_with_successful_checks = results
-        .iter()
-        .filter(|m| m.successful_pin_checks > 0)
-        .count();
+    let miners_with_successful_checks = results.iter().filter(|m| m.successful_pin_checks > 0).count();
+    println!(" - {} miners had successful pin checks", miners_with_successful_checks);
 
-    println!(
-        " - {} miners had successful pin checks",
-        miners_with_successful_checks
-    );
-
-    // Sum up totals
     let total_successful = results.iter().map(|m| m.successful_pin_checks).sum::<u32>();
     let total_checks = results.iter().map(|m| m.total_pin_checks).sum::<u32>();
 
@@ -1306,6 +1118,139 @@ pub async fn verify_miners_subset(
     Ok(results)
 }
 
+/// Processes a single miner (extracted from original function)
+async fn process_miner(
+    state: &AppState,
+    node_id: &str,
+    ipfs_node_id: &str,
+    cids_per_miner: usize,
+) -> MinerPinMetrics {
+    let mut metrics = MinerPinMetrics {
+        node_id: node_id.as_bytes().to_vec(),
+        successful_pin_checks: 0,
+        total_pin_checks: 0,
+    };
+
+    // Check if miner is online
+    println!("Checking if miner's IPFS node is online...");
+    let is_online = match is_miner_online(state, ipfs_node_id).await {
+        Ok(true) => {
+            println!("✅ Miner's IPFS node {} is ONLINE", ipfs_node_id);
+            metrics.total_pin_checks += 1;
+            metrics.successful_pin_checks += 1;
+            true
+        }
+        Ok(false) => {
+            println!("❌ Miner's IPFS node {} is OFFLINE", ipfs_node_id);
+            false
+        }
+        Err(e) => {
+            println!("⚠️ Error checking if miner's IPFS node {} is online: {}", ipfs_node_id, e);
+            false
+        }
+    };
+
+    if !is_online {
+        println!("Skipping verification for offline miner {}", node_id);
+        return metrics;
+    }
+
+    // Fetch miner profile CID
+    let profile_query = "SELECT storage_value FROM blockchain.ipfs_minerprofile WHERE storage_key = $1";
+    let profile_cid: Option<String> = match sqlx::query_scalar::<_, String>(profile_query)
+        .bind(node_id)
+        .fetch_optional(&*state.session)
+        .await
+    {
+        Ok(cid) => cid,
+        Err(e) => {
+            eprintln!("Failed to fetch miner profile: {}", e);
+            return metrics;
+        }
+    };
+
+    match &profile_cid {
+        Some(cid) => println!("Found miner profile with CID: {}", cid),
+        None => println!("No profile found for miner node_id={}", node_id),
+    }
+
+    // Process profile if exists
+    if let Some(cid) = profile_cid {
+        match fetch_ipfs_content(state, &cid).await {
+            Ok(content) => {
+                println!("Successfully fetched profile content ({} bytes)", content.len());
+                if let Ok(pin_items) = serde_json::from_slice::<Vec<serde_json::Value>>(&content) {
+                    println!("Miner has {} pinned items in profile", pin_items.len());
+
+                    // Sample CIDs to verify
+                    let sample_size = std::cmp::min(cids_per_miner, pin_items.len());
+                    if sample_size > 0 {
+                        println!("Will verify {} CIDs from miner's profile", sample_size);
+
+                        // Get random indices for sampling
+                        let mut rng = rand::rngs::StdRng::from_entropy();
+                        let indices: Vec<usize> = (0..pin_items.len()).collect();
+                        let sampled_indices: Vec<usize> = indices
+                            .choose_multiple(&mut rng, sample_size)
+                            .cloned()
+                            .collect();
+
+                        // Process all CIDs in parallel with rate limiting
+                        let cid_checks = sampled_indices.iter().map(|idx| async {
+                            if let Some(file_hash) = pin_items[*idx].get("file_hash") {
+                                if file_hash.is_array() {
+                                    let file_hash_bytes: Vec<u8> = file_hash
+                                        .as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                        .collect();
+
+                                    if let Ok(cid_vec) = hex::decode(&file_hash_bytes) {
+                                        if let Ok(file_hash_str) = String::from_utf8(cid_vec.clone()) {
+                                            // Wait for rate limiter before each check
+                                            state.rate_limiter.until_ready().await;
+
+                                            println!("Verifying CID: {}", file_hash_str);
+                                            match check_cid_is_pinned(state, ipfs_node_id, &file_hash_str).await {
+                                                Ok(true) => {
+                                                    println!("✅ Verification SUCCESSFUL for CID {}", file_hash_str);
+                                                    return Some(true);
+                                                }
+                                                Ok(false) => {
+                                                    println!("❌ Verification FAILED for CID {}", file_hash_str);
+                                                    return Some(false);
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("⚠️ Verification ERROR for CID {}: {}", file_hash_str, e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            None
+                        });
+
+                        // Execute all CID checks concurrently
+                        let check_results: Vec<Option<bool>> = futures::future::join_all(cid_checks).await;
+                        
+                        // Update metrics based on results
+                        metrics.total_pin_checks += check_results.len() as u32;
+                        metrics.successful_pin_checks += check_results.iter().filter(|&r| r.unwrap_or(false)).count() as u32;
+                    }
+                }
+            }
+            Err(e) => eprintln!("Failed to fetch miner profile content: {}", e),
+        }
+    }
+
+    println!(
+        "Miner {} verification results: {}/{} successful checks",
+        node_id, metrics.successful_pin_checks, metrics.total_pin_checks
+    );
+    metrics
+}
 
 /// A comprehensive verification method that checks if a CID is pinned by a miner's IPFS node
 /// using multiple verification strategies.
