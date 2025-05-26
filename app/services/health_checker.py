@@ -2,16 +2,14 @@
 
 import asyncio
 import random
-from typing import List, Dict
+from typing import Dict
 
-from app.db.connection import get_db_pool
-from app.db.sql import load_query
 from app.services.ipfs_api import (
-    ping_ipfs_node,
+    BlockCheckResult,
     check_cid_is_provided,
     get_block_cids,
     get_child_cids,
-    BlockCheckResult,
+    ping_ipfs_node,
 )
 from app.utils.logging import logger
 
@@ -43,7 +41,7 @@ async def check_single_miner(miner) -> Dict:
     """
     # Extract required fields from miner profile
     ipfs_peer_id = miner.ipfs_peer_id
-    profile_cid = getattr(miner, 'profile_cid', None)
+    profile_cid = getattr(miner, "profile_cid", None)
 
     health_results = {
         "ipfs_peer_id": ipfs_peer_id,
@@ -60,7 +58,7 @@ async def check_single_miner(miner) -> Dict:
     # Step 1: Check if miner is online with ping
     ping_result = await ping_ipfs_node(ipfs_peer_id)
     health_results["ping_success"] = ping_result.success
-    health_results["ping_time_ms"] = ping_result.time_ms
+    health_results["ping_time_ms"] = ping_result.time_ms or 0.0
 
     # If ping fails, no need to continue with content verification
     if not ping_result.success:
@@ -113,78 +111,3 @@ async def verify_content_availability(ipfs_peer_id: str, cid: str) -> BlockCheck
     block_cids = await get_block_cids(cid)
     random_block = random.choice(block_cids)
     return await check_cid_is_provided(random_block, ipfs_peer_id)
-
-
-async def update_miner_health_metrics(health_results: List[Dict]):
-    """
-    Update miner health metrics in the database.
-
-    Args:
-        health_results: List of miner health check results
-    """
-    db_pool = get_db_pool()
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            for result in health_results:
-                node_id = result["node_id"]
-                is_online = result["is_online"]
-
-                # Extract content verification stats
-                content_verification = result.get("content_verification", {})
-                total_cids = content_verification.get("total_cids", 0)
-                successful_cids = content_verification.get("successful_cids", 0)
-
-                # Update miner_epoch_health table
-                await conn.execute(
-                    load_query("update_miner_epoch_health"),
-                    node_id,
-                    is_online,
-                    successful_cids,
-                    total_cids - successful_cids,
-                )
-
-                # Update miner_stats table
-                await conn.execute(
-                    load_query("update_miner_stats"),
-                    node_id,
-                    is_online,
-                    successful_cids,
-                    total_cids - successful_cids,
-                )
-
-                logger.info(f"Updated health metrics for miner {node_id}")
-
-    logger.info(f"Successfully updated health metrics for {len(health_results)} miners")
-
-
-async def get_offline_miners():
-    """
-    Get a list of miners that are offline.
-
-    Returns:
-        List of dictionaries with offline miner information
-    """
-    db_pool = get_db_pool()
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(load_query("get_offline_miners"))
-
-        offline_miners = []
-        for row in rows:
-            # Verify the miner is actually offline with a ping
-            ipfs_peer_id = row["ipfs_peer_id"]
-            if ipfs_peer_id:
-                ping_result = await ping_ipfs_node(ipfs_peer_id)
-
-                if not ping_result["success"]:
-                    offline_miners.append(
-                        {
-                            "node_id": row["node_id"],
-                            "ipfs_peer_id": ipfs_peer_id,
-                            "profile_cid": row["profile_cid"],
-                            "last_online_block": row["last_online_block"],
-                        }
-                    )
-                    logger.info(f"Confirmed offline miner: {row['node_id']}")
-
-        logger.info(f"Found {len(offline_miners)} offline miners")
-        return offline_miners

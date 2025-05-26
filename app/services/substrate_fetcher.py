@@ -11,6 +11,7 @@ STORAGE_MAPS_TO_FETCH = [
     ("IpfsPallet", "MinerTotalFilesSize"),
     ("IpfsPallet", "MinerTotalFilesPinned"),
     ("Registration", "NodeRegistration"),
+    ("Registration", "ColdkeyNodeRegistration"),
 ]
 
 # Single values are not maps but individual storage items

@@ -7,6 +7,7 @@ and ensuring consistency across validators.
 
 import json
 from typing import Dict, List, Optional
+
 from pydantic import BaseModel
 
 from app.services.substrate_client import fetch_current_block
@@ -24,9 +25,7 @@ class SyncStatus(BaseModel):
     actions_taken: List[str] = []
 
 
-async def detect_blockchain_conflicts(
-    local_data: Dict, blockchain_data: Dict
-) -> List[Dict]:
+async def detect_blockchain_conflicts(local_data: Dict, blockchain_data: Dict) -> List[Dict]:
     """
     Detect conflicts between local decisions and blockchain state.
 
@@ -41,9 +40,7 @@ async def detect_blockchain_conflicts(
 
     # Check miner profiles for conflicts
     local_miners = {m.node_id: m for m in local_data.get("miner_profiles", [])}
-    blockchain_miners = {
-        m.node_id: m for m in blockchain_data.get("miner_profiles", [])
-    }
+    blockchain_miners = {m.node_id: m for m in blockchain_data.get("miner_profiles", [])}
 
     # Check for miners that exist locally but not in blockchain
     for miner_id, local_miner in local_miners.items():
@@ -53,13 +50,13 @@ async def detect_blockchain_conflicts(
                     "type": "miner_missing_in_blockchain",
                     "miner_id": miner_id,
                     "local_data": local_miner,
-                }
+                },
             )
         else:
             # Check for profile CID conflicts
             blockchain_miner = blockchain_miners[miner_id]
-            local_cid = getattr(local_miner, 'profile_cid', None)
-            blockchain_cid = getattr(blockchain_miner, 'profile_cid', None)
+            local_cid = getattr(local_miner, "profile_cid", None)
+            blockchain_cid = getattr(blockchain_miner, "profile_cid", None)
             if local_cid != blockchain_cid:
                 conflicts.append(
                     {
@@ -67,17 +64,15 @@ async def detect_blockchain_conflicts(
                         "miner_id": miner_id,
                         "local_cid": local_cid,
                         "blockchain_cid": blockchain_cid,
-                    }
+                    },
                 )
 
     # Check storage requests for conflicts
     local_requests = {
-        (r.owner_account_id, r.file_hash): r
-        for r in local_data.get("storage_requests", [])
+        (r.owner_account_id, r.file_hash): r for r in local_data.get("storage_requests", [])
     }
     blockchain_requests = {
-        (r.owner_account_id, r.file_hash): r
-        for r in blockchain_data.get("storage_requests", [])
+        (r.owner_account_id, r.file_hash): r for r in blockchain_data.get("storage_requests", [])
     }
 
     # Check for requests that exist locally but not in blockchain
@@ -89,7 +84,7 @@ async def detect_blockchain_conflicts(
                     "owner": key[0],
                     "file_hash": key[1],
                     "local_data": local_request,
-                }
+                },
             )
 
     logger.info(f"Detected {len(conflicts)} conflicts with blockchain state")
@@ -115,12 +110,8 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
 
     # Categorize conflicts
     profile_conflicts = [c for c in conflicts if c["type"] == "miner_profile_conflict"]
-    missing_miners = [
-        c for c in conflicts if c["type"] == "miner_missing_in_blockchain"
-    ]
-    missing_requests = [
-        c for c in conflicts if c["type"] == "request_missing_in_blockchain"
-    ]
+    missing_miners = [c for c in conflicts if c["type"] == "miner_missing_in_blockchain"]
+    missing_requests = [c for c in conflicts if c["type"] == "request_missing_in_blockchain"]
 
     # Resolve each type of conflict
     resolved_count = 0
@@ -137,11 +128,21 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
                     miner_id = conflict["miner_id"]
                     blockchain_cid = conflict["blockchain_cid"]
 
+                    # Ensure we have valid values
+                    if not miner_id:
+                        logger.error(f"Invalid miner_id in conflict: {conflict}")
+                        continue
+                    if not blockchain_cid:
+                        logger.warning(
+                            f"Missing blockchain_cid for miner {miner_id}, using placeholder",
+                        )
+                        blockchain_cid = "missing"
+
                     # Update local profile to match blockchain
                     await conn.execute(
                         """
                         UPDATE miner_profile 
-                        SET file_hash = $1, updated_at = NOW(), sync_resolution = true
+                        SET file_hash = $1, updated_at = NOW()
                         WHERE miner_node_id = $2
                         """,
                         blockchain_cid,
@@ -150,7 +151,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
 
                     resolved_count += 1
                     status.actions_taken.append(
-                        f"Updated miner {miner_id} profile CID to match blockchain"
+                        f"Updated miner {miner_id} profile CID to match blockchain",
                     )
 
     # Handle missing miners - prepare submission for next epoch
@@ -162,7 +163,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
                     local_data = conflict["local_data"]
 
                     # Convert Pydantic object to JSON string for JSONB storage
-                    if hasattr(local_data, 'dict'):
+                    if hasattr(local_data, "dict"):
                         data_to_store = json.dumps(local_data.dict())
                     elif isinstance(local_data, dict):
                         data_to_store = json.dumps(local_data)
@@ -174,15 +175,16 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
                     await conn.execute(
                         "DELETE FROM pending_submissions WHERE node_id = $1 AND submission_type = $2",
                         miner_id,
-                        "miner_profile"
+                        "miner_profile",
                     )
                     # Then insert the new one
                     await conn.execute(
                         """
                         INSERT INTO pending_submissions
-                        (node_id, submission_type, data, created_at)
-                        VALUES ($1, $2, $3, NOW())
+                        (submission_id, node_id, submission_type, data, created_at)
+                        VALUES ($1, $2, $3, $4, NOW())
                         """,
+                        f"mp_{hash(f'{miner_id}_{blockchain_cid}') % 1000000}",  # Generate shorter unique submission_id
                         miner_id,
                         "miner_profile",
                         data_to_store,
@@ -190,7 +192,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
 
                     resolved_count += 1
                     status.actions_taken.append(
-                        f"Marked miner {miner_id} for submission in next epoch"
+                        f"Marked miner {miner_id} for submission in next epoch",
                     )
 
     # Handle missing requests - prepare submission for next epoch
@@ -203,7 +205,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
                     local_data = conflict["local_data"]
 
                     # Convert Pydantic object to JSON string for JSONB storage
-                    if hasattr(local_data, 'dict'):
+                    if hasattr(local_data, "dict"):
                         data_to_store = json.dumps(local_data.dict())
                     elif isinstance(local_data, dict):
                         data_to_store = json.dumps(local_data)
@@ -215,7 +217,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
                     await conn.execute(
                         "DELETE FROM pending_submissions WHERE submission_id = $1 AND submission_type = $2",
                         file_hash,
-                        "storage_request"
+                        "storage_request",
                     )
                     # Then insert the new one
                     await conn.execute(
@@ -232,7 +234,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
 
                     resolved_count += 1
                     status.actions_taken.append(
-                        f"Marked storage request {file_hash} for submission in next epoch"
+                        f"Marked storage request {file_hash} for submission in next epoch",
                     )
 
     # Update status
@@ -245,7 +247,7 @@ async def resolve_conflicts(conflicts: List[Dict], db_pool) -> SyncStatus:
 
 
 async def synchronize_with_blockchain(
-    local_data: Dict, blockchain_data: Dict, db_pool
+    local_data: Dict, blockchain_data: Dict, db_pool,
 ) -> SyncStatus:
     """
     Synchronize local validator decisions with blockchain state.
@@ -269,8 +271,7 @@ async def synchronize_with_blockchain(
         logger.info("Local state is in sync with blockchain")
     else:
         logger.warning(
-            f"Detected {status.conflicts_detected} conflicts, "
-            f"resolved {status.conflicts_resolved}"
+            f"Detected {status.conflicts_detected} conflicts, resolved {status.conflicts_resolved}",
         )
 
     return status

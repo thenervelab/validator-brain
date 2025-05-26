@@ -5,6 +5,7 @@ transaction management, retry logic, and rollback handling.
 """
 
 from typing import List, Optional
+
 from pydantic import BaseModel
 
 from app.utils.logging import logger
@@ -23,7 +24,7 @@ class SubmissionResult(BaseModel):
 
 
 async def submit_pending_data_to_blockchain(
-    db_pool, current_block: int, current_epoch: int
+    db_pool, current_block: int, current_epoch: int,
 ) -> SubmissionResult:
     """
     Submit pending data to blockchain with transaction management.
@@ -45,14 +46,12 @@ async def submit_pending_data_to_blockchain(
                 """
                 SELECT last_submission_epoch FROM epoch_tracking
                 WHERE id = 1
-                """
+                """,
             )
 
             # If we've already submitted in this epoch, skip
             if last_submission_epoch == current_epoch:
-                logger.info(
-                    f"Already submitted data for epoch {current_epoch}, skipping"
-                )
+                logger.info(f"Already submitted data for epoch {current_epoch}, skipping")
                 return result
 
             # Check for large number of pending submissions
@@ -60,14 +59,12 @@ async def submit_pending_data_to_blockchain(
                 """
                 SELECT COUNT(*) FROM pending_submissions
                 WHERE submitted = false
-                """
+                """,
             )
 
             # Use bulk processing for large datasets
             if pending_count > 1000:
-                logger.info(
-                    f"Using bulk processing for {pending_count} pending submissions"
-                )
+                logger.info(f"Using bulk processing for {pending_count} pending submissions")
 
                 # Define function to fetch submissions in chunks
                 async def fetch_submissions_chunk(offset, limit):
@@ -89,9 +86,7 @@ async def submit_pending_data_to_blockchain(
                 for offset in range(0, pending_count, 500):
                     chunk = await fetch_submissions_chunk(offset, 500)
                     submissions.extend(chunk)
-                    logger.info(
-                        f"Fetched {len(submissions)}/{pending_count} pending submissions"
-                    )
+                    logger.info(f"Fetched {len(submissions)}/{pending_count} pending submissions")
             else:
                 # Fetch all submissions at once for smaller datasets
                 pending_submissions = await conn.fetch(
@@ -99,7 +94,7 @@ async def submit_pending_data_to_blockchain(
                     SELECT id, submission_id, node_id, owner_id, submission_type, data
                     FROM pending_submissions
                     WHERE submitted = false
-                    """
+                    """,
                 )
 
                 # Convert to list of dictionaries
@@ -123,46 +118,119 @@ async def submit_pending_data_to_blockchain(
 
                 return result
 
-            logger.info(
-                f"Found {len(submissions)} pending submissions for epoch {current_epoch}"
-            )
+            logger.info(f"Found {len(submissions)} pending submissions for epoch {current_epoch}")
 
-            # Define submission function for batch processing
-            async def submit_to_blockchain(submission):
+            # Define submission function with transaction safety
+            async def submit_to_blockchain_with_transaction(submission):
+                """Submit to blockchain with database transaction safety."""
+                submission_id = submission["id"]
                 submission_type = submission["submission_type"]
-                data = submission["data"]
+
+                # Start a nested transaction for this submission
+                async with conn.transaction():
+                    try:
+                        # Step 1: Mark as being processed (prevents double-processing)
+                        await conn.execute(
+                            """
+                            UPDATE pending_submissions 
+                            SET processing = true, processing_started_at = NOW()
+                            WHERE id = $1 AND submitted = false AND processing = false
+                            """,
+                            submission_id,
+                        )
+
+                        # Check if we actually updated a row (prevents race conditions)
+                        updated_count = await conn.fetchval(
+                            "SELECT COUNT(*) FROM pending_submissions WHERE id = $1 AND processing = true",
+                            submission_id,
+                        )
+
+                        if updated_count == 0:
+                            logger.warning(
+                                f"Submission {submission_id} already being processed or submitted",
+                            )
+                            return None
+
+                        # Step 2: Submit to blockchain (this is where real submission would happen)
+                        blockchain_tx_hash = await submit_to_blockchain_real(submission)
+
+                        if not blockchain_tx_hash:
+                            # Blockchain submission failed, rollback database changes
+                            await conn.execute(
+                                """
+                                UPDATE pending_submissions 
+                                SET processing = false, processing_started_at = NULL,
+                                    error_message = 'Blockchain submission failed'
+                                WHERE id = $1
+                                """,
+                                submission_id,
+                            )
+                            logger.error(f"Blockchain submission failed for {submission_id}")
+                            return None
+
+                        # Step 3: Mark as successfully submitted in database
+                        await conn.execute(
+                            """
+                            UPDATE pending_submissions 
+                            SET submitted = true, transaction_hash = $2, submitted_at = NOW(),
+                                processing = false
+                            WHERE id = $1
+                            """,
+                            submission_id,
+                            blockchain_tx_hash,
+                        )
+
+                        logger.info(
+                            f"Successfully submitted {submission_type} {submission_id} with tx hash: {blockchain_tx_hash}",
+                        )
+                        return blockchain_tx_hash
+
+                    except Exception as e:
+                        # Any error causes the entire transaction to rollback
+                        logger.error(f"Transaction failed for submission {submission_id}: {e}")
+                        # The transaction rollback happens automatically
+                        return None
+
+            async def submit_to_blockchain_real(submission):
+                """Actual blockchain submission logic - replace with real Substrate calls."""
+                submission_type = submission["submission_type"]
 
                 # Different submission logic based on type
                 if submission_type == "miner_profile":
-                    # Example of submitting miner profile
-                    # This would call the appropriate substrate method
                     logger.info(f"Submitting miner profile for {submission['node_id']}")
-                    # Return a mock transaction hash for this example
-                    return f"0x{submission['id']:032x}"
+                    # TODO: Replace with actual substrate call
+                    # tx_hash = await substrate_client.submit_miner_profile(data)
+                    # For now, simulate success/failure
+                    import random
 
-                elif submission_type == "storage_request":
-                    # Example of submitting storage request
-                    logger.info(
-                        f"Submitting storage request for {submission['owner_id']}"
-                    )
-                    # Return a mock transaction hash for this example
-                    return f"0x{submission['id']:032x}"
+                    if random.random() > 0.1:  # 90% success rate for testing
+                        return f"0x{submission['id']:032x}real"
+                    return None  # Simulate failure
+
+                if submission_type == "storage_request":
+                    logger.info(f"Submitting storage request for {submission['owner_id']}")
+                    # TODO: Replace with actual substrate call
+                    # tx_hash = await substrate_client.submit_storage_request(data)
+                    import random
+
+                    if random.random() > 0.1:  # 90% success rate for testing
+                        return f"0x{submission['id']:032x}real"
+                    return None  # Simulate failure
 
                 # For unknown types, return None
+                logger.warning(f"Unknown submission type: {submission_type}")
                 return None
 
             # Define rollback function
             async def rollback_submission(submission):
                 submission_type = submission["submission_type"]
-                logger.warning(
-                    f"Rolling back {submission_type} submission {submission['id']}"
-                )
+                logger.warning(f"Rolling back {submission_type} submission {submission['id']}")
                 # In a real implementation, this would call the appropriate rollback logic
                 return True
 
             # Submit transactions with retry and rollback
             transaction_results = await batch_submit(
-                submissions, submit_to_blockchain, max_batch_size=5, max_retries=3
+                submissions, submit_to_blockchain, max_batch_size=5, max_retries=3,
             )
 
             # Process results
@@ -186,13 +254,13 @@ async def submit_pending_data_to_blockchain(
                         failed += 1
                         logger.error(
                             f"Failed to submit {submission['submission_type']} "
-                            f"(ID: {submission['id']}): {tx_result.error_message}"
+                            f"(ID: {submission['id']}): {tx_result.error_message}",
                         )
 
                 # Use bulk update for successful submissions
                 if successful_submissions:
                     logger.info(
-                        f"Updating {len(successful_submissions)} successful submissions with bulk update"
+                        f"Updating {len(successful_submissions)} successful submissions with bulk update",
                     )
 
                     # Use a temporary table for more efficient updates with many records
@@ -201,7 +269,7 @@ async def submit_pending_data_to_blockchain(
                         CREATE TEMP TABLE successful_submissions (
                             id INTEGER PRIMARY KEY
                         )
-                        """
+                        """,
                     )
 
                     # Insert submission IDs in batches
@@ -209,7 +277,7 @@ async def submit_pending_data_to_blockchain(
                         batch = successful_submissions[i : i + 500]
                         values = ", ".join([f"({s['id']})" for s in batch])
                         await conn.execute(
-                            f"INSERT INTO successful_submissions (id) VALUES {values}"
+                            f"INSERT INTO successful_submissions (id) VALUES {values}",
                         )
 
                     # Update all submissions in one query
@@ -252,7 +320,7 @@ async def submit_pending_data_to_blockchain(
                         failed += 1
                         logger.error(
                             f"Failed to submit {submission['submission_type']} "
-                            f"(ID: {submission['id']}): {tx_result.error_message}"
+                            f"(ID: {submission['id']}): {tx_result.error_message}",
                         )
 
             # Update result
@@ -273,7 +341,7 @@ async def submit_pending_data_to_blockchain(
 
             logger.info(
                 f"Blockchain submission for epoch {current_epoch} completed: "
-                f"{successful}/{len(submissions)} successful"
+                f"{successful}/{len(submissions)} successful",
             )
 
     return result

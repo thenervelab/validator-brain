@@ -3,11 +3,4 @@
 -- name: clear_epoch_data
 -- Clear temporary tables containing epoch-specific data
 TRUNCATE TABLE miner_epoch_health;
-TRUNCATE TABLE pending_pool;
--- Reset miner status for new assignment
-UPDATE miner_stats SET 
-    is_online = false,
-    last_health_check = NULL,
-    pin_success_count = 0,
-    pin_failure_count = 0
-WHERE true;
+TRUNCATE TABLE storage_requests;

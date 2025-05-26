@@ -8,9 +8,9 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-from app.db.connection import get_db_pool, init_db_pool, close_db_pool
-from app.services.substrate_client import init_substrate_client, close_substrate_client
-from app.utils.logging import logger, configure_logging
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
+from app.services.substrate_client import close_substrate_client, init_substrate_client
+from app.utils.logging import configure_logging, logger
 from substrate_fetcher.health_monitor import HealthCheck
 from substrate_fetcher.monitoring import initialize_monitoring, shutdown_monitoring
 from substrate_fetcher.validator_workflow import start_validator, stop_validator
@@ -33,7 +33,7 @@ async def main(validator_account_id: Optional[str] = None):
 
     if not account_id:
         logger.error(
-            "No validator account ID provided. Set VALIDATOR_ACCOUNT_ID environment variable."
+            "No validator account ID provided. Set VALIDATOR_ACCOUNT_ID environment variable.",
         )
         return
 

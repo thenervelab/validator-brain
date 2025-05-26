@@ -36,32 +36,6 @@ async def init_db_pool():
     return db_pool
 
 
-async def check_tables_exist():
-    """Check if essential tables exist and warn if they don't."""
-    try:
-        global db_pool
-        async with db_pool.acquire() as conn:
-            # Check if latest_block table exists
-            table_exists = await conn.fetchval("""
-                SELECT EXISTS(
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'latest_block'
-                )
-                """)
-
-            if not table_exists:
-                logger.warning("Database schema not initialized! Tables missing.")
-                logger.warning(
-                    "Please run migrations using dbmate before starting the application."
-                )
-            else:
-                logger.info("Database schema exists")
-
-    except Exception as e:
-        logger.error(f"Error checking database schema: {e}")
-        raise
-
-
 async def close_db_pool():
     """Close the global database pool if it exists."""
     global db_pool

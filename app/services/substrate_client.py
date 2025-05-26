@@ -2,12 +2,12 @@
 
 import asyncio
 import os
+from typing import Any
 
 from pydantic import BaseModel
 from substrateinterface import SubstrateInterface
 
 from app.utils.logging import logger
-from typing import Any
 
 # Type registry for Hippius/IPFS network (exact same as working version)
 TYPE_REGISTRY = {
@@ -84,7 +84,7 @@ TYPE_REGISTRY = {
                 ["disk_info", "Vec<DiskDetails>"],
             ],
         },
-    }
+    },
 }
 
 
@@ -95,18 +95,18 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
         if isinstance(bounded_vec, (list, tuple)) and all(isinstance(x, int) for x in bounded_vec):
             logger.debug(f"BoundedVec is list of integers: {bounded_vec}")
             byte_data = bytes(bounded_vec)
-            return byte_data.decode('utf-8')
+            return byte_data.decode("utf-8")
 
         # Handle bytes directly
-        elif isinstance(bounded_vec, bytes):
+        if isinstance(bounded_vec, bytes):
             logger.debug(f"BoundedVec is bytes: {bounded_vec}")
-            return bounded_vec.decode('utf-8')
+            return bounded_vec.decode("utf-8")
 
         # Handle string input
-        elif isinstance(bounded_vec, str):
+        if isinstance(bounded_vec, str):
             logger.debug(f"BoundedVec is string: {bounded_vec}")
             try:
-                return bytes.fromhex(bounded_vec).decode('utf-8')
+                return bytes.fromhex(bounded_vec).decode("utf-8")
             except ValueError:
                 # logger.warning(f"Invalid hex string format: {bounded_vec}, returning as string")
                 return bounded_vec
@@ -157,8 +157,7 @@ class SubstrateClient:
             await self.connect()
 
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, lambda: query_fn(*args, **kwargs))
-        return result
+        return await loop.run_in_executor(None, lambda: query_fn(*args, **kwargs))
 
     async def _fetch_all_storage_and_filter(self, module, function, block_hash=None):
         """
@@ -168,9 +167,7 @@ class SubstrateClient:
         if not self.connected:
             await self.connect()
 
-        logger.info(
-            f"Fetching entire storage for block {block_hash} to filter {module}.{function}"
-        )
+        logger.info(f"Fetching entire storage for block {block_hash} to filter {module}.{function}")
 
         # First, get the storage key prefix for IpfsPallet::UserStorageRequests
         # Substrate uses two x128 hash for pallet and storage function names
@@ -197,9 +194,7 @@ class SubstrateClient:
         )
 
         if "error" in values_result:
-            raise RuntimeError(
-                f"Error fetching storage values: {values_result['error']}"
-            )
+            raise RuntimeError(f"Error fetching storage values: {values_result['error']}")
 
         # Process the results without complex decoding - mimic query_map format
         processed_results = []
@@ -208,27 +203,25 @@ class SubstrateClient:
             for change in result_group["changes"]:
                 storage_key_hex = change[0]
                 value_hex = change[1]
-                
-                if value_hex and value_hex != '0x':  # Skip empty values
-                    # Extract the double map keys from the storage key  
+
+                if value_hex and value_hex != "0x":  # Skip empty values
+                    # Extract the double map keys from the storage key
                     decoded_keys = self._decode_double_map_storage_key(
-                        storage_key_hex, storage_prefix
+                        storage_key_hex, storage_prefix,
                     )
-                    
+
                     # Create a simple value object that mimics what substrate returns
                     # We'll let the downstream processing handle the conversion
                     class SimpleValue:
                         def __init__(self, hex_data):
                             self.value = hex_data
-                            
+
                     value_obj = SimpleValue(value_hex)
-                    
+
                     # Return in query_map format: (key_tuple, value_obj)
                     processed_results.append((decoded_keys, value_obj))
 
-        logger.info(
-            f"Successfully processed {len(processed_results)} {module}.{function} entries"
-        )
+        logger.info(f"Successfully processed {len(processed_results)} {module}.{function} entries")
         return processed_results
 
     def _get_storage_key_prefix(self, module, function):
@@ -255,13 +248,12 @@ class SubstrateClient:
         # Skip the hash prefix (next 32 hex chars for blake2b_256 hasher) and get file hash
         file_hash_data = key_data_hex[96:]
 
-        # Convert hex to bytes for file hash
-        file_hash_bytes = bytes.fromhex(file_hash_data)
-        file_hash = file_hash_bytes.decode("utf-8", errors="ignore").rstrip("\x00")
+        # Convert file hash using bounded_vec_to_string
+        file_hash = bounded_vec_to_string(file_hash_data)
 
         return (account_id_hex, file_hash)
 
-    async def query_storage_map(self, module, function, block_hash=None, **kwargs):
+    async def query_storage_map(self, module, function, block_hash=None, **_kwargs):
         """
         Query chain storage map (collection).
 
@@ -294,11 +286,7 @@ class SubstrateClient:
         processed_result = []
         for key_storage_obj, value_storage_obj in result:
             # Convert ScaleType objects to Python dictionaries where possible
-            key = (
-                key_storage_obj.value
-                if hasattr(key_storage_obj, "value")
-                else key_storage_obj
-            )
+            key = key_storage_obj.value if hasattr(key_storage_obj, "value") else key_storage_obj
             value = (
                 value_storage_obj.value
                 if hasattr(value_storage_obj, "value")
@@ -308,22 +296,21 @@ class SubstrateClient:
             # Special handling for UserStorageRequests double map keys (like working version)
             if module == "IpfsPallet" and function == "UserStorageRequests":
                 # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
-                if (
-                    isinstance(key_storage_obj, (tuple, list))
-                    and len(key_storage_obj) == 2
-                ):
+                if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
                     owner_account_id = str(key_storage_obj[0])  # SS58 address
-                    file_hash = bounded_vec_to_string(key_storage_obj[1])  # Convert BoundedVec to string
+                    file_hash = str(
+                        key_storage_obj[1],
+                    )  # Already converted in _decode_double_map_storage_key
                     key = (owner_account_id, file_hash)
                     logger.debug(f"UserStorageRequests key: {key}, value: {value}")
                 else:
-                    logger.warning(f"Unexpected key format for UserStorageRequests: {key_storage_obj}")
+                    logger.warning(
+                        f"Unexpected key format for UserStorageRequests: {key_storage_obj}",
+                    )
 
             processed_result.append((key, value))
 
-        logger.info(
-            f"Found {len(processed_result)} results for map {module}.{function}"
-        )
+        logger.info(f"Found {len(processed_result)} results for map {module}.{function}")
         return processed_result
 
     async def query_storage_value(self, module, function, block_hash=None, **kwargs):

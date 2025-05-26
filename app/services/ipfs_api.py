@@ -42,16 +42,39 @@ async def ping_ipfs_node(ipfs_peer_id: str) -> PingCheckResult:
             response = await client.post(api_url, params=params)
 
             if response.status_code == 200:
-                for line in response.text.splitlines():
+                response_text = response.text.strip()
+                logger.info(f"Ping response for {ipfs_peer_id}: {response_text}")
+
+                for line in response_text.splitlines():
                     if not line.strip():
                         continue
 
-                    data = json.loads(line)
-                    if data.get("Success"):
-                        return PingCheckResult(
-                            success=True,
-                            time_ms=data.get("Time", 0.0),
-                        )
+                    try:
+                        data = json.loads(line)
+                        logger.debug(f"Parsed ping data: {data}")
+
+                        # Check for success in the response
+                        if data.get("Success") is True:
+                            # Try different possible field names for timing
+                            time_ms = (
+                                data.get("Time")
+                                or data.get("time")
+                                or data.get("RTT")
+                                or data.get("rtt")
+                            )
+                            if time_ms is None:
+                                # Look for timing in nanoseconds and convert
+                                time_ns = data.get("time_ns") or data.get("Time_ns")
+                                if time_ns:
+                                    time_ms = time_ns / 1_000_000  # Convert ns to ms
+
+                            return PingCheckResult(
+                                success=True,
+                                time_ms=time_ms or 0.0,
+                            )
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"Failed to parse ping response line: {line}, error: {e}")
+                        continue
 
     except httpx.ReadTimeout:
         logger.warning(f"Timeout pinging {ipfs_peer_id}")
@@ -86,7 +109,7 @@ async def check_cid_is_provided(cid: str, ipfs_peer_id: str) -> BlockCheckResult
             response = await client.post(routing_url, params=params)
             response_lines = response.text.splitlines()
 
-            for line_idx, line in enumerate(response_lines):
+            for _line_idx, line in enumerate(response_lines):
                 if not line.strip():
                     continue
 
@@ -221,7 +244,7 @@ async def upload_json_to_ipfs(
     try:
         # Prepare the JSON data
         if file_path:
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 json_str = f.read()
             filename = os.path.basename(file_path)
         elif data is not None:
@@ -240,15 +263,13 @@ async def upload_json_to_ipfs(
             f"Content-Type: application/json\r\n\r\n"
             f"{json_str}\r\n"
             f"--{boundary}--\r\n"
-        ).encode("utf-8")
+        ).encode()
 
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
 
         # Execute the request
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url, headers=headers, content=body, timeout=timeout
-            )
+            response = await client.post(url, headers=headers, content=body, timeout=timeout)
 
             if not response.is_success:
                 error_text = response.text
@@ -315,17 +336,17 @@ async def get_file_size(cid: str) -> Optional[int]:
         The file size in bytes, or None if the file could not be found
     """
     ipfs_node_url = get_ipfs_node_url()
-    stat_url = f"{ipfs_node_url}/api/v0/object/stat"
+    stat_url = f"{ipfs_node_url}/api/v0/files/stat"
     timeout = get_ipfs_timeout("fetch")
-    params = {"arg": cid}
+    params = {"arg": f"/ipfs/{cid}"}
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(stat_url, params=params)
             response.raise_for_status()
-            
+
             data = response.json()
-            return data.get("CumulativeSize") or data.get("Size")
+            return data.get("Size")
     except Exception as e:
         logger.error(f"Error getting file size for CID {cid}: {e}")
         return None

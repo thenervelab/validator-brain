@@ -1,4 +1,4 @@
-1# Ruff configuration file
+# Ruff configuration file
 line-length = 100
 
 [format]
