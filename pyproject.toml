@@ -21,15 +21,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "asyncpg>=0.28.0",
-    "httpx>=0.24.0", 
-    "python-dotenv>=1.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "aiofiles>=23.0.0",
-    "substrate-interface>=1.7.0",
-    "websockets>=11.0.0",
-    "psutil>=5.9.0",
+    "asyncpg",
+    "httpx",
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    "aiofiles",
+    "substrate-interface",
+    "websockets",
+    "psutil",
 ]
 
 [project.optional-dependencies]
