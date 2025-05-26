@@ -302,3 +302,30 @@ async def get_child_cids(cid: str) -> List[str]:
         cids.append(cid)
 
     return cids
+
+
+async def get_file_size(cid: str) -> Optional[int]:
+    """
+    Get the size of a file in IPFS by its CID.
+
+    Args:
+        cid: The CID to get the size for
+
+    Returns:
+        The file size in bytes, or None if the file could not be found
+    """
+    ipfs_node_url = get_ipfs_node_url()
+    stat_url = f"{ipfs_node_url}/api/v0/object/stat"
+    timeout = get_ipfs_timeout("fetch")
+    params = {"arg": cid}
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(stat_url, params=params)
+            response.raise_for_status()
+            
+            data = response.json()
+            return data.get("CumulativeSize") or data.get("Size")
+    except Exception as e:
+        logger.error(f"Error getting file size for CID {cid}: {e}")
+        return None

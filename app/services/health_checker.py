@@ -31,19 +31,19 @@ async def check_miner_health(miners: list):
     return results
 
 
-async def check_single_miner(miner: Dict) -> Dict:
+async def check_single_miner(miner) -> Dict:
     """
     Check health for a single miner and return results.
 
     Args:
-        miner: Dictionary with miner information
+        miner: MinerProfile Pydantic object
 
     Returns:
         Dictionary with health check results
     """
     # Extract required fields from miner profile
-    ipfs_peer_id = miner["ipfs_peer_id"]
-    profile_cid = miner.get("profile_cid")
+    ipfs_peer_id = miner.ipfs_peer_id
+    profile_cid = getattr(miner, 'profile_cid', None)
 
     health_results = {
         "ipfs_peer_id": ipfs_peer_id,

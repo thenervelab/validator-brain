@@ -29,7 +29,7 @@ WORKDIR /app
 # Copy pyproject.toml
 COPY pyproject.toml .
 
-RUN pip install --no-cache-dir . uvicorn[standard] watchfiles
+RUN pip install --no-cache-dir .
 
 # Copy project files (in a specific order to ensure migrations are included)
 COPY db/migrations/ /app/db/migrations/
@@ -42,8 +42,7 @@ COPY . .
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Expose port
-EXPOSE 8000
+# No port needed for validator-only mode
 
 # Set entrypoint
 ENTRYPOINT ["/app/start.sh"]

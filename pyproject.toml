@@ -20,8 +20,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
     "asyncpg",
     "httpx",
     "python-dotenv",
@@ -30,6 +28,8 @@ dependencies = [
     "aiofiles",
     "substrate-interface",
     "websockets",
+    "psutil",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]

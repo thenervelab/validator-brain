@@ -17,6 +17,8 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - ipfs_network
 
   postgres:
     image: postgres:17
@@ -35,42 +37,31 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - ipfs_network
 
-  validator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ipfs-validator
+  dbmate:
+    image: ghcr.io/amacneil/dbmate
+    container_name: dbmate-migrations
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - DBMATE_MIGRATIONS_DIR=/db/migrations
+    volumes:
+      - ./db/migrations:/db/migrations
+    networks:
+      - ipfs_network
     depends_on:
-      ipfs:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    environment:
-      - IPFS_NODE_URL=http://ipfs:5001
-      - IPFS_GATEWAY_URL=http://ipfs:8080
-      - NODE_URL=${NODE_URL:-wss://rpc.hippius.network}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-user}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-      - POSTGRES_DB=${POSTGRES_DB:-substrate_fetcher}
-      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
-      - KEYSTORE_PATH=${KEYSTORE_PATH:-/app/keystore}
-      - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID:-test_validator}
-      - EPOCH_BLOCK_INTERVAL=${EPOCH_BLOCK_INTERVAL:-100}
-      - ALWAYS_VALIDATE=1
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-      - keystore_data:/app/keystore
-    restart: unless-stopped
+    command: ["up"]
+    restart: "no"
 
 volumes:
   ipfs_data:
     name: ipfs-data
   postgres_data:
     name: postgres-data
-  keystore_data:
-    name: keystore-data
+
+networks:
+  ipfs_network:
+    driver: bridge
