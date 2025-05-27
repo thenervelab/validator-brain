@@ -80,4 +80,32 @@ spec:
         envFrom:
         - configMapRef:
             name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miner-profile-reconstruction-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: miner-profile-reconstruction-consumer
+  template:
+    metadata:
+      labels:
+        app: miner-profile-reconstruction-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/miner_profile_reconstruction_consumer.py"]
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
         workingDir: /app 

@@ -299,6 +299,28 @@ data:
     TRIGGER update_node_metrics_updated_at BEFORE UPDATE ON node_metrics\n    FOR
     EACH ROW EXECUTE FUNCTION update_updated_at_column();\n\n-- migrate:down\nDROP
     TABLE IF EXISTS node_metrics; "
+  20250527160800_add_pending_miner_profile_table.sql: "-- migrate:up\nCREATE TABLE
+    IF NOT EXISTS pending_miner_profile (\n    id SERIAL PRIMARY KEY,\n    cid TEXT
+    NOT NULL UNIQUE,\n    node_id TEXT NOT NULL,\n    created_at TIMESTAMP WITH TIME
+    ZONE DEFAULT CURRENT_TIMESTAMP,\n    published_at TIMESTAMP WITH TIME ZONE,\n
+    \   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'published', 'failed')),\n
+    \   error_message TEXT\n);\n\n-- Create indexes\nCREATE INDEX idx_pending_miner_profile_node_id
+    ON pending_miner_profile(node_id);\nCREATE INDEX idx_pending_miner_profile_status
+    ON pending_miner_profile(status);\nCREATE INDEX idx_pending_miner_profile_created_at
+    ON pending_miner_profile(created_at);\n\n-- migrate:down\nDROP TABLE IF EXISTS
+    pending_miner_profile; "
+  20250527170000_add_files_count_and_size_to_pending_miner_profile.sql: "-- migrate:up\nALTER
+    TABLE pending_miner_profile \nADD COLUMN files_count INTEGER DEFAULT 0,\nADD COLUMN
+    files_size BIGINT DEFAULT 0;\n\n-- Create indexes for the new columns\nCREATE
+    INDEX idx_pending_miner_profile_files_count ON pending_miner_profile(files_count);\nCREATE
+    INDEX idx_pending_miner_profile_files_size ON pending_miner_profile(files_size);\n\n--
+    migrate:down\nALTER TABLE pending_miner_profile \nDROP COLUMN IF EXISTS files_count,\nDROP
+    COLUMN IF EXISTS files_size; "
+  20250527171000_add_block_number_to_pending_miner_profile.sql: "-- migrate:up\nALTER
+    TABLE pending_miner_profile \nADD COLUMN block_number BIGINT DEFAULT 0;\n\n--
+    Create index for the new column\nCREATE INDEX idx_pending_miner_profile_block_number
+    ON pending_miner_profile(block_number);\n\n-- migrate:down\nALTER TABLE pending_miner_profile
+    \nDROP COLUMN IF EXISTS block_number; "
 kind: ConfigMap
 metadata:
   creationTimestamp: null
