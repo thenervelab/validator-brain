@@ -44,7 +44,7 @@ class MinerProfileReconstructionConsumer:
         """Initialize HTTP client for IPFS requests"""
         self.http_client = httpx.AsyncClient(timeout=30.0)
     
-    async def get_file_owner(self, cid: str) -> str:
+    async def get_file_owner(self, cid: str) -> Optional[str]:
         """Get the owner of a file from file_assignments table"""
         try:
             from app.db.connection import get_db_pool
@@ -57,11 +57,11 @@ class MinerProfileReconstructionConsumer:
                 if row and row['owner']:
                     return row['owner']
                 else:
-                    # Return a default owner if not found
-                    return "5GeakAuWoJDYhcGCXoQaqsGGTF7BSdef1hmCraNvpHGL33zB"
+                    logger.warning(f"No owner found for CID {cid} in file_assignments table")
+                    return None
         except Exception as e:
-            logger.warning(f"Could not fetch owner for CID {cid}: {e}")
-            return "5GeakAuWoJDYhcGCXoQaqsGGTF7BSdef1hmCraNvpHGL33zB"
+            logger.error(f"Could not fetch owner for CID {cid}: {e}")
+            return None
     
     async def connect_rabbitmq(self):
         """Connect to RabbitMQ"""
@@ -82,8 +82,10 @@ class MinerProfileReconstructionConsumer:
         node_id = message_data['node_id']
         block_number = message_data.get('block_number', 0)
         
-        # Get validator address from environment or use default
-        selected_validator = os.getenv('VALIDATOR_ACCOUNT_ID', '5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g')
+        # Get validator address from environment - REQUIRED
+        selected_validator = os.getenv('VALIDATOR_ACCOUNT_ID')
+        if not selected_validator:
+            raise ValueError("VALIDATOR_ACCOUNT_ID environment variable is required but not set")
         
         # Build the profile as an array of file objects
         profile_files = []
@@ -96,6 +98,11 @@ class MinerProfileReconstructionConsumer:
             
             # Get the actual owner from file_assignments table
             owner = await self.get_file_owner(cid)
+            
+            # Skip files without owners to prevent incorrect charging
+            if not owner:
+                logger.warning(f"Skipping file {cid} - no owner found, cannot include in miner profile")
+                continue
             
             file_entry = {
                 "created_at": block_number,

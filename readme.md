@@ -114,6 +114,10 @@ python rabbitmq/miner_profile_reconstruction_consumer.py
 - Set `MINER_PROFILE_BATCH_SIZE=100` to process 100 miners at a time
 - Set `MINER_PROFILE_BATCH_SIZE=500` to process 500 miners at a time
 
+**Important Security Notes:**
+- Files without owners in `file_assignments` table are **skipped** to prevent incorrect billing
+- `VALIDATOR_ACCOUNT_ID` environment variable is **required** - no default fallback to prevent incorrect validator assignments
+
 The processor will skip miners that:
 - Have no files assigned in the `file_assignments` table
 - Already have published profiles in the `pending_miner_profile` table
@@ -134,6 +138,9 @@ python rabbitmq/user_profile_reconstruction_consumer.py
 - Set `USER_PROFILE_BATCH_SIZE=0` to process ALL eligible users (default in Kubernetes)
 - Set `USER_PROFILE_BATCH_SIZE=100` to process 100 users at a time
 - Set `USER_PROFILE_BATCH_SIZE=500` to process 500 users at a time
+
+**Important Security Notes:**
+- `VALIDATOR_ACCOUNT_ID` environment variable is **required** - no default fallback to prevent incorrect validator assignments
 
 The processor will skip users that:
 - Have no files assigned in the `file_assignments` table
