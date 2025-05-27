@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-profile-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-profile-consumer
+  template:
+    metadata:
+      labels:
+        app: user-profile-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never  # For local development with minikube
+        command: ["python", "rabbitmq/user_profile_consumer.py"]
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinning-request-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pinning-request-consumer
+  template:
+    metadata:
+      labels:
+        app: pinning-request-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/pinning_request_consumer.py"]
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-metrics-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-metrics-consumer
+  template:
+    metadata:
+      labels:
+        app: node-metrics-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/node_metrics_consumer.py"]
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app 
