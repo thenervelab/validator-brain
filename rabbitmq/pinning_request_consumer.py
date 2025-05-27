@@ -109,7 +109,7 @@ class PinningRequestConsumer:
         owner = request_data.get('owner')
         
         if not request_hash or not owner:
-            logger.error(f"Invalid request data: missing request_hash or owner")
+            logger.error(f"Invalid request data: missing request_hash or owner. Data: {request_data}")
             return False
         
         logger.info(f"Processing pinning request: {owner} -> {request_hash[:16]}...")
@@ -131,8 +131,10 @@ class PinningRequestConsumer:
             file_hash_hex = request_data.get('file_hash', '')
             file_cid = hex_to_string(file_hash_hex) if file_hash_hex else ''
             
-            # Extract miner IDs
+            # Extract miner IDs - handle None case
             miner_ids = request_data.get('miner_ids', [])
+            if miner_ids is None:
+                miner_ids = []
             miner_count = len(miner_ids)
             
             async with self.db_pool.acquire() as conn:
@@ -197,7 +199,8 @@ class PinningRequestConsumer:
                 return True
                 
         except Exception as e:
-            logger.error(f"Error processing pinning request: {e}")
+            logger.error(f"Error processing pinning request for {owner} (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")
+            logger.exception("Full traceback:")
             return False
     
     async def process_message(self, message: aio_pika.IncomingMessage):
@@ -211,14 +214,21 @@ class PinningRequestConsumer:
             try:
                 # Parse message body
                 data = json.loads(message.body.decode())
+                logger.debug(f"Processing message: {json.dumps(data, indent=2)}")
                 
                 # Process the pinning request
                 success = await self.process_pinning_request(data)
                 
                 if not success:
                     # Reject and requeue if processing failed
-                    raise Exception("Failed to process pinning request")
+                    request_hash = data.get('request_hash', 'unknown')
+                    owner = data.get('owner', 'unknown')
+                    raise Exception(f"Failed to process pinning request for owner {owner}, hash {request_hash[:16] if request_hash != 'unknown' else 'unknown'}...")
                 
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in message: {e}")
+                # Don't requeue invalid JSON messages
+                return
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
                 # Message will be requeued due to the exception
