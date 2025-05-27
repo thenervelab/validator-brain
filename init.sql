@@ -120,11 +120,22 @@ CREATE TABLE IF NOT EXISTS miner_stats (
     FOREIGN KEY (node_id) REFERENCES registration(node_id) ON DELETE CASCADE
 );
 
+-- Files table: stores information about files in the IPFS network
+CREATE TABLE IF NOT EXISTS files (
+    id SERIAL PRIMARY KEY,
+    cid VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    size BIGINT NOT NULL,
+    created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for frequent query patterns
 CREATE INDEX idx_miner_epoch_health_epoch ON miner_epoch_health(epoch);
 CREATE INDEX idx_miner_profile_miner ON miner_profile(miner_node_id);
 CREATE INDEX idx_storage_requests_status ON storage_requests(status);
 CREATE INDEX idx_registration_node_type ON registration(node_type);
+CREATE INDEX idx_files_cid ON files(cid);
+CREATE INDEX idx_files_created_date ON files(created_date);
 
 -- Functions to update timestamps automatically
 CREATE OR REPLACE FUNCTION update_timestamp()
