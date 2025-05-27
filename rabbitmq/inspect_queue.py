@@ -56,12 +56,17 @@ async def inspect_queue(queue_name: str = 'user_profile'):
 
 async def main():
     """Main entry point."""
+    import sys
+    
+    # Get queue name from command line argument
+    queue_name = sys.argv[1] if len(sys.argv) > 1 else 'user_profile'
+    
     print("=" * 60)
     print("RABBITMQ QUEUE INSPECTOR")
     print("=" * 60)
     print()
     
-    await inspect_queue('user_profile')
+    await inspect_queue(queue_name)
 
 
 if __name__ == "__main__":
