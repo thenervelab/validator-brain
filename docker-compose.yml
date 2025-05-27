@@ -40,6 +40,29 @@ services:
     networks:
       - ipfs_network
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-substrate
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-admin}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-admin}
+      - RABBITMQ_DEFAULT_VHOST=${RABBITMQ_VHOST:-/}
+    ports:
+      - "5672:5672"     # AMQP port
+      - "15672:15672"   # Management UI port
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_logs:/var/log/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
   dbmate:
     image: ghcr.io/amacneil/dbmate
     container_name: dbmate-migrations
@@ -61,6 +84,10 @@ volumes:
     name: ipfs-data
   postgres_data:
     name: postgres-data
+  rabbitmq_data:
+    name: rabbitmq-data
+  rabbitmq_logs:
+    name: rabbitmq-logs
 
 networks:
   ipfs_network:
