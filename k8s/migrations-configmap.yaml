@@ -321,6 +321,16 @@ data:
     Create index for the new column\nCREATE INDEX idx_pending_miner_profile_block_number
     ON pending_miner_profile(block_number);\n\n-- migrate:down\nALTER TABLE pending_miner_profile
     \nDROP COLUMN IF EXISTS block_number; "
+  20250527180000_add_pending_user_profile_table.sql: "-- migrate:up\nCREATE TABLE
+    pending_user_profile (\n    id SERIAL PRIMARY KEY,\n    cid VARCHAR(255) NOT NULL,\n
+    \   owner VARCHAR(255) NOT NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
+    \   published_at TIMESTAMP,\n    status VARCHAR(50) DEFAULT 'pending',\n    error_message
+    TEXT,\n    files_count INTEGER DEFAULT 0,\n    files_size BIGINT DEFAULT 0,\n
+    \   block_number INTEGER DEFAULT 0\n);\n\n-- Create indexes for better query performance\nCREATE
+    INDEX idx_pending_user_profile_owner ON pending_user_profile(owner);\nCREATE INDEX
+    idx_pending_user_profile_status ON pending_user_profile(status);\nCREATE INDEX
+    idx_pending_user_profile_created_at ON pending_user_profile(created_at);\n\n--
+    migrate:down\nDROP TABLE IF EXISTS pending_user_profile; "
 kind: ConfigMap
 metadata:
   creationTimestamp: null

@@ -60,8 +60,14 @@ RABBITMQ_PASSWORD=admin
 # IPFS
 IPFS_NODE_URL=http://localhost:5001
 IPFS_GATEWAY_URL=https://ipfs.io
+REMOTE_IPFS_URL=https://store.hippius.network
 
-# Node Metrics (optional)
+# Validator
+VALIDATOR_ACCOUNT_ID=5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g
+
+# Processing Configuration
+MINER_PROFILE_BATCH_SIZE=0  # 0 = process all miners, >0 = batch size limit
+USER_PROFILE_BATCH_SIZE=0   # 0 = process all users, >0 = batch size limit
 NODE_METRICS_HISTORY_BLOCKS=10  # Number of blocks to keep per miner
 ```
 
@@ -91,7 +97,49 @@ python rabbitmq/miner_profile_processor.py
 python rabbitmq/miner_profile_consumer.py
 ```
 
-### 3. Pinning Requests
+### 3. Miner Profile Reconstruction
+
+Reconstructs and publishes miner profiles to remote IPFS:
+
+```bash
+# Queue miners for profile reconstruction (configurable batch size)
+python rabbitmq/miner_profile_reconstruction_processor.py
+
+# Start consumer to reconstruct and publish profiles
+python rabbitmq/miner_profile_reconstruction_consumer.py
+```
+
+**Batch Size Configuration:**
+- Set `MINER_PROFILE_BATCH_SIZE=0` to process ALL eligible miners (default in Kubernetes)
+- Set `MINER_PROFILE_BATCH_SIZE=100` to process 100 miners at a time
+- Set `MINER_PROFILE_BATCH_SIZE=500` to process 500 miners at a time
+
+The processor will skip miners that:
+- Have no files assigned in the `file_assignments` table
+- Already have published profiles in the `pending_miner_profile` table
+
+### 4. User Profile Reconstruction
+
+Reconstructs and publishes user profiles to remote IPFS:
+
+```bash
+# Queue users for profile reconstruction (configurable batch size)
+python rabbitmq/user_profile_reconstruction_processor.py
+
+# Start consumer to reconstruct and publish profiles
+python rabbitmq/user_profile_reconstruction_consumer.py
+```
+
+**Batch Size Configuration:**
+- Set `USER_PROFILE_BATCH_SIZE=0` to process ALL eligible users (default in Kubernetes)
+- Set `USER_PROFILE_BATCH_SIZE=100` to process 100 users at a time
+- Set `USER_PROFILE_BATCH_SIZE=500` to process 500 users at a time
+
+The processor will skip users that:
+- Have no files assigned in the `file_assignments` table
+- Already have published profiles in the `pending_user_profile` table
+
+### 5. Pinning Requests
 
 Handles storage pinning requests:
 
@@ -103,7 +151,7 @@ python rabbitmq/pinning_request_processor.py
 python rabbitmq/pinning_request_consumer.py
 ```
 
-### 4. Node Metrics
+### 6. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
 
@@ -130,20 +178,30 @@ python rabbitmq/clear_queue.py node_metrics_latest
 
 ## Docker Services
 
-The `docker-compose.yml` includes:
+## Kubernetes Deployment
 
+The Kubernetes deployment includes all services and consumers:
+
+**Services:**
 - `postgres`: PostgreSQL database
-- `rabbitmq`: Message queue with management UI (http://localhost:15672)
+- `rabbitmq`: Message queue with management UI
 - `ipfs`: IPFS node
 - `dbmate`: Database migration tool
-- `user-profile-consumer`: Processes user profiles
+
+**Consumers (all running automatically):**
+- `user-profile-consumer`: Processes user profiles from IPFS
 - `pinning-request-consumer`: Processes pinning requests
 - `node-metrics-consumer`: Processes node metrics from the queue
+- `miner-profile-reconstruction-consumer`: Reconstructs and publishes miner profiles
+- `user-profile-reconstruction-consumer`: Reconstructs and publishes user profiles
 
-**Note**: The miner-profile-consumer is not included in docker-compose.yml by default. Run it manually with:
-```bash
-python rabbitmq/miner_profile_consumer.py
-```
+**Processors (run as jobs when needed):**
+- `miner-profile-reconstruction-processor`: Queues miners for profile reconstruction
+- `user-profile-reconstruction-processor`: Queues users for profile reconstruction
+
+## Docker Compose
+
+The `docker-compose.yml` includes basic services but not all consumers. For full functionality, use Kubernetes deployment.
 
 ## Database Schema
 
@@ -178,6 +236,24 @@ python rabbitmq/miner_profile_consumer.py
    - `block_number`: Blockchain block number
    - `updated_at`: Last update timestamp
 
+6. **pending_miner_profile**: Tracks miner profile reconstruction
+   - `cid`: Published IPFS CID
+   - `node_id`: Miner's peer ID
+   - `files_count`: Number of files in profile
+   - `files_size`: Total size of files
+   - `block_number`: Block number when created
+   - `status`: Processing status ('pending', 'published', 'failed')
+   - `created_at`, `published_at`: Timestamps
+
+7. **pending_user_profile**: Tracks user profile reconstruction
+   - `cid`: Published IPFS CID
+   - `owner`: User's account ID
+   - `files_count`: Number of files in profile
+   - `files_size`: Total size of files
+   - `block_number`: Block number when created
+   - `status`: Processing status ('pending', 'published', 'failed')
+   - `created_at`, `published_at`: Timestamps
+
 ## Monitoring
 
 ### RabbitMQ Management
@@ -195,6 +271,8 @@ python rabbitmq/inspect_queue.py <queue_name>
 # Available queues:
 # - user_profile
 # - miner_profile
+# - miner_profile_reconstruction
+# - user_profile_reconstruction
 # - pinning_request
 # - node_metrics_latest
 ```
