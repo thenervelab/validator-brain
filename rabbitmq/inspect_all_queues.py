@@ -67,7 +67,7 @@ async def main():
     print("=" * 60)
     
     # List of queues to inspect
-    queues = ['user_profile', 'miner_profile']
+    queues = ['user_profile', 'miner_profile', 'pinning_request']
     
     for queue_name in queues:
         await inspect_queue(queue_name)

@@ -10,7 +10,8 @@ ENV PYTHONFAULTHANDLER=1 \
     PYTHONHASHSEED=random \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=100
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -26,16 +27,11 @@ COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
 # Set working directory
 WORKDIR /app
 
-# Copy pyproject.toml
-COPY pyproject.toml .
-
-RUN pip install --no-cache-dir .
-
-# Copy project files (in a specific order to ensure migrations are included)
-COPY db/migrations/ /app/db/migrations/
-COPY db/schema.sql /app/db/schema.sql
-COPY .dbmate.yml /app/.dbmate.yml
+# Copy all project files first
 COPY . .
+
+# Install dependencies
+RUN pip install --no-cache-dir .
 
 
 # Copy the entrypoint script

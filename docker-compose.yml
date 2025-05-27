@@ -79,6 +79,54 @@ services:
     command: ["up"]
     restart: "no"
 
+  pinning-request-consumer:
+    build: .
+    container_name: pinning-request-consumer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+    working_dir: /app
+    command: ["python", "rabbitmq/pinning_request_consumer.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      dbmate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+  user-profile-consumer:
+    build: .
+    container_name: user-profile-consumer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/
+      - IPFS_NODE_URL=http://ipfs:5001
+      - PYTHONUNBUFFERED=1
+      - WAIT_FOR_IPFS=true
+    volumes:
+      - ./:/app
+    working_dir: /app
+    command: ["python", "rabbitmq/user_profile_consumer.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+      dbmate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
 volumes:
   ipfs_data:
     name: ipfs-data

@@ -22,3 +22,18 @@ then start a processor ( or multiples )
    DATABASE_URL=postgresql://user:password@localhost:5432/substrate_fetcher python rabbitmq/user_profile_consumer.py
 
 ```
+
+
+
+Rabbitmq for storage requests:
+
+``` 
+python rabbitmq/pinning_request_processor.py 
+```
+
+
+and to consume:
+
+```
+DATABASE_URL=postgresql://user:password@localhost:5432/substrate_fetcher python rabbitmq/pinning_request_consumer.py
+```
