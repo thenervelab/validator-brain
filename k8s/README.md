@@ -123,6 +123,43 @@ python rabbitmq/user_profile_processor.py
 python rabbitmq/miner_profile_processor.py
 python rabbitmq/pinning_request_processor.py
 python rabbitmq/node_metrics_processor.py
+python rabbitmq/miner_health_processor.py  # Queue health checks for miners
+```
+
+## Health Monitoring System
+
+The deployment includes an automated health monitoring system that:
+
+1. **Monitors all files** assigned to each miner via IPFS ping and pin checks
+2. **Tracks failures** in the `file_failures` and `miner_availability` tables
+3. **Automatically reassigns replicas** when miners fail availability checks
+4. **Maintains minimum replica counts** (default: 3 replicas per file)
+
+### Health Check Configuration
+
+The `miner-health-consumer-with-reassignment` deployment includes these configurable parameters:
+
+- `MAX_FILES_PER_MINER`: Maximum files to check per miner (default: 10)
+- `ENABLE_AUTO_REASSIGNMENT`: Enable automatic replica reassignment (default: true)
+- `MIN_REPLICAS`: Minimum replicas per file (default: 3)
+- `MIN_AVAILABILITY_SCORE`: Minimum score for reliable miners (default: 0.7)
+- `MAX_CONSECUTIVE_FAILURES`: Max failures before marking miner inactive (default: 3)
+- `FAILURE_WINDOW_HOURS`: Time window for failure tracking (default: 24)
+
+### Monitoring Health Status
+
+```bash
+# Check availability report
+kubectl exec -it <processor-pod> -- python scripts/query_availability_report.py --report
+
+# View files needing reassignment
+kubectl exec -it <processor-pod> -- python scripts/query_availability_report.py --reassignments
+
+# Process pending reassignments manually
+kubectl exec -it <processor-pod> -- python scripts/query_availability_report.py --process
+
+# View specific miner details
+kubectl exec -it <processor-pod> -- python scripts/query_availability_report.py --miner <miner-id>
 ```
 
 ## Monitoring

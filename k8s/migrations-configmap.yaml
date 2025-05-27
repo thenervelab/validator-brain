@@ -299,6 +299,35 @@ data:
     TRIGGER update_node_metrics_updated_at BEFORE UPDATE ON node_metrics\n    FOR
     EACH ROW EXECUTE FUNCTION update_updated_at_column();\n\n-- migrate:down\nDROP
     TABLE IF EXISTS node_metrics; "
+  20250527120000_add_file_failures_table.sql: "-- migrate:up\n-- Create table to track
+    file failures and miner unavailability\nCREATE TABLE file_failures (\n    id SERIAL
+    PRIMARY KEY,\n    cid VARCHAR(255) NOT NULL,\n    miner_id VARCHAR(255) NOT NULL,\n
+    \   epoch INTEGER NOT NULL,\n    failure_type VARCHAR(50) NOT NULL, -- 'ping_failed',
+    'pin_failed', 'not_provider'\n    failure_reason TEXT,\n    detected_at TIMESTAMP
+    DEFAULT NOW(),\n    resolved_at TIMESTAMP NULL,\n    retry_count INTEGER DEFAULT
+    0,\n    \n    -- Unique constraint to prevent duplicate failure records\n    CONSTRAINT
+    unique_failure UNIQUE (cid, miner_id, epoch, failure_type)\n);\n\n-- Create indexes
+    for file_failures\nCREATE INDEX idx_file_failures_cid ON file_failures (cid);\nCREATE
+    INDEX idx_file_failures_miner ON file_failures (miner_id);\nCREATE INDEX idx_file_failures_epoch
+    ON file_failures (epoch);\nCREATE INDEX idx_file_failures_type ON file_failures
+    (failure_type);\nCREATE INDEX idx_file_failures_detected ON file_failures (detected_at);\n\n--
+    Create table to track miner availability scores\nCREATE TABLE miner_availability
+    (\n    miner_id VARCHAR(255) PRIMARY KEY,\n    total_files_assigned INTEGER DEFAULT
+    0,\n    successful_checks INTEGER DEFAULT 0,\n    failed_checks INTEGER DEFAULT
+    0,\n    availability_score DECIMAL(5,4) DEFAULT 1.0000, -- 0.0000 to 1.0000\n
+    \   last_successful_check TIMESTAMP NULL,\n    last_failed_check TIMESTAMP NULL,\n
+    \   consecutive_failures INTEGER DEFAULT 0,\n    is_active BOOLEAN DEFAULT TRUE,\n
+    \   updated_at TIMESTAMP DEFAULT NOW()\n);\n\n-- Create indexes for miner_availability\nCREATE
+    INDEX idx_miner_availability_score ON miner_availability (availability_score);\nCREATE
+    INDEX idx_miner_availability_active ON miner_availability (is_active);\nCREATE
+    INDEX idx_miner_availability_updated ON miner_availability (updated_at);\n\n--
+    Create function to update updated_at timestamp\nCREATE OR REPLACE FUNCTION update_updated_at_column()\nRETURNS
+    TRIGGER AS $$\nBEGIN\n    NEW.updated_at = NOW();\n    RETURN NEW;\nEND;\n$$ language
+    'plpgsql';\n\n-- Create trigger to update miner_availability.updated_at\nCREATE
+    TRIGGER update_miner_availability_updated_at\n    BEFORE UPDATE ON miner_availability\n
+    \   FOR EACH ROW\n    EXECUTE FUNCTION update_updated_at_column();\n\n-- migrate:down\nDROP
+    TRIGGER IF EXISTS update_miner_availability_updated_at;\nDROP TABLE IF EXISTS
+    miner_availability;\nDROP TABLE IF EXISTS file_failures; "
   20250527160800_add_pending_miner_profile_table.sql: "-- migrate:up\nCREATE TABLE
     IF NOT EXISTS pending_miner_profile (\n    id SERIAL PRIMARY KEY,\n    cid TEXT
     NOT NULL UNIQUE,\n    node_id TEXT NOT NULL,\n    created_at TIMESTAMP WITH TIME

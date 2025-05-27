@@ -165,3 +165,48 @@ spec:
         - configMapRef:
             name: ipfs-validator-config
         workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miner-health-consumer-with-reassignment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: miner-health-consumer-with-reassignment
+  template:
+    metadata:
+      labels:
+        app: miner-health-consumer-with-reassignment
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/miner_health_consumer_with_reassignment.py"]
+        env:
+        - name: MAX_FILES_PER_MINER
+          value: "10"
+        - name: ENABLE_AUTO_REASSIGNMENT
+          value: "true"
+        - name: MIN_REPLICAS
+          value: "3"
+        - name: MAX_REPLICAS
+          value: "5"
+        - name: MIN_AVAILABILITY_SCORE
+          value: "0.7"
+        - name: MAX_CONSECUTIVE_FAILURES
+          value: "3"
+        - name: FAILURE_WINDOW_HOURS
+          value: "24"
+        - name: REASSIGNMENT_COOLDOWN_HOURS
+          value: "6"
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app

@@ -5,11 +5,12 @@ import json
 import aiohttp
 import random  # Added for selecting random block
 from app.utils import config
+from .file_availability_manager import FileAvailabilityManager
 
 logger = logging.getLogger(__name__)
 
 
-async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, epoch_number: int, block_number: int = None, stop_event=None):
+async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, epoch_number: int, block_number: int = None, stop_event=None, availability_manager: FileAvailabilityManager = None):
     """
     Performs an IPFS ping to a miner using the local IPFS node's HTTP API
     and updates or inserts health stats into the miner_epoch_health table.
@@ -99,7 +100,7 @@ async def perform_ipfs_ping(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: s
         except Exception as e_db:
             logger.error(f"Database error updating/inserting health for {node_id} (IPFS: {ipfs_peer_id}) in epoch {epoch_number}: {e_db}")
 
-async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, root_cid_to_check: str, epoch_number: int, stop_event=None):
+async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_id: str, root_cid_to_check: str, epoch_number: int, stop_event=None, availability_manager: FileAvailabilityManager = None):
     """
     Performs an IPFS pin check. It verifies if a given ipfs_peer_id is a provider 
     for a randomly selected block within the DAG of root_cid_to_check.
@@ -212,7 +213,7 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
     except Exception as e_req:
         logger.error(f"Request error during DHT findprovs for {effective_cid_checked} (Node: {node_id}): {e_req}")
 
-    # 3. update the database
+    # 3. update the database and record availability
     async with db_pool.acquire() as conn:
         try:
             # Update aggregate stats in miner_epoch_health
@@ -233,6 +234,21 @@ async def perform_ipfs_pin_check(db_pool: asyncpg.Pool, node_id: str, ipfs_peer_
                 """,
                 node_id, ipfs_peer_id, epoch_number, success_val, failure_val
             )
+            
+            # Record availability status if manager is provided
+            if availability_manager:
+                if pin_check_successful:
+                    await availability_manager.record_success(root_cid_to_check, node_id, epoch_number)
+                else:
+                    failure_reason = f"Miner {node_id} is not a provider for {effective_cid_checked}"
+                    await availability_manager.record_failure(
+                        root_cid_to_check, 
+                        node_id, 
+                        epoch_number, 
+                        'not_provider', 
+                        failure_reason
+                    )
+            
             logger.info(f"Updated pin check stats for {node_id} in epoch {epoch_number} (Root CID: {root_cid_to_check}, Checked CID: {effective_cid_checked}, Success: {pin_check_successful}).")
         except Exception as e_db:
             logger.error(f"Database error updating pin check stats for {node_id} in epoch {epoch_number}: {e_db}")
