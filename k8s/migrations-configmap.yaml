@@ -331,6 +331,16 @@ data:
     idx_pending_user_profile_status ON pending_user_profile(status);\nCREATE INDEX
     idx_pending_user_profile_created_at ON pending_user_profile(created_at);\n\n--
     migrate:down\nDROP TABLE IF EXISTS pending_user_profile; "
+  20250527200000_add_pending_assignment_file_table.sql: "-- migrate:up\nCREATE TABLE
+    pending_assignment_file (\n    id SERIAL PRIMARY KEY,\n    cid VARCHAR(255) NOT
+    NULL UNIQUE,\n    owner VARCHAR(255) NOT NULL,\n    filename VARCHAR(500),\n    file_size_bytes
+    BIGINT,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    processed_at
+    TIMESTAMP,\n    status VARCHAR(50) DEFAULT 'pending',\n    error_message TEXT\n);\n\n--
+    Create indexes for better query performance\nCREATE INDEX idx_pending_assignment_file_owner
+    ON pending_assignment_file(owner);\nCREATE INDEX idx_pending_assignment_file_status
+    ON pending_assignment_file(status);\nCREATE INDEX idx_pending_assignment_file_created_at
+    ON pending_assignment_file(created_at);\n\n-- migrate:down\nDROP TABLE IF EXISTS
+    pending_assignment_file; "
 kind: ConfigMap
 metadata:
   creationTimestamp: null

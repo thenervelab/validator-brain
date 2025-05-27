@@ -158,7 +158,23 @@ python rabbitmq/pinning_request_processor.py
 python rabbitmq/pinning_request_consumer.py
 ```
 
-### 6. Node Metrics
+### 6. Pinning File Processing
+
+Processes individual files from pinning requests:
+
+```bash
+# Parse pinning request files and queue individual files
+python rabbitmq/pinning_file_processor.py
+
+# Start consumer to get file sizes and store in database
+python rabbitmq/pinning_file_consumer.py
+```
+
+This workflow:
+1. **Processor**: Fetches pinning request files from IPFS, parses JSON content, and queues individual files
+2. **Consumer**: Gets file sizes from IPFS and stores file information in `pending_assignment_file` table
+
+### 7. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
 
@@ -198,6 +214,7 @@ The Kubernetes deployment includes all services and consumers:
 **Consumers (all running automatically):**
 - `user-profile-consumer`: Processes user profiles from IPFS
 - `pinning-request-consumer`: Processes pinning requests
+- `pinning-file-consumer`: Processes individual files from pinning requests
 - `node-metrics-consumer`: Processes node metrics from the queue
 - `miner-profile-reconstruction-consumer`: Reconstructs and publishes miner profiles
 - `user-profile-reconstruction-consumer`: Reconstructs and publishes user profiles
@@ -205,6 +222,7 @@ The Kubernetes deployment includes all services and consumers:
 **Processors (run as jobs when needed):**
 - `miner-profile-reconstruction-processor`: Queues miners for profile reconstruction
 - `user-profile-reconstruction-processor`: Queues users for profile reconstruction
+- `pinning-file-processor`: Parses pinning request files and queues individual files
 
 ## Docker Compose
 
@@ -261,6 +279,14 @@ The `docker-compose.yml` includes basic services but not all consumers. For full
    - `status`: Processing status ('pending', 'published', 'failed')
    - `created_at`, `published_at`: Timestamps
 
+8. **pending_assignment_file**: Individual files from pinning requests
+   - `cid`: File CID
+   - `owner`: File owner
+   - `filename`: Original filename
+   - `file_size_bytes`: File size in bytes
+   - `status`: Processing status ('pending', 'processed', 'failed')
+   - `created_at`, `processed_at`: Timestamps
+
 ## Monitoring
 
 ### RabbitMQ Management
@@ -281,6 +307,7 @@ python rabbitmq/inspect_queue.py <queue_name>
 # - miner_profile_reconstruction
 # - user_profile_reconstruction
 # - pinning_request
+# - pinning_file_processing
 # - node_metrics_latest
 ```
 

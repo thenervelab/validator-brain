@@ -137,3 +137,31 @@ spec:
         - configMapRef:
             name: ipfs-validator-config
         workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinning-file-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pinning-file-consumer
+  template:
+    metadata:
+      labels:
+        app: pinning-file-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/pinning_file_consumer.py"]
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app

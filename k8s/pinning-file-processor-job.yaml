@@ -1,0 +1,18 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pinning-file-processor
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: processor
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/pinning_file_processor.py"]
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+  backoffLimit: 3 
