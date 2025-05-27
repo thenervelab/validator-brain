@@ -33,6 +33,7 @@ dependencies = [
     "substrate-interface",
     "websockets",
     "psutil",
+    "aio-pika",
 ]
 
 [project.optional-dependencies]
