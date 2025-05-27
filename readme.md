@@ -174,6 +174,21 @@ This workflow:
 1. **Processor**: Fetches pinning request files from IPFS, parses JSON content, and queues individual files
 2. **Consumer**: Gets file sizes from IPFS and stores file information in `pending_assignment_file` table
 
+**File Format Expected:**
+```json
+[
+  {
+    "filename": "image (7).jpg",
+    "cid": "bafkreigqtkuunz3cqxs44jutnp7djz4bcf74goc3kstex7gjhbagufjonm"
+  }
+]
+```
+
+**Kubernetes Deployment:**
+- Consumer runs automatically as `pinning-file-consumer`
+- Processor runs on-demand using `kubectl apply -f k8s/pinning-file-processor-job.yaml`
+- Uses IPFS service at `http://ipfs-service:5001` for scalability
+
 ### 7. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
@@ -199,6 +214,53 @@ python rabbitmq/clear_queue.py node_metrics_latest
 - The consumer runs automatically in Docker Compose using `node_metrics_consumer.py` (latest metrics only)
 - For historical data retention, manually run `node_metrics_consumer_with_history.py` instead
 
+### 8. Miner Health Checks
+
+Performs IPFS ping and pin tests on miners to validate their connectivity and file availability:
+
+```bash
+# Queue miners for health checks (run manually when needed)
+python rabbitmq/miner_health_processor.py
+
+# Start health check consumer (processes ping and pin tests)
+python rabbitmq/miner_health_consumer.py
+
+# Inspect the health check queue
+python rabbitmq/inspect_health_queue.py
+
+# Query health check results
+python scripts/query_miner_health.py [options]
+```
+
+**Health Check Process:**
+1. **Processor**: Fetches miners from database (file_assignments + node_metrics), gets current epoch, queues health check tasks
+2. **Consumer**: Performs IPFS ping tests and pin tests on random files assigned to each miner
+3. **Database**: Results stored in `miner_epoch_health` table with success/failure counts per epoch
+
+**Health Check Types:**
+- **Ping Test**: Tests IPFS connectivity to miner's peer ID using `/api/v0/ping`
+- **Pin Test**: Verifies miner is a provider for a random file using DHT `/api/v0/dht/findprovs`
+
+**Query Examples:**
+```bash
+# Show latest health summary for all miners
+python scripts/query_miner_health.py
+
+# Show health for specific epoch
+python scripts/query_miner_health.py --epoch 7104
+
+# Show detailed history for specific miner
+python scripts/query_miner_health.py --miner 12D3KooWKnhGPbTtCgEPWRxGJhtFFcbMTEerfSKMpVnbpLQzBy
+
+# Show epoch statistics
+python scripts/query_miner_health.py --epoch 7104 --stats
+```
+
+**Configuration:**
+- `IPFS_TIMEOUT_SECONDS`: Timeout for ping operations (default: 10s)
+- `IPFS_DHT_TIMEOUT_SECONDS`: Timeout for DHT provider lookups (default: 60s)
+- `IPFS_REFS_TIMEOUT_SECONDS`: Timeout for fetching file references (default: 30s)
+
 ## Docker Services
 
 ## Kubernetes Deployment
@@ -223,6 +285,18 @@ The Kubernetes deployment includes all services and consumers:
 - `miner-profile-reconstruction-processor`: Queues miners for profile reconstruction
 - `user-profile-reconstruction-processor`: Queues users for profile reconstruction
 - `pinning-file-processor`: Parses pinning request files and queues individual files
+
+**Running Processor Jobs:**
+```bash
+# Run miner profile reconstruction processor
+kubectl apply -f k8s/miner-profile-reconstruction-job.yaml
+
+# Run user profile reconstruction processor  
+kubectl apply -f k8s/user-profile-reconstruction-job.yaml
+
+# Run pinning file processor
+kubectl apply -f k8s/pinning-file-processor-job.yaml
+```
 
 ## Docker Compose
 
@@ -309,6 +383,19 @@ python rabbitmq/inspect_queue.py <queue_name>
 # - pinning_request
 # - pinning_file_processing
 # - node_metrics_latest
+
+# Example: Check pinning file processing queue
+python rabbitmq/inspect_queue.py pinning_file_processing
+```
+
+### Database Monitoring
+
+```bash
+# Check processed files in pending_assignment_file table
+psql $DATABASE_URL -c "SELECT cid, owner, filename, file_size_bytes, status FROM pending_assignment_file ORDER BY created_at DESC LIMIT 10;"
+
+# Check processing statistics
+psql $DATABASE_URL -c "SELECT status, COUNT(*) FROM pending_assignment_file GROUP BY status;"
 ```
 
 ### Node Metrics Queries

@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     "asyncpg",
     "httpx",
+    "aiohttp",
     "python-dotenv",
     "pydantic",
     "pydantic-settings",
