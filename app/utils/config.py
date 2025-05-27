@@ -4,7 +4,7 @@ import os
 
 # Blockchain node URL
 NODE_URL = os.environ.get("NODE_URL", "wss://rpc.hippius.network")
-
+IPFS_GATEWAY = os.environ.get("IPFS_GATEWAY", "https://get.hippius.network")
 
 def get_ipfs_node_url():
     """
