@@ -238,3 +238,34 @@ spec:
         - configMapRef:
             name: ipfs-validator-config
         workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: epoch-health-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: epoch-health-consumer
+  template:
+    metadata:
+      labels:
+        app: epoch-health-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/epoch_health_consumer.py"]
+        env:
+        - name: EPOCH_MAX_FILES_PER_MINER
+          value: "50"
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
