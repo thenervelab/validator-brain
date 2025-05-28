@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: ipfs
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: ipfs
@@ -12,6 +12,17 @@ spec:
       labels:
         app: ipfs
     spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+      - name: fix-permissions
+        image: busybox:1.35
+        command: ['sh', '-c', 'chown -R 1000:1000 /data/ipfs && chmod -R 755 /data/ipfs']
+        volumeMounts:
+        - name: ipfs-data
+          mountPath: /data/ipfs
+        securityContext:
+          runAsUser: 0
       containers:
       - name: ipfs
         image: ipfs/kubo:latest
@@ -28,20 +39,25 @@ spec:
         volumeMounts:
         - name: ipfs-data
           mountPath: /data/ipfs
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
         livenessProbe:
           exec:
             command:
             - ipfs
             - id
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 30
+          timeoutSeconds: 10
         readinessProbe:
           exec:
             command:
             - ipfs
             - id
-          initialDelaySeconds: 10
+          initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 10
       volumes:
       - name: ipfs-data
         persistentVolumeClaim:

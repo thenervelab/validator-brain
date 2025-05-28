@@ -285,6 +285,7 @@ The Kubernetes deployment includes all services and consumers:
 - `miner-profile-reconstruction-processor`: Queues miners for profile reconstruction
 - `user-profile-reconstruction-processor`: Queues users for profile reconstruction
 - `pinning-file-processor`: Parses pinning request files and queues individual files
+- `miner-health-processor`: Queues miners for health checks
 
 **Running Processor Jobs:**
 ```bash
@@ -443,3 +444,8 @@ python rabbitmq/test_connection.py
 ## License
 
 MIT License - see LICENSE file for details
+
+
+
+
+DATABASE_URL=postgresql://user:password@localhost:5432/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/node_metrics_processor.py 
