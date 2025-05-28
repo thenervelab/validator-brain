@@ -51,7 +51,7 @@ async def get_files_by_offline_miner(
 
 async def get_files_needing_replication(
     conn: Connection,
-    min_replicas: int = 3,
+    min_replicas: int = 5,
 ) -> List[Dict[str, Any]]:
     """
     Get files that have fewer than the minimum required replicas.

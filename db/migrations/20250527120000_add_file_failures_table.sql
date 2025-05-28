@@ -1,4 +1,4 @@
--- +goose Up
+-- migrate:up
 -- Create table to track file failures and miner unavailability
 CREATE TABLE file_failures (
     id SERIAL PRIMARY KEY,
@@ -56,7 +56,7 @@ CREATE TRIGGER update_miner_availability_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- +goose Down
+-- migrate:down
 DROP TRIGGER IF EXISTS update_miner_availability_updated_at;
 DROP TABLE IF EXISTS miner_availability;
 DROP TABLE IF EXISTS file_failures; 

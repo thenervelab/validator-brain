@@ -61,7 +61,7 @@ class MinerHealthConsumerWithReassignment:
         
         # Availability rules configuration
         self.availability_rules = AvailabilityRules(
-            min_replicas=int(os.getenv('MIN_REPLICAS', '3')),
+            min_replicas=int(os.getenv('MIN_REPLICAS', '5')),
             max_replicas=int(os.getenv('MAX_REPLICAS', '5')),
             min_availability_score=float(os.getenv('MIN_AVAILABILITY_SCORE', '0.7')),
             max_consecutive_failures=int(os.getenv('MAX_CONSECUTIVE_FAILURES', '3')),

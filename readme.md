@@ -91,7 +91,7 @@ Processes miner profile data:
 
 ```bash
 # Fill queue with miner profile data
-python rabbitmq/miner_profile_processor.py
+python rabbitmq/miner_profile_processor.py 
 
 # Start consumer
 python rabbitmq/miner_profile_consumer.py

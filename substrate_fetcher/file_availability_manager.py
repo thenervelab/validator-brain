@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AvailabilityRules:
     """Configuration for availability and reassignment rules."""
-    min_replicas: int = 3  # Minimum number of replicas per file
+    min_replicas: int = 5  # Minimum number of replicas per file
     max_replicas: int = 5  # Maximum number of replicas per file
     min_availability_score: float = 0.7  # Minimum score to be considered reliable
     max_consecutive_failures: int = 3  # Max failures before marking miner as unreliable

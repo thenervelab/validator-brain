@@ -124,6 +124,40 @@ python rabbitmq/miner_profile_processor.py
 python rabbitmq/pinning_request_processor.py
 python rabbitmq/node_metrics_processor.py
 python rabbitmq/miner_health_processor.py  # Queue health checks for miners
+python rabbitmq/registration_processor.py  # Update node registrations
+```
+
+## Registration System
+
+The deployment includes an automated registration system that:
+
+1. **Fetches registration data** from both `registration.coldkeyNodeRegistration` and `registration.nodeRegistration` storage items
+2. **Clears the registration table** before processing to ensure fresh data
+3. **Combines data** from both storage sources into a unified registration table
+4. **Handles duplicates** using upsert logic when the same node appears in both sources
+
+### Registration Data Flow
+
+1. **Producer** (`registration_processor.py`):
+   - Connects to substrate chain
+   - Clears the registration table
+   - Fetches from `registration.coldkeyNodeRegistration`
+   - Fetches from `registration.nodeRegistration`
+   - Queues individual registration records
+
+2. **Consumer** (`registration_consumer.py`):
+   - Processes registration messages from queue
+   - Stores data in registration table using upsert logic
+   - Handles data from both storage sources
+
+### Running Registration Updates
+
+```bash
+# Update registration data
+kubectl exec -it <processor-pod> -- python rabbitmq/registration_processor.py
+
+# Check registration data
+kubectl exec -it <processor-pod> -- psql $DATABASE_URL -c "SELECT node_id, node_type, status, owner_account FROM registration LIMIT 10;"
 ```
 
 ## Health Monitoring System
