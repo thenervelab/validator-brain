@@ -43,6 +43,9 @@ kubectl apply -f rabbitmq.yaml
 echo "  - IPFS..."
 kubectl apply -f ipfs.yaml
 
+echo "  - IPFS HPA (Horizontal Pod Autoscaler)..."
+kubectl apply -f ipfs-hpa.yaml
+
 # Wait for services to be ready
 echo "⏳ Waiting for services to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
@@ -58,6 +61,9 @@ kubectl wait --for=condition=complete job/dbmate-migrations --timeout=60s
 
 echo "  - Deploying consumers..."
 kubectl apply -f consumers.yaml
+
+echo "  - Deploying epoch orchestrator..."
+kubectl apply -f epoch-orchestrator.yaml
 
 echo "  - Creating NodePort services..."
 kubectl apply -f nodeports.yaml
@@ -77,5 +83,7 @@ echo ""
 echo "💡 Tips:"
 echo "  - Mount your code for development: minikube mount $(dirname $(pwd)):/app"
 echo "  - Check pod status: kubectl get pods"
+echo "  - Check HPA status: kubectl get hpa"
 echo "  - View logs: kubectl logs <pod-name>"
+echo "  - View epoch orchestrator logs: kubectl logs -l app=epoch-orchestrator"
 echo "  - Run processors: kubectl run processor --image=ipfs-service-validator:latest --rm -it -- bash" 

@@ -36,12 +36,23 @@ spec:
         env:
         - name: IPFS_PROFILE
           value: server
+        - name: IPFS_FD_MAX
+          value: "8192"
+        - name: LIBP2P_RCMGR
+          value: "1"
         volumeMounts:
         - name: ipfs-data
           mountPath: /data/ipfs
         securityContext:
           runAsUser: 1000
           runAsGroup: 1000
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
         livenessProbe:
           exec:
             command:
