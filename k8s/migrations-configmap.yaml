@@ -388,6 +388,22 @@ data:
     IF EXISTS update_epoch_submissions_updated_at();\nDROP INDEX IF EXISTS idx_epoch_submissions_success;\nDROP
     INDEX IF EXISTS idx_epoch_submissions_submitted_at;\nDROP INDEX IF EXISTS idx_epoch_submissions_epoch;\nDROP
     TABLE IF EXISTS epoch_submissions; "
+  20250528190000_add_submitted_status_to_pending_tables.sql: "-- migrate:up\n-- Add
+    'submitted' status to pending profile tables\n\n-- Update pending_miner_profile
+    status constraint\nALTER TABLE pending_miner_profile \nDROP CONSTRAINT IF EXISTS
+    pending_miner_profile_status_check;\n\nALTER TABLE pending_miner_profile \nADD
+    CONSTRAINT pending_miner_profile_status_check \nCHECK (status IN ('pending', 'published',
+    'failed', 'submitted'));\n\n-- Update pending_user_profile status constraint (if
+    it exists)\nALTER TABLE pending_user_profile \nDROP CONSTRAINT IF EXISTS pending_user_profile_status_check;\n\nALTER
+    TABLE pending_user_profile \nADD CONSTRAINT pending_user_profile_status_check
+    \nCHECK (status IN ('pending', 'published', 'failed', 'submitted'));\n\n-- migrate:down\n--
+    Revert to original constraints\n\nALTER TABLE pending_miner_profile \nDROP CONSTRAINT
+    IF EXISTS pending_miner_profile_status_check;\n\nALTER TABLE pending_miner_profile
+    \nADD CONSTRAINT pending_miner_profile_status_check \nCHECK (status IN ('pending',
+    'published', 'failed'));\n\nALTER TABLE pending_user_profile \nDROP CONSTRAINT
+    IF EXISTS pending_user_profile_status_check;\n\nALTER TABLE pending_user_profile
+    \nADD CONSTRAINT pending_user_profile_status_check \nCHECK (status IN ('pending',
+    'published', 'failed')); "
 kind: ConfigMap
 metadata:
   creationTimestamp: null
