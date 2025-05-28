@@ -189,7 +189,87 @@ This workflow:
 - Processor runs on-demand using `kubectl apply -f k8s/pinning-file-processor-job.yaml`
 - Uses IPFS service at `http://ipfs-service:5001` for scalability
 
-### 7. Node Metrics
+### 7. File Assignment System
+
+Assigns files from the `pending_assignment_file` table to miners with proper capacity checking and network balancing:
+
+```bash
+# Run file assignment processor (near end of epoch)
+kubectl apply -f k8s/file-assignment-processor-job.yaml
+
+# Start consumer to process assignments (runs automatically)
+python rabbitmq/file_assignment_consumer.py
+
+# Monitor assignment system
+python scripts/query_file_assignments.py [options]
+```
+
+**Assignment Process:**
+1. **Processor**: Fetches unassigned files from `pending_assignment_file`, selects optimal miners using advanced scoring algorithm, queues assignment tasks
+2. **Consumer**: Processes assignment tasks, updates `file_assignments` table, marks files as assigned
+
+**Reassignment Process:**
+The system also handles **reassigning empty miner slots** in existing file assignments:
+1. **Detection**: Identifies files with NULL miner columns (created when health checks remove offline miners)
+2. **Smart Filling**: Selects new miners to fill empty slots while avoiding already-assigned miners
+3. **Race Condition Protection**: Uses database locking and timestamp checking to prevent conflicts
+4. **Seamless Integration**: Processes both new assignments and reassignments in the same workflow
+
+**Scoring Algorithm:**
+The system uses a sophisticated scoring algorithm to balance file assignments:
+- **Storage Availability (50%)**: Prefers miners with more available storage
+- **File Count Balance (25%)**: Distributes load evenly across miners
+- **Health Score (15%)**: Considers miner reliability and performance
+- **Registration Recency (10%)**: Slight preference for stability, but with new miner boost
+
+**New Miner Support:**
+- **New Miner Boost**: Miners registered within 30 days get 1.5x scoring boost
+- **Capacity Checking**: Ensures miners have sufficient storage for assigned files
+- **Balanced Distribution**: Prevents overloading any single miner
+
+**Configuration:**
+```env
+REPLICAS_PER_FILE=5              # Number of replicas per file
+MAX_FILES_PER_BATCH=100          # Files processed per batch
+MAX_REASSIGNMENTS_PER_BATCH=50   # Reassignments processed per batch
+MIN_MINER_HEALTH_SCORE=70.0      # Minimum health score for assignment
+NEW_MINER_BOOST_DAYS=30          # Days for new miner boost
+NEW_MINER_BOOST_FACTOR=1.5       # Boost factor for new miners
+```
+
+**Monitoring:**
+```bash
+# Show all assignment statistics
+python scripts/query_file_assignments.py
+
+# Show only pending files
+python scripts/query_file_assignments.py --pending
+
+# Show files needing reassignment
+python scripts/query_file_assignments.py --reassignments
+
+# Show miner distribution
+python scripts/query_file_assignments.py --distribution
+
+# Show new miner analysis
+python scripts/query_file_assignments.py --new-miners
+
+# Show capacity analysis
+python scripts/query_file_assignments.py --capacity
+```
+
+**Integration with Health Checks:**
+- Health check system removes offline miners by setting their columns to NULL
+- File assignment system automatically detects and fills these empty slots
+- No manual intervention required - the system self-heals
+- Race condition protection ensures data consistency
+
+**Kubernetes Deployment:**
+- Consumer runs automatically as `file-assignment-consumer`
+- Processor runs on-demand using the job manifest
+- Integrates with existing health monitoring and capacity tracking
+
+### 8. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
 
@@ -214,9 +294,9 @@ python rabbitmq/clear_queue.py node_metrics_latest
 - The consumer runs automatically in Docker Compose using `node_metrics_consumer.py` (latest metrics only)
 - For historical data retention, manually run `node_metrics_consumer_with_history.py` instead
 
-### 8. Miner Health Checks
+### 9. Miner Health Checks
 
-Performs IPFS ping and pin tests on miners to validate their connectivity and file availability:
+Performs IPFS ping and pin tests on miners to validate their connectivity and file availability. **Failed miners are automatically removed from file assignments**, and the file assignment system handles reassignment:
 
 ```bash
 # Queue miners for health checks (run manually when needed)
@@ -225,21 +305,47 @@ python rabbitmq/miner_health_processor.py
 # Start health check consumer (processes ping and pin tests)
 python rabbitmq/miner_health_consumer.py
 
-# Inspect the health check queue
-python rabbitmq/inspect_health_queue.py
+# Run health processor as Kubernetes job
+kubectl apply -f k8s/miner-health-processor-job.yaml
 
 # Query health check results
 python scripts/query_miner_health.py [options]
 ```
 
-**Health Check Process:**
-1. **Processor**: Fetches miners from database (file_assignments + node_metrics), gets current epoch, queues health check tasks
-2. **Consumer**: Performs IPFS ping tests and pin tests on random files assigned to each miner
-3. **Database**: Results stored in `miner_epoch_health` table with success/failure counts per epoch
+**Simplified Health Check Process:**
+1. **Processor**: Fetches active miners from registration table, gets a few assigned files per miner, queues health check messages
+2. **Consumer**: Performs IPFS ping tests and pin tests on assigned files
+3. **Failure Handling**: Removes failed miners from ALL file assignments (sets miner columns to NULL)
+4. **Reassignment**: File assignment system automatically detects empty slots and reassigns files
+5. **Database**: Results stored in `miner_epoch_health` table with success/failure counts per epoch
 
 **Health Check Types:**
 - **Ping Test**: Tests IPFS connectivity to miner's peer ID using `/api/v0/ping`
-- **Pin Test**: Verifies miner is a provider for a random file using DHT `/api/v0/dht/findprovs`
+- **Pin Test**: Verifies miner is a provider for assigned files using DHT `/api/v0/dht/findprovs`
+
+**Failure Thresholds:**
+- **Ping Failure**: Remove miner immediately after 1 ping failure (configurable via `PING_FAILURE_THRESHOLD`)
+- **Pin Failure**: Remove miner after 2 pin test failures (configurable via `PIN_FAILURE_THRESHOLD`)
+
+**Integration with File Assignment System:**
+- When miners fail health checks, they are removed from `file_assignments` table (columns set to NULL)
+- File assignment processor automatically detects files with empty miner slots
+- New healthy miners are selected and assigned to maintain replica count
+- No manual intervention required - the system self-heals
+
+**Configuration:**
+```env
+HEALTH_CHECK_FILES_PER_MINER=3   # Number of files to test per miner
+PING_FAILURE_THRESHOLD=1         # Remove after 1 ping failure
+PIN_FAILURE_THRESHOLD=2          # Remove after 2 pin failures
+IPFS_TIMEOUT_SECONDS=10          # Timeout for ping operations
+IPFS_DHT_TIMEOUT_SECONDS=60      # Timeout for DHT provider lookups
+```
+
+**Kubernetes Deployment:**
+- Consumer runs automatically as `miner-health-consumer`
+- Processor runs on-demand using `kubectl apply -f k8s/miner-health-processor-job.yaml`
+- Integrates seamlessly with file assignment system for automatic reassignment
 
 **Query Examples:**
 ```bash
@@ -255,11 +361,6 @@ python scripts/query_miner_health.py --miner 12D3KooWKnhGPbTtCgEPWRxGJhtFFcbMTEe
 # Show epoch statistics
 python scripts/query_miner_health.py --epoch 7104 --stats
 ```
-
-**Configuration:**
-- `IPFS_TIMEOUT_SECONDS`: Timeout for ping operations (default: 10s)
-- `IPFS_DHT_TIMEOUT_SECONDS`: Timeout for DHT provider lookups (default: 60s)
-- `IPFS_REFS_TIMEOUT_SECONDS`: Timeout for fetching file references (default: 30s)
 
 ## Docker Services
 
@@ -277,14 +378,17 @@ The Kubernetes deployment includes all services and consumers:
 - `user-profile-consumer`: Processes user profiles from IPFS
 - `pinning-request-consumer`: Processes pinning requests
 - `pinning-file-consumer`: Processes individual files from pinning requests
+- `file-assignment-consumer`: Processes file assignments to miners
 - `node-metrics-consumer`: Processes node metrics from the queue
 - `miner-profile-reconstruction-consumer`: Reconstructs and publishes miner profiles
 - `user-profile-reconstruction-consumer`: Reconstructs and publishes user profiles
+- `miner-health-consumer`: Processes miner health checks and removes failed miners
 
 **Processors (run as jobs when needed):**
 - `miner-profile-reconstruction-processor`: Queues miners for profile reconstruction
 - `user-profile-reconstruction-processor`: Queues users for profile reconstruction
 - `pinning-file-processor`: Parses pinning request files and queues individual files
+- `file-assignment-processor`: Assigns files to miners with capacity checking
 - `miner-health-processor`: Queues miners for health checks
 
 **Running Processor Jobs:**
@@ -297,6 +401,12 @@ kubectl apply -f k8s/user-profile-reconstruction-job.yaml
 
 # Run pinning file processor
 kubectl apply -f k8s/pinning-file-processor-job.yaml
+
+# Run file assignment processor
+kubectl apply -f k8s/file-assignment-processor-job.yaml
+
+# Run miner health processor
+kubectl apply -f k8s/miner-health-processor-job.yaml
 ```
 
 ## Docker Compose
@@ -359,7 +469,7 @@ The `docker-compose.yml` includes basic services but not all consumers. For full
    - `owner`: File owner
    - `filename`: Original filename
    - `file_size_bytes`: File size in bytes
-   - `status`: Processing status ('pending', 'processed', 'failed')
+   - `status`: Processing status ('pending', 'processed', 'assigned', 'failed')
    - `created_at`, `processed_at`: Timestamps
 
 ## Monitoring
@@ -383,10 +493,11 @@ python rabbitmq/inspect_queue.py <queue_name>
 # - user_profile_reconstruction
 # - pinning_request
 # - pinning_file_processing
+# - file_assignment_processing
 # - node_metrics_latest
 
-# Example: Check pinning file processing queue
-python rabbitmq/inspect_queue.py pinning_file_processing
+# Example: Check file assignment processing queue
+python rabbitmq/inspect_queue.py file_assignment_processing
 ```
 
 ### Database Monitoring
@@ -397,6 +508,9 @@ psql $DATABASE_URL -c "SELECT cid, owner, filename, file_size_bytes, status FROM
 
 # Check processing statistics
 psql $DATABASE_URL -c "SELECT status, COUNT(*) FROM pending_assignment_file GROUP BY status;"
+
+# Check file assignments
+psql $DATABASE_URL -c "SELECT COUNT(*) as total_assignments, COUNT(DISTINCT owner) as unique_owners FROM file_assignments;"
 ```
 
 ### Node Metrics Queries
@@ -410,6 +524,25 @@ python scripts/query_node_metrics.py --stats
 
 # Get history for specific miner
 python scripts/query_node_metrics.py --miner <MINER_ID> --limit 20
+```
+
+### File Assignment Monitoring
+
+```bash
+# Monitor file assignment system
+python scripts/query_file_assignments.py
+
+# Check pending files only
+python scripts/query_file_assignments.py --pending
+
+# Analyze miner distribution
+python scripts/query_file_assignments.py --distribution
+
+# Check new miner assignments
+python scripts/query_file_assignments.py --new-miners
+
+# Analyze capacity usage
+python scripts/query_file_assignments.py --capacity
 ```
 
 ## Development
@@ -440,6 +573,7 @@ python rabbitmq/test_connection.py
 2. **Database connection errors**: Ensure PostgreSQL is running and credentials are correct
 3. **RabbitMQ connection errors**: Check if RabbitMQ is accessible on port 5672
 4. **IPFS errors**: Ensure IPFS node is running and API is accessible
+5. **File assignment issues**: Check miner capacity and health scores using the monitoring scripts
 
 ## License
 
@@ -447,5 +581,20 @@ MIT License - see LICENSE file for details
 
 
 
-
+1) get all the node metrics
 DATABASE_URL=postgresql://user:password@localhost:5432/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/node_metrics_processor.py 
+
+2) get all the registred miners
+DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/registration_processor.py
+
+3) profiles
+DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/registration_processor.py
+
+4) pin / pinning requests
+DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/pinning_request_processor.py
+
+5) pinning file processing
+DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/pinning_file_processor.py
+
+6) miner health checks
+DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/miner_health_processor.py

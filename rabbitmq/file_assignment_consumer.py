@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""
+File Assignment Consumer
+
+This consumer processes file assignment tasks from the queue and updates the database
+with the assignments.
+
+The consumer:
+1. Reads assignment messages from the file_assignment_processing queue
+2. Handles both new assignments and reassignments
+3. Updates the file_assignments table with miner assignments (with race condition protection)
+4. Updates the files table with file metadata
+5. Marks pending_assignment_file records as assigned
+6. Handles assignment failures gracefully
+"""
+
+import asyncio
+import json
+import logging
+import os
+import sys
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import aio_pika
+from aio_pika import IncomingMessage
+from dotenv import load_dotenv
+
+from app.db.connection import init_db_pool, close_db_pool, get_db_pool
+
+# Load environment variables
+load_dotenv()
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class FileAssignmentConsumer:
+    def __init__(self):
+        self.rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://admin:admin@localhost:5672/')
+        self.queue_name = 'file_assignment_processing'
+        self.rabbitmq_connection = None
+        self.rabbitmq_channel = None
+        self.db_pool = None
+        
+    async def connect_rabbitmq(self):
+        """Connect to RabbitMQ."""
+        try:
+            self.rabbitmq_connection = await aio_pika.connect_robust(self.rabbitmq_url)
+            self.rabbitmq_channel = await self.rabbitmq_connection.channel()
+            
+            # Set prefetch count to process one message at a time
+            await self.rabbitmq_channel.set_qos(prefetch_count=1)
+            
+            logger.info("Connected to RabbitMQ")
+        except Exception as e:
+            logger.error(f"Failed to connect to RabbitMQ: {e}")
+            raise
+    
+    async def process_new_assignment(self, assignment_data: Dict[str, Any]) -> bool:
+        """
+        Process a new file assignment task.
+        
+        Args:
+            assignment_data: Assignment data from the queue
+            
+        Returns:
+            True if processed successfully, False otherwise
+        """
+        cid = assignment_data.get('cid')
+        owner = assignment_data.get('owner')
+        filename = assignment_data.get('filename', '')
+        file_size_bytes = assignment_data.get('file_size_bytes', 0)
+        assigned_miners = assignment_data.get('assigned_miners', [])
+        epoch = assignment_data.get('epoch', 0)
+        pending_file_id = assignment_data.get('pending_file_id')
+        
+        if not cid or not owner or not assigned_miners:
+            logger.error(f"Invalid assignment data: missing cid, owner, or assigned_miners. Data: {assignment_data}")
+            return False
+        
+        logger.info(f"Processing new assignment for file {filename} ({cid[:16]}...) to {len(assigned_miners)} miners")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    # 1. Insert/update the file in the files table
+                    await conn.execute("""
+                        INSERT INTO files (cid, name, size, created_date)
+                        VALUES ($1, $2, $3, NOW())
+                        ON CONFLICT (cid) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            size = EXCLUDED.size
+                    """, cid, filename, file_size_bytes)
+                    
+                    # 2. Prepare miner assignments (pad to 5 miners)
+                    miners_padded = (assigned_miners + [None] * 5)[:5]
+                    
+                    # 3. Insert/update file assignments
+                    await conn.execute("""
+                        INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        ON CONFLICT (cid) DO UPDATE SET
+                            owner = EXCLUDED.owner,
+                            miner1 = EXCLUDED.miner1,
+                            miner2 = EXCLUDED.miner2,
+                            miner3 = EXCLUDED.miner3,
+                            miner4 = EXCLUDED.miner4,
+                            miner5 = EXCLUDED.miner5,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, cid, owner, miners_padded[0], miners_padded[1], 
+                        miners_padded[2], miners_padded[3], miners_padded[4])
+                    
+                    # 4. Update pending_assignment_file status if we have the ID
+                    if pending_file_id:
+                        await conn.execute("""
+                            UPDATE pending_assignment_file
+                            SET status = 'assigned', processed_at = CURRENT_TIMESTAMP
+                            WHERE id = $1
+                        """, pending_file_id)
+                    
+                    # 5. Update miner stats for assigned miners
+                    for miner_id in assigned_miners:
+                        if miner_id:  # Skip None values
+                            await conn.execute("""
+                                INSERT INTO miner_stats (
+                                    node_id, total_files_pinned, total_files_size_bytes, updated_at
+                                )
+                                VALUES ($1, 1, $2, NOW())
+                                ON CONFLICT (node_id) DO UPDATE SET
+                                    total_files_pinned = miner_stats.total_files_pinned + 1,
+                                    total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
+                                    updated_at = NOW()
+                            """, miner_id, file_size_bytes)
+                    
+                    logger.info(f"Successfully assigned file {cid[:16]}... to miners: {', '.join(assigned_miners)}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error processing new assignment for file {cid}: {e}")
+            logger.exception("Full traceback:")
+            return False
+    
+    async def process_reassignment(self, assignment_data: Dict[str, Any]) -> bool:
+        """
+        Process a file reassignment task (filling empty slots).
+        
+        Args:
+            assignment_data: Reassignment data from the queue
+            
+        Returns:
+            True if processed successfully, False otherwise
+        """
+        cid = assignment_data.get('cid')
+        owner = assignment_data.get('owner')
+        filename = assignment_data.get('filename', '')
+        file_size_bytes = assignment_data.get('file_size_bytes', 0)
+        current_miners = assignment_data.get('current_miners', [])
+        new_miners = assignment_data.get('new_miners', [])
+        
+        if not cid or not owner or not new_miners:
+            logger.error(f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}")
+            return False
+        
+        logger.info(f"Processing reassignment for file {filename} ({cid[:16]}...) - adding {len(new_miners)} miners")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    # 1. Get current assignment state (to handle race conditions)
+                    current_assignment = await conn.fetchrow("""
+                        SELECT miner1, miner2, miner3, miner4, miner5, updated_at
+                        FROM file_assignments
+                        WHERE cid = $1
+                        FOR UPDATE
+                    """, cid)
+                    
+                    if not current_assignment:
+                        logger.error(f"File assignment not found for CID {cid}")
+                        return False
+                    
+                    # 2. Build the updated miner list
+                    current_list = [
+                        current_assignment['miner1'], current_assignment['miner2'],
+                        current_assignment['miner3'], current_assignment['miner4'],
+                        current_assignment['miner5']
+                    ]
+                    
+                    # 3. Fill empty slots with new miners
+                    new_miner_index = 0
+                    updated_miners = []
+                    
+                    for i, current_miner in enumerate(current_list):
+                        if current_miner is None and new_miner_index < len(new_miners):
+                            # Fill empty slot with new miner
+                            updated_miners.append(new_miners[new_miner_index])
+                            new_miner_index += 1
+                        else:
+                            # Keep existing miner (or None if no new miners left)
+                            updated_miners.append(current_miner)
+                    
+                    # 4. Update file assignments with race condition protection
+                    result = await conn.execute("""
+                        UPDATE file_assignments
+                        SET miner1 = $2, miner2 = $3, miner3 = $4, miner4 = $5, miner5 = $6,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE cid = $1
+                        AND updated_at = $7
+                    """, cid, updated_miners[0], updated_miners[1], updated_miners[2], 
+                        updated_miners[3], updated_miners[4], current_assignment['updated_at'])
+                    
+                    # Check if update was successful (no race condition)
+                    if result == "UPDATE 0":
+                        logger.warning(f"Race condition detected for file {cid} - assignment was modified by another process")
+                        return False
+                    
+                    # 5. Update miner stats for newly assigned miners
+                    for miner_id in new_miners:
+                        if miner_id:  # Skip None values
+                            await conn.execute("""
+                                INSERT INTO miner_stats (
+                                    node_id, total_files_pinned, total_files_size_bytes, updated_at
+                                )
+                                VALUES ($1, 1, $2, NOW())
+                                ON CONFLICT (node_id) DO UPDATE SET
+                                    total_files_pinned = miner_stats.total_files_pinned + 1,
+                                    total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
+                                    updated_at = NOW()
+                            """, miner_id, file_size_bytes)
+                    
+                    logger.info(f"Successfully reassigned file {cid[:16]}... - added miners: {', '.join(new_miners)}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error processing reassignment for file {cid}: {e}")
+            logger.exception("Full traceback:")
+            return False
+    
+    async def process_assignment(self, assignment_data: Dict[str, Any]) -> bool:
+        """
+        Process a file assignment task (either new or reassignment).
+        
+        Args:
+            assignment_data: Assignment data from the queue
+            
+        Returns:
+            True if processed successfully, False otherwise
+        """
+        assignment_type = assignment_data.get('type', 'new_assignment')
+        
+        if assignment_type == 'new_assignment':
+            return await self.process_new_assignment(assignment_data)
+        elif assignment_type == 'reassignment':
+            return await self.process_reassignment(assignment_data)
+        else:
+            logger.error(f"Unknown assignment type: {assignment_type}")
+            return False
+    
+    async def message_handler(self, message: IncomingMessage):
+        """Handle incoming assignment messages."""
+        async with message.process():
+            try:
+                # Parse message
+                assignment_data = json.loads(message.body.decode())
+                
+                # Process the assignment
+                success = await self.process_assignment(assignment_data)
+                
+                if success:
+                    logger.debug(f"Successfully processed {assignment_data.get('type', 'assignment')} for {assignment_data.get('cid', 'unknown')}")
+                else:
+                    logger.error(f"Failed to process {assignment_data.get('type', 'assignment')} for {assignment_data.get('cid', 'unknown')}")
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode message: {e}")
+            except Exception as e:
+                logger.error(f"Error in message handler: {e}")
+                logger.exception("Full traceback:")
+    
+    async def start_consuming(self):
+        """Start consuming messages from the queue."""
+        try:
+            # Declare the queue (in case it doesn't exist)
+            queue = await self.rabbitmq_channel.declare_queue(
+                self.queue_name,
+                durable=True
+            )
+            
+            logger.info(f"Starting to consume from queue '{self.queue_name}'")
+            
+            # Start consuming
+            await queue.consume(self.message_handler)
+            
+            # Keep the consumer running
+            logger.info("File assignment consumer is running. Press Ctrl+C to stop.")
+            try:
+                await asyncio.Future()  # Run forever
+            except asyncio.CancelledError:
+                logger.info("Consumer cancelled")
+            
+        except Exception as e:
+            logger.error(f"Error in consumer: {e}")
+            raise
+    
+    async def close(self):
+        """Close all connections."""
+        if self.rabbitmq_connection:
+            await self.rabbitmq_connection.close()
+            logger.info("Closed RabbitMQ connection")
+
+
+async def main():
+    """Main entry point."""
+    consumer = FileAssignmentConsumer()
+    
+    try:
+        # Initialize database pool
+        await init_db_pool()
+        consumer.db_pool = await get_db_pool()
+        logger.info("Database connection pool initialized")
+        
+        # Connect to RabbitMQ
+        await consumer.connect_rabbitmq()
+        
+        # Start consuming
+        await consumer.start_consuming()
+        
+    except KeyboardInterrupt:
+        logger.info("Shutting down file assignment consumer...")
+    except Exception as e:
+        logger.error(f"Error in consumer: {e}")
+        raise
+    finally:
+        await consumer.close()
+        await close_db_pool()
+
+
+if __name__ == "__main__":
+    asyncio.run(main()) 

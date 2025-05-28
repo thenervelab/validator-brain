@@ -197,16 +197,16 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: miner-health-consumer-with-reassignment
+  name: miner-health-consumer
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: miner-health-consumer-with-reassignment
+      app: miner-health-consumer
   template:
     metadata:
       labels:
-        app: miner-health-consumer-with-reassignment
+        app: miner-health-consumer
     spec:
       initContainers:
       - name: wait-for-services
@@ -216,24 +216,14 @@ spec:
       - name: consumer
         image: ipfs-service-validator:latest
         imagePullPolicy: Never
-        command: ["python", "rabbitmq/miner_health_consumer_with_reassignment.py"]
+        command: ["python", "rabbitmq/miner_health_consumer.py"]
         env:
-        - name: MAX_FILES_PER_MINER
-          value: "10"
-        - name: ENABLE_AUTO_REASSIGNMENT
-          value: "true"
-        - name: MIN_REPLICAS
+        - name: HEALTH_CHECK_FILES_PER_MINER
           value: "3"
-        - name: MAX_REPLICAS
-          value: "5"
-        - name: MIN_AVAILABILITY_SCORE
-          value: "0.7"
-        - name: MAX_CONSECUTIVE_FAILURES
-          value: "3"
-        - name: FAILURE_WINDOW_HOURS
-          value: "24"
-        - name: REASSIGNMENT_COOLDOWN_HOURS
-          value: "6"
+        - name: PING_FAILURE_THRESHOLD
+          value: "1"
+        - name: PIN_FAILURE_THRESHOLD
+          value: "2"
         envFrom:
         - configMapRef:
             name: ipfs-validator-config
@@ -265,6 +255,34 @@ spec:
         env:
         - name: EPOCH_MAX_FILES_PER_MINER
           value: "50"
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: file-assignment-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: file-assignment-consumer
+  template:
+    metadata:
+      labels:
+        app: file-assignment-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: ipfs-service-validator:latest
+        imagePullPolicy: Never
+        command: ["python", "rabbitmq/file_assignment_consumer.py"]
         envFrom:
         - configMapRef:
             name: ipfs-validator-config

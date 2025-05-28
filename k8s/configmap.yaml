@@ -16,6 +16,7 @@ data:
   REMOTE_IPFS_URL: "https://store.hippius.network"
   NODE_URL: "wss://rpc.hippius.network"
   VALIDATOR_ACCOUNT_ID: "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"
+  VALIDATOR_SEED_PHRASE: "your seed phrase here replace with actual validator seed"
   MINER_PROFILE_BATCH_SIZE: "0"
   USER_PROFILE_BATCH_SIZE: "0"
   PYTHONUNBUFFERED: "1"
