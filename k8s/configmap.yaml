@@ -21,11 +21,11 @@ data:
   REMOTE_IPFS_URL: "https://store.hippius.network"
   
   # Blockchain Configuration
-  NODE_URL: "wss://rpc.hippius.network"
+  NODE_URL: "wss://hippius-testnet.starkleytech.com"
   
   # Validator Configuration (UPDATE THESE WITH YOUR ACTUAL VALUES)
-  VALIDATOR_ACCOUNT_ID: "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"
-  # VALIDATOR_SEED: "your twelve word seed phrase here for signing transactions"
+  VALIDATOR_ACCOUNT_ID: "5CP9wzk9G3kMdJmNyAsWGWVWDQE7Goe1dUvKtMv51EoXs563"
+  VALIDATOR_SEED: "mutual letter stamp movie outer patrol shrug cattle mean must manual element"
   
   # Epoch Orchestrator Configuration
   BLOCK_CHECK_INTERVAL: "6"          # Check blockchain every 6 seconds (every block)
