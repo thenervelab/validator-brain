@@ -217,13 +217,6 @@ spec:
         image: ipfs-service-validator:latest
         imagePullPolicy: Never
         command: ["python", "rabbitmq/miner_health_consumer.py"]
-        env:
-        - name: HEALTH_CHECK_FILES_PER_MINER
-          value: "3"
-        - name: PING_FAILURE_THRESHOLD
-          value: "1"
-        - name: PIN_FAILURE_THRESHOLD
-          value: "2"
         envFrom:
         - configMapRef:
             name: ipfs-validator-config
@@ -252,9 +245,6 @@ spec:
         image: ipfs-service-validator:latest
         imagePullPolicy: Never
         command: ["python", "rabbitmq/epoch_health_consumer.py"]
-        env:
-        - name: EPOCH_MAX_FILES_PER_MINER
-          value: "50"
         envFrom:
         - configMapRef:
             name: ipfs-validator-config

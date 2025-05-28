@@ -315,6 +315,11 @@ class EpochOrchestrator:
         """Perform epoch initialization tasks."""
         logger.info("🚀 Starting epoch initialization")
         
+        # Clean up tables from previous epoch
+        cleanup_success = await self.cleanup_epoch_tables()
+        if not cleanup_success:
+            logger.warning("⚠️ Table cleanup failed, but continuing with initialization")
+        
         # Refresh all base data
         tasks = [
             self.refresh_registration_data(),
@@ -508,6 +513,45 @@ class EpochOrchestrator:
         except Exception as e:
             logger.error(f"Error creating keypair from seed: {e}")
             return None
+
+    async def cleanup_epoch_tables(self):
+        """Clean up tables at the start of each epoch."""
+        logger.info("🧹 Cleaning up epoch tables")
+        
+        tables_to_clean = [
+            'pinning_requests',
+            'miner_epoch_health', 
+            'node_metrics',
+            'parsed_cids',
+            'pending_assignment_file',
+            'pending_miner_profile',
+            'pending_submissions',
+            'pending_user_profile',
+            'processed_pinning_requests'
+        ]
+        
+        try:
+            if not self.db_pool:
+                logger.error("Database pool not initialized")
+                return False
+            
+            async with self.db_pool.acquire() as conn:
+                for table in tables_to_clean:
+                    try:
+                        # Delete all records from the table
+                        result = await conn.execute(f"DELETE FROM {table}")
+                        deleted_count = result.split()[-1] if result else "0"
+                        logger.info(f"✅ Cleaned table '{table}': {deleted_count} records deleted")
+                    except Exception as e:
+                        # Some tables might not exist, which is okay
+                        logger.warning(f"⚠️ Could not clean table '{table}': {e}")
+            
+            logger.info("✅ Epoch table cleanup completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Epoch table cleanup failed: {e}")
+            return False
 
 
 async def main():

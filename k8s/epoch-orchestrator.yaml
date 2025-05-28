@@ -22,17 +22,16 @@ spec:
         imagePullPolicy: Never
         command: ["python", "epoch_orchestrator.py"]
         env:
-        # Orchestrator configuration
-        - name: BLOCK_CHECK_INTERVAL
-          value: "6"  # Check every 6 seconds (every block)
-        - name: QUEUE_CHECK_TIMEOUT
-          value: "300"  # 5 minute timeout for queue processing
-        # Validator account (REQUIRED)
-        - name: VALIDATOR_ACCOUNT_ID
-          value: "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"  # Replace with your validator account
-        # Validator seed for transaction signing (OPTIONAL but recommended)
-        - name: VALIDATOR_SEED
-          value: "your_validator_seed_phrase_here"  # Replace with your validator seed phrase
+        # Override ConfigMap values if needed for this specific deployment
+        # Uncomment and set these if you need different values than the ConfigMap
+        # - name: VALIDATOR_ACCOUNT_ID
+        #   value: "your_actual_validator_account_id_here"
+        # - name: VALIDATOR_SEED
+        #   value: "your_actual_validator_seed_phrase_here"
+        # - name: BLOCK_CHECK_INTERVAL
+        #   value: "6"
+        # - name: QUEUE_CHECK_TIMEOUT
+        #   value: "300"
         envFrom:
         - configMapRef:
             name: ipfs-validator-config

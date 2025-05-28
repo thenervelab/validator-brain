@@ -71,6 +71,37 @@ USER_PROFILE_BATCH_SIZE=0   # 0 = process all users, >0 = batch size limit
 NODE_METRICS_HISTORY_BLOCKS=10  # Number of blocks to keep per miner
 ```
 
+### Quick Setup with Launch Script
+
+For easy setup and testing, use the provided launch script:
+
+```bash
+# 1. Copy the environment template
+cp environment.example my_environment.sh
+
+# 2. Edit the file with your actual values
+nano my_environment.sh
+
+# 3. Source the environment
+source my_environment.sh
+
+# 4. Test connectivity
+./launch_epoch_orchestrator.sh --check-only
+
+# 5. Show current blockchain status
+./launch_epoch_orchestrator.sh --status
+
+# 6. Launch the orchestrator
+./launch_epoch_orchestrator.sh
+```
+
+The launch script provides:
+- ✅ **Pre-flight checks**: Validates environment variables and dependencies
+- ✅ **Connectivity tests**: Tests blockchain and database connections
+- ✅ **Status display**: Shows current epoch and validator information
+- ✅ **Graceful shutdown**: Handles Ctrl+C properly
+- ✅ **Colored output**: Easy-to-read status messages
+
 ## Components
 
 ### 1. User Profiles
@@ -366,12 +397,41 @@ python scripts/query_miner_health.py --epoch 7104 --stats
 
 The **Epoch Orchestrator** is the main controller that manages the entire IPFS Service Validator application lifecycle based on whether we are the current epoch validator or not. It runs continuously and coordinates all processors and consumers.
 
+**🆕 Automatic Table Cleanup**: At the start of each epoch, the orchestrator automatically cleans up the following tables to ensure fresh data:
+- `pinning_requests`
+- `miner_epoch_health` 
+- `node_metrics`
+- `parsed_cids`
+- `pending_assignment_file`
+- `pending_miner_profile`
+- `pending_submissions`
+- `pending_user_profile`
+- `processed_pinning_requests`
+
 ```bash
 # Run the epoch orchestrator (main application controller)
 python epoch_orchestrator.py
 
+# OR use the convenient launch script with pre-flight checks
+./launch_epoch_orchestrator.sh
+
 # Deploy in Kubernetes
 kubectl apply -f k8s/epoch-orchestrator.yaml
+```
+
+**Launch Script Options:**
+```bash
+# Show help and usage
+./launch_epoch_orchestrator.sh --help
+
+# Check connectivity without launching
+./launch_epoch_orchestrator.sh --check-only
+
+# Show current blockchain status
+./launch_epoch_orchestrator.sh --status
+
+# Normal launch (with full pre-flight checks)
+./launch_epoch_orchestrator.sh
 ```
 
 **Epoch Structure (100 blocks per epoch):**
@@ -457,7 +517,56 @@ For comprehensive setup, configuration, and troubleshooting information, see [do
 
 ## Kubernetes Deployment
 
-The Kubernetes deployment includes all services and consumers:
+The Kubernetes deployment includes all services and consumers with **centralized configuration management** via ConfigMap.
+
+### Configuration Management
+
+All environment variables are managed through the `ipfs-validator-config` ConfigMap for consistency across all deployments.
+
+**Quick Setup:**
+```bash
+# 1. Update ConfigMap with your validator credentials and deploy
+./launch_epoch_orchestrator.sh --update-configmap \
+                               --validator-account "YOUR_VALIDATOR_ACCOUNT_ID" \
+                               --validator-seed "your twelve word seed phrase here" \
+                               --apply-k8s
+
+# 2. Deploy remaining services (if not already deployed)
+kubectl apply -f k8s/
+
+# 3. Monitor the epoch orchestrator
+kubectl logs -f deployment/epoch-orchestrator
+```
+
+**Manual Configuration:**
+```bash
+# Edit the ConfigMap directly
+nano k8s/configmap.yaml
+
+# Update these required values:
+# VALIDATOR_ACCOUNT_ID: "your_actual_validator_account_id"
+# VALIDATOR_SEED: "your_actual_seed_phrase"  # Uncomment this line
+
+# Apply the changes
+kubectl apply -f k8s/configmap.yaml
+kubectl rollout restart deployment/epoch-orchestrator
+```
+
+**ConfigMap Management via Launch Script:**
+```bash
+# Update ConfigMap only (no deployment)
+./launch_epoch_orchestrator.sh --update-configmap \
+                               --validator-account "YOUR_VALIDATOR_ACCOUNT_ID" \
+                               --validator-seed "your seed phrase"
+
+# Update and apply to Kubernetes
+./launch_epoch_orchestrator.sh --update-configmap \
+                               --validator-account "YOUR_VALIDATOR_ACCOUNT_ID" \
+                               --apply-k8s
+
+# Check current status
+./launch_epoch_orchestrator.sh --status
+```
 
 **Services:**
 - `postgres`: PostgreSQL database
@@ -670,7 +779,21 @@ python rabbitmq/test_connection.py
 
 MIT License - see LICENSE file for details
 
+**Environment Variables in ConfigMap:**
 
+The ConfigMap includes all necessary environment variables for the entire system:
+
+- **Database**: `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
+- **RabbitMQ**: `RABBITMQ_URL`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`
+- **IPFS**: `IPFS_NODE_URL`, `IPFS_GATEWAY_URL`, `REMOTE_IPFS_URL`
+- **Blockchain**: `NODE_URL`
+- **Validator**: `VALIDATOR_ACCOUNT_ID`, `VALIDATOR_SEED` (optional)
+- **Orchestrator**: `BLOCK_CHECK_INTERVAL`, `QUEUE_CHECK_TIMEOUT`
+- **Health Checks**: `HEALTH_CHECK_FILES_PER_MINER`, `PING_FAILURE_THRESHOLD`, etc.
+- **File Assignment**: `REPLICAS_PER_FILE`, `MIN_MINER_HEALTH_SCORE`, etc.
+- **Processing**: `MINER_PROFILE_BATCH_SIZE`, `USER_PROFILE_BATCH_SIZE`, etc.
+
+**Services:**
 
 1) get all the node metrics
 DATABASE_URL=postgresql://user:password@localhost:5432/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/node_metrics_processor.py 
