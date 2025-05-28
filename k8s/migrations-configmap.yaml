@@ -370,6 +370,24 @@ data:
     ON pending_assignment_file(status);\nCREATE INDEX idx_pending_assignment_file_created_at
     ON pending_assignment_file(created_at);\n\n-- migrate:down\nDROP TABLE IF EXISTS
     pending_assignment_file; "
+  20250528120000_add_epoch_submissions_table.sql: "-- migrate:up\nCREATE TABLE IF
+    NOT EXISTS epoch_submissions (\n    id SERIAL PRIMARY KEY,\n    epoch BIGINT NOT
+    NULL UNIQUE,\n    submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,\n    miner_count
+    INTEGER NOT NULL DEFAULT 0,\n    success BOOLEAN NOT NULL DEFAULT false,\n    created_at
+    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,\n    updated_at TIMESTAMP
+    WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Create indexes for better query
+    performance\nCREATE INDEX idx_epoch_submissions_epoch ON epoch_submissions(epoch);\nCREATE
+    INDEX idx_epoch_submissions_submitted_at ON epoch_submissions(submitted_at);\nCREATE
+    INDEX idx_epoch_submissions_success ON epoch_submissions(success);\n\n-- Create
+    trigger to update updated_at timestamp\nCREATE OR REPLACE FUNCTION update_epoch_submissions_updated_at()\nRETURNS
+    TRIGGER AS $$\nBEGIN\n    NEW.updated_at = CURRENT_TIMESTAMP;\n    RETURN NEW;\nEND;\n$$
+    LANGUAGE plpgsql;\n\nCREATE TRIGGER update_epoch_submissions_updated_at_trigger\n
+    \   BEFORE UPDATE ON epoch_submissions\n    FOR EACH ROW\n    EXECUTE FUNCTION
+    update_epoch_submissions_updated_at();\n\n-- migrate:down\nDROP TRIGGER IF EXISTS
+    update_epoch_submissions_updated_at_trigger ON epoch_submissions;\nDROP FUNCTION
+    IF EXISTS update_epoch_submissions_updated_at();\nDROP INDEX IF EXISTS idx_epoch_submissions_success;\nDROP
+    INDEX IF EXISTS idx_epoch_submissions_submitted_at;\nDROP INDEX IF EXISTS idx_epoch_submissions_epoch;\nDROP
+    TABLE IF EXISTS epoch_submissions; "
 kind: ConfigMap
 metadata:
   creationTimestamp: null
