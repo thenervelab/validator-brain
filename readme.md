@@ -362,6 +362,97 @@ python scripts/query_miner_health.py --miner 12D3KooWKnhGPbTtCgEPWRxGJhtFFcbMTEe
 python scripts/query_miner_health.py --epoch 7104 --stats
 ```
 
+### 10. Epoch Orchestrator
+
+The **Epoch Orchestrator** is the main controller that manages the entire IPFS Service Validator application lifecycle based on whether we are the current epoch validator or not. It runs continuously and coordinates all processors and consumers.
+
+```bash
+# Run the epoch orchestrator (main application controller)
+python epoch_orchestrator.py
+
+# Deploy in Kubernetes
+kubectl apply -f k8s/epoch-orchestrator.yaml
+```
+
+**Epoch Structure (100 blocks per epoch):**
+- **Block 0-10**: Initialization (registration, node metrics, user profiles)
+- **Block 11-50**: Pinning requests processing (validator only)
+- **Block 51-80**: File assignment and health checks
+- **Block 81-95**: Profile reconstruction (must complete before block 95)
+- **Block 96-99**: Finalization and preparation for next epoch
+
+**Workflow Modes:**
+
+**🔸 Non-Validator Mode:**
+1. Refresh data at epoch start (registration, node metrics, user profiles)
+2. Perform health checks and submit results to chain
+3. Wait for end of epoch
+
+**🔸 Validator Mode:**
+1. **Initialization Phase (0-10)**: Refresh all base data
+2. **Pinning Phase (11-50)**: Process pinning requests periodically
+3. **Assignment Phase (51-80)**: Assign files and perform health checks
+4. **Reconstruction Phase (81-95)**: Reconstruct user and miner profiles
+5. **Finalization Phase (96-99)**: Prepare for next epoch
+
+**Key Features:**
+- **Automatic Role Detection**: Queries blockchain to determine if we're the current epoch validator
+- **Phase-Based Execution**: Different tasks run at appropriate times within the epoch
+- **Queue Monitoring**: Waits for processors to complete before moving to next phase
+- **State Management**: Tracks completion of each phase to avoid duplicate work
+- **Error Handling**: Robust error handling with fallback mechanisms
+- **Continuous Operation**: Runs indefinitely, monitoring blockchain for epoch changes
+
+**Configuration:**
+```env
+VALIDATOR_ACCOUNT_ID=5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g  # Your validator account (REQUIRED)
+VALIDATOR_SEED="your twelve word seed phrase here"                        # Your validator seed for transaction signing (OPTIONAL)
+BLOCK_CHECK_INTERVAL=6           # How often to check blockchain (seconds) - every block
+QUEUE_CHECK_TIMEOUT=300          # Timeout for queue processing (seconds)
+```
+
+**Blockchain Integration:**
+- Queries `IpfsPallet.CurrentEpochValidator` to determine current validator
+- Monitors block progression every 6 seconds (every block) to trigger phase transitions
+- Automatically detects epoch changes and resets state
+- Optional transaction signing with validator seed for submitting results to chain
+
+**Queue Management:**
+- Monitors RabbitMQ queues to ensure processing completion
+- Uses actual queue message counts (not time-based assumptions)
+- Waits for queues to be empty before proceeding to next phase
+
+**Kubernetes Deployment:**
+- Runs as single replica deployment (`epoch-orchestrator`)
+- Requires `VALIDATOR_ACCOUNT_ID` environment variable
+- Optional `VALIDATOR_SEED` for transaction signing capabilities
+- Manages all other processors automatically
+- All consumers run continuously in parallel
+
+**Monitoring:**
+```bash
+# Check orchestrator logs
+kubectl logs -f deployment/epoch-orchestrator
+
+# Check current epoch and validator status
+python -c "
+from app.utils.epoch_validator import *
+substrate = connect_substrate()
+epoch, block = get_current_epoch_info(substrate)
+validator_account = get_validator_account_from_env()
+is_val, current_val, epoch_start = is_epoch_validator(substrate, validator_account)
+print(f'Epoch: {epoch}, Block: {block}, Position: {block % 100}/99')
+print(f'We are validator: {is_val}')
+print(f'Current validator: {current_val}')
+"
+
+# Check queue status
+python scripts/check_queue_status.py registration node_metrics_latest user_profile
+```
+
+**📚 Detailed Documentation:**
+For comprehensive setup, configuration, and troubleshooting information, see [docs/EPOCH_ORCHESTRATOR.md](docs/EPOCH_ORCHESTRATOR.md)
+
 ## Docker Services
 
 ## Kubernetes Deployment
