@@ -1,9 +1,10 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: ipfs
 spec:
-  replicas: 1
+  serviceName: ipfs-service
+  replicas: 2
   selector:
     matchLabels:
       app: ipfs
@@ -69,10 +70,14 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 10
-      volumes:
-      - name: ipfs-data
-        persistentVolumeClaim:
-          claimName: ipfs-data-pvc
+  volumeClaimTemplates:
+  - metadata:
+      name: ipfs-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
 ---
 apiVersion: v1
 kind: Service

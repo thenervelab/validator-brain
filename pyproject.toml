@@ -12,7 +12,7 @@ description = "IPFS Service Validator for Substrate-based blockchain network (Bi
 requires-python = ">=3.9"
 license = {file = "LICENSE"}
 authors = [
-    {name = "veggies", email = "veggies@hippius.com"},
+    {name = "dubs", email = "dubs@dubs.rs"},
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

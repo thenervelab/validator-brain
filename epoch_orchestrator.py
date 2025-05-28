@@ -72,11 +72,20 @@ class EpochOrchestrator:
         self.epoch_start_block = None
         
         # State tracking
-        self.epoch_initialized = False
-        self.pinning_requests_processed = False
-        self.files_assigned = False
+        self.current_epoch = None
+        self.is_validator = False
+        self.initialization_completed = False
+        self.pinning_completed = False
+        self.assignment_completed = False
         self.health_checks_completed = False
+        self.health_metrics_submitted = False
         self.profiles_reconstructed = False
+        self.blockchain_submitted = False
+        
+        # Connection management
+        self.connection_failures = 0
+        self.last_failure_time = 0
+        self.max_backoff = 300  # 5 minutes max backoff
         
         # Configuration
         self.block_check_interval = int(os.getenv('BLOCK_CHECK_INTERVAL', '6'))  # seconds (every block)
@@ -119,6 +128,36 @@ class EpochOrchestrator:
         if self.db_pool:
             await close_db_pool()
         logger.info("Epoch orchestrator cleaned up")
+    
+    def get_backoff_delay(self) -> int:
+        """Calculate exponential backoff delay based on connection failures."""
+        if self.connection_failures == 0:
+            return 0
+        
+        # Exponential backoff: 2^failures * base_delay, capped at max_backoff
+        base_delay = 10  # 10 seconds base delay
+        delay = min(base_delay * (2 ** (self.connection_failures - 1)), self.max_backoff)
+        return delay
+    
+    def should_attempt_connection(self) -> bool:
+        """Check if enough time has passed since last failure to attempt connection."""
+        if self.connection_failures == 0:
+            return True
+        
+        backoff_delay = self.get_backoff_delay()
+        time_since_failure = time.time() - self.last_failure_time
+        return time_since_failure >= backoff_delay
+    
+    def record_connection_success(self):
+        """Record successful connection, reset failure count."""
+        self.connection_failures = 0
+        self.last_failure_time = 0
+    
+    def record_connection_failure(self):
+        """Record connection failure, increment failure count."""
+        self.connection_failures += 1
+        self.last_failure_time = time.time()
+        logger.warning(f"Connection failure #{self.connection_failures}, next attempt in {self.get_backoff_delay()}s")
     
     def run_processor(self, processor_name: str, description: str) -> bool:
         """
@@ -311,6 +350,81 @@ class EpochOrchestrator:
         
         return user_success and miner_success
     
+    async def submit_to_blockchain(self) -> bool:
+        """Submit reconstructed profiles and storage requests to the blockchain."""
+        logger.info("📤 Submitting profiles and storage requests to blockchain")
+        
+        try:
+            from app.utils.blockchain_submission import (
+                collect_storage_requests_for_submission,
+                collect_miner_profiles_for_submission,
+                call_update_pin_and_storage_requests,
+                mark_submissions_as_completed
+            )
+            
+            if not self.db_pool:
+                logger.error("Database pool not initialized")
+                return False
+            
+            # Collect data for submission
+            logger.info("Collecting storage requests and miner profiles for submission...")
+            
+            storage_requests = await collect_storage_requests_for_submission(self.db_pool)
+            miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
+            
+            if not storage_requests and not miner_profiles:
+                logger.info("No data to submit to blockchain")
+                return True
+            
+            logger.info(f"Prepared for submission:")
+            logger.info(f"  - {len(storage_requests)} storage requests")
+            logger.info(f"  - {len(miner_profiles)} miner profiles")
+            
+            # Submit to blockchain (this function will try different sizes if needed)
+            success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(storage_requests, miner_profiles)
+            
+            if success:
+                # Mark only the actually submitted items as completed in database
+                await mark_submissions_as_completed(self.db_pool, submitted_requests, submitted_profiles)
+                
+                logger.info(f"✅ Successfully submitted to blockchain and updated database")
+                logger.info(f"   - Submitted: {len(submitted_requests)}/{len(storage_requests)} storage requests")
+                logger.info(f"   - Submitted: {len(submitted_profiles)}/{len(miner_profiles)} miner profiles")
+                
+                return True
+            else:
+                logger.error("❌ Failed to submit to blockchain")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error during blockchain submission: {e}")
+            return False
+    
+    async def submit_health_metrics(self) -> bool:
+        """Submit health check metrics to the blockchain."""
+        logger.info("📊 Submitting health check metrics to blockchain")
+        
+        try:
+            from app.utils.blockchain_submission import submit_health_metrics_to_blockchain
+            
+            if not self.db_pool:
+                logger.error("Database pool not initialized")
+                return False
+            
+            # Submit health metrics to blockchain
+            success = await submit_health_metrics_to_blockchain(self.db_pool)
+            
+            if success:
+                logger.info("✅ Successfully submitted health metrics to blockchain")
+                return True
+            else:
+                logger.error("❌ Failed to submit health metrics to blockchain")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error during health metrics submission: {e}")
+            return False
+    
     async def epoch_initialization(self) -> bool:
         """Perform epoch initialization tasks."""
         logger.info("🚀 Starting epoch initialization")
@@ -343,10 +457,10 @@ class EpochOrchestrator:
         logger.info("👤 Executing NON-VALIDATOR workflow")
         
         # Initialize epoch data
-        if not self.epoch_initialized:
+        if not self.initialization_completed:
             success = await self.epoch_initialization()
             if success:
-                self.epoch_initialized = True
+                self.initialization_completed = True
             else:
                 logger.error("Failed to initialize epoch data")
                 return
@@ -356,9 +470,18 @@ class EpochOrchestrator:
             success = await self.perform_health_checks()
             if success:
                 self.health_checks_completed = True
-                logger.info("✅ Health checks completed and submitted to chain")
+                logger.info("✅ Health checks completed")
             else:
                 logger.error("❌ Health checks failed")
+        
+        # Submit health metrics to blockchain
+        if self.health_checks_completed and not self.health_metrics_submitted:
+            success = await self.submit_health_metrics()
+            if success:
+                self.health_metrics_submitted = True
+                logger.info("✅ Health metrics submitted to blockchain")
+            else:
+                logger.error("❌ Health metrics submission failed")
         
         # Wait for end of epoch
         logger.info("⏳ Waiting for end of epoch...")
@@ -367,23 +490,25 @@ class EpochOrchestrator:
         """Execute validator workflow."""
         logger.info("👑 Executing VALIDATOR workflow")
         
-        current_epoch, current_block = get_current_epoch_info(self.substrate)
+        # Use the current epoch and block from the main loop
+        current_epoch = self.current_epoch
+        current_block = self.current_block
         block_position = get_epoch_block_position(current_block)
         
         logger.info(f"Current block position in epoch: {block_position}/99")
         
         # Phase 1: Initialization (blocks 0-10)
-        if block_position <= 10 and not self.epoch_initialized:
+        if block_position <= 10 and not self.initialization_completed:
             success = await self.epoch_initialization()
             if success:
-                self.epoch_initialized = True
+                self.initialization_completed = True
             else:
                 logger.error("Failed to initialize epoch data")
                 return
         
         # Phase 2: Pinning requests (blocks 11-50)
         elif 11 <= block_position <= 50:
-            if not self.pinning_requests_processed:
+            if not self.pinning_completed:
                 # Process pinning requests periodically
                 success = await self.process_pinning_requests()
                 if success:
@@ -392,19 +517,28 @@ class EpochOrchestrator:
                 
                 # Don't mark as completed until block 50 to allow periodic processing
                 if block_position >= 45:
-                    self.pinning_requests_processed = True
+                    self.pinning_completed = True
         
         # Phase 3: File assignment and health checks (blocks 51-80)
         elif 51 <= block_position <= 80:
-            if not self.files_assigned:
+            if not self.assignment_completed:
                 success = await self.assign_files()
                 if success:
-                    self.files_assigned = True
+                    self.assignment_completed = True
             
             if not self.health_checks_completed:
                 success = await self.perform_health_checks()
                 if success:
                     self.health_checks_completed = True
+            
+            # Submit health metrics to blockchain
+            if self.health_checks_completed and not self.health_metrics_submitted:
+                success = await self.submit_health_metrics()
+                if success:
+                    self.health_metrics_submitted = True
+                    logger.info("✅ Health metrics submitted to blockchain")
+                else:
+                    logger.error("❌ Health metrics submission failed")
         
         # Phase 4: Profile reconstruction (blocks 81-95)
         elif 81 <= block_position <= 95:
@@ -412,23 +546,53 @@ class EpochOrchestrator:
                 success = await self.reconstruct_profiles()
                 if success:
                     self.profiles_reconstructed = True
-                    logger.info("✅ All profile reconstruction completed before block 95")
+                    logger.info("✅ All profile reconstruction completed")
                 else:
                     logger.error("❌ Profile reconstruction failed - must complete before block 95!")
+            
+            # Submit to blockchain after reconstruction (must happen before block 95)
+            if self.profiles_reconstructed and not self.blockchain_submitted:
+                if block_position <= 93:  # Leave some buffer time
+                    logger.info("📤 Submitting reconstructed profiles to blockchain...")
+                    submission_success = await self.submit_to_blockchain()
+                    if submission_success:
+                        self.blockchain_submitted = True
+                        logger.info("✅ Blockchain submission completed successfully")
+                    else:
+                        logger.error("❌ Blockchain submission failed - will retry next block")
+                else:
+                    logger.warning("⚠️ Too late in epoch to submit to blockchain safely")
         
         # Phase 5: Finalization (blocks 96-99)
-        elif block_position >= 96:
-            logger.info("🏁 Epoch finalization phase - preparing for next epoch")
+        elif 96 <= block_position <= 99:
+            logger.info("🏁 Finalization phase - preparing for next epoch")
+            logger.info(f"   Epoch {current_epoch} Summary:")
+            logger.info(f"   ✅ Initialization: {self.initialization_completed}")
+            logger.info(f"   ✅ Pinning: {self.pinning_completed}")
+            logger.info(f"   ✅ Assignment: {self.assignment_completed}")
+            logger.info(f"   ✅ Health Checks: {self.health_checks_completed}")
+            logger.info(f"   ✅ Health Metrics Submitted: {self.health_metrics_submitted}")
+            logger.info(f"   ✅ Profile Reconstruction: {self.profiles_reconstructed}")
+            logger.info(f"   ✅ Blockchain Submission: {self.blockchain_submitted}")
+            
+            if not self.health_metrics_submitted and self.health_checks_completed:
+                logger.warning("⚠️ Health checks completed but metrics not submitted to blockchain!")
+            
+            if not self.blockchain_submitted and self.profiles_reconstructed:
+                logger.warning("⚠️ Profile reconstruction completed but blockchain submission failed!")
+                logger.warning("   This may affect validator rewards for this epoch.")
     
     async def reset_epoch_state(self):
         """Reset state for new epoch."""
         logger.info("🔄 Resetting epoch state for new epoch")
         
-        self.epoch_initialized = False
-        self.pinning_requests_processed = False
-        self.files_assigned = False
+        self.initialization_completed = False
+        self.pinning_completed = False
+        self.assignment_completed = False
         self.health_checks_completed = False
+        self.health_metrics_submitted = False
         self.profiles_reconstructed = False
+        self.blockchain_submitted = False
     
     async def run(self):
         """Main orchestrator loop."""
@@ -441,11 +605,26 @@ class EpochOrchestrator:
             
             while True:
                 try:
-                    # Get current epoch and validator status
-                    current_epoch, current_block = get_current_epoch_info(self.substrate)
-                    is_validator, current_validator, epoch_start = is_epoch_validator(
+                    # Check if we should attempt connection based on backoff
+                    if not self.should_attempt_connection():
+                        backoff_delay = self.get_backoff_delay()
+                        logger.info(f"⏳ Backing off for {backoff_delay}s due to connection failures")
+                        await asyncio.sleep(min(backoff_delay, self.block_check_interval))
+                        continue
+                    
+                    # Ensure we have a substrate connection
+                    if self.substrate is None:
+                        logger.info("🔗 Creating new substrate connection...")
+                        self.substrate = connect_substrate()
+                    
+                    # Get current epoch and validator status with updated substrate connection
+                    current_epoch, current_block, self.substrate = get_current_epoch_info(self.substrate)
+                    is_validator, current_validator, epoch_start, self.substrate = is_epoch_validator(
                         self.substrate, self.our_validator_account
                     )
+                    
+                    # Record successful connection
+                    self.record_connection_success()
                     
                     # Check if we've moved to a new epoch
                     if last_epoch is not None and current_epoch != last_epoch:
@@ -483,8 +662,29 @@ class EpochOrchestrator:
                     
                 except Exception as e:
                     logger.error(f"Error in orchestrator loop: {e}")
-                    logger.exception("Full traceback:")
-                    await asyncio.sleep(60)  # Wait longer on error
+                    logger.error("Full traceback:")
+                    logger.exception("")
+                    
+                    # Record connection failure and implement backoff
+                    self.record_connection_failure()
+                    
+                    # If it's a connection error, try to reconnect with backoff
+                    if any(error_type in str(e).lower() for error_type in ["jsondecodeerror", "websocket", "broken pipe", "connection", "timeout"]):
+                        logger.warning("Connection issue detected - will retry with exponential backoff")
+                        
+                        # Close existing connection
+                        if hasattr(self, 'substrate') and self.substrate:
+                            try:
+                                self.substrate.close()
+                            except:
+                                pass  # Ignore errors when closing broken connection
+                        
+                        # Don't immediately reconnect - let the backoff logic handle it
+                        self.substrate = None
+                    
+                    # Wait with backoff before retrying
+                    backoff_delay = self.get_backoff_delay()
+                    await asyncio.sleep(min(backoff_delay, 60))  # Cap at 60 seconds for this loop
                     
         except KeyboardInterrupt:
             logger.info("🛑 Orchestrator stopped by user")

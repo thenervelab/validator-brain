@@ -438,7 +438,7 @@ kubectl apply -f k8s/epoch-orchestrator.yaml
 - **Block 0-10**: Initialization (registration, node metrics, user profiles)
 - **Block 11-50**: Pinning requests processing (validator only)
 - **Block 51-80**: File assignment and health checks
-- **Block 81-95**: Profile reconstruction (must complete before block 95)
+- **Block 81-95**: Profile reconstruction, **submit to blockchain**
 - **Block 96-99**: Finalization and preparation for next epoch
 
 **Workflow Modes:**
@@ -452,7 +452,7 @@ kubectl apply -f k8s/epoch-orchestrator.yaml
 1. **Initialization Phase (0-10)**: Refresh all base data
 2. **Pinning Phase (11-50)**: Process pinning requests periodically
 3. **Assignment Phase (51-80)**: Assign files and perform health checks
-4. **Reconstruction Phase (81-95)**: Reconstruct user and miner profiles
+4. **Reconstruction Phase (81-95)**: Reconstruct user and miner profiles, **submit to blockchain**
 5. **Finalization Phase (96-99)**: Prepare for next epoch
 
 **Key Features:**
@@ -462,6 +462,7 @@ kubectl apply -f k8s/epoch-orchestrator.yaml
 - **State Management**: Tracks completion of each phase to avoid duplicate work
 - **Error Handling**: Robust error handling with fallback mechanisms
 - **Continuous Operation**: Runs indefinitely, monitoring blockchain for epoch changes
+- **🆕 Blockchain Submission**: Automatically submits reconstructed profiles and storage requests to chain during validator epochs
 
 **Configuration:**
 ```env
@@ -786,29 +787,3 @@ The ConfigMap includes all necessary environment variables for the entire system
 - **Database**: `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 - **RabbitMQ**: `RABBITMQ_URL`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`
 - **IPFS**: `IPFS_NODE_URL`, `IPFS_GATEWAY_URL`, `REMOTE_IPFS_URL`
-- **Blockchain**: `NODE_URL`
-- **Validator**: `VALIDATOR_ACCOUNT_ID`, `VALIDATOR_SEED` (optional)
-- **Orchestrator**: `BLOCK_CHECK_INTERVAL`, `QUEUE_CHECK_TIMEOUT`
-- **Health Checks**: `HEALTH_CHECK_FILES_PER_MINER`, `PING_FAILURE_THRESHOLD`, etc.
-- **File Assignment**: `REPLICAS_PER_FILE`, `MIN_MINER_HEALTH_SCORE`, etc.
-- **Processing**: `MINER_PROFILE_BATCH_SIZE`, `USER_PROFILE_BATCH_SIZE`, etc.
-
-**Services:**
-
-1) get all the node metrics
-DATABASE_URL=postgresql://user:password@localhost:5432/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/node_metrics_processor.py 
-
-2) get all the registred miners
-DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/registration_processor.py
-
-3) profiles
-DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/registration_processor.py
-
-4) pin / pinning requests
-DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/pinning_request_processor.py
-
-5) pinning file processing
-DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/pinning_file_processor.py
-
-6) miner health checks
-DATABASE_URL=postgresql://user:password@localhost:54180/substrate_fetcher IPFS_NODE_URL=http://localhost:5001 python rabbitmq/miner_health_processor.py

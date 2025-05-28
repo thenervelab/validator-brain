@@ -21,11 +21,11 @@ data:
   REMOTE_IPFS_URL: "https://store.hippius.network"
   
   # Blockchain Configuration
-  NODE_URL: "wss://hippius-testnet.starkleytech.com"
+  NODE_URL: "wss://rpc.hippius.network"
   
   # Validator Configuration (UPDATE THESE WITH YOUR ACTUAL VALUES)
-  VALIDATOR_ACCOUNT_ID: "5CP9wzk9G3kMdJmNyAsWGWVWDQE7Goe1dUvKtMv51EoXs563"
-  VALIDATOR_SEED: "mutual letter stamp movie outer patrol shrug cattle mean must manual element"
+  VALIDATOR_ACCOUNT_ID: "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"
+  # VALIDATOR_SEED: "your twelve word seed phrase here for signing transactions"  # Uncomment and set for transaction signing
   
   # Epoch Orchestrator Configuration
   BLOCK_CHECK_INTERVAL: "6"          # Check blockchain every 6 seconds (every block)
@@ -40,11 +40,8 @@ data:
   HEALTH_CHECK_FILES_PER_MINER: "3"  # Number of files to test per miner
   PING_FAILURE_THRESHOLD: "1"        # Remove after 1 ping failure
   PIN_FAILURE_THRESHOLD: "2"         # Remove after 2 pin failures
-  IPFS_TIMEOUT_SECONDS: "30"         # Increased timeout for ping operations (was 10)
-  IPFS_DHT_TIMEOUT_SECONDS: "120"    # Increased timeout for DHT provider lookups (was 60)
-  IPFS_REFS_TIMEOUT_SECONDS: "60"    # Timeout for refs operations
-  IPFS_FETCH_TIMEOUT: "90"           # Timeout for fetch operations
-  HEALTH_CHECK_DELAY_MS: "100"       # Delay between health checks in milliseconds
+  IPFS_TIMEOUT_SECONDS: "10"         # Timeout for ping operations
+  IPFS_DHT_TIMEOUT_SECONDS: "60"     # Timeout for DHT provider lookups
   EPOCH_MAX_FILES_PER_MINER: "50"    # Max files to check per miner in epoch health checks
   
   # File Assignment Configuration

@@ -8,6 +8,7 @@ and manage epoch-related operations.
 
 import logging
 import os
+import time
 from typing import Optional, Tuple
 from substrateinterface import SubstrateInterface
 from app.utils.config import NODE_URL
@@ -15,19 +16,37 @@ from app.utils.config import NODE_URL
 logger = logging.getLogger(__name__)
 
 
-def get_current_epoch_info(substrate: SubstrateInterface) -> Tuple[int, int]:
+def get_current_epoch_info(substrate: SubstrateInterface) -> Tuple[int, int, SubstrateInterface]:
     """
-    Get current epoch and block information.
+    Get current epoch and block information with retry logic.
     
     Args:
         substrate: Connected substrate interface
         
     Returns:
-        Tuple of (current_epoch, current_block)
+        Tuple of (current_epoch, current_block, updated_substrate)
     """
-    current_block = substrate.get_block_number(None)
-    current_epoch = current_block // 100  # 100 blocks per epoch
-    return current_epoch, current_block
+    max_retries = 3
+    current_substrate = substrate
+    
+    for attempt in range(max_retries):
+        try:
+            current_block = current_substrate.get_block_number(None)
+            current_epoch = current_block // 100  # 100 blocks per epoch
+            return current_epoch, current_block, current_substrate
+        except Exception as e:
+            logger.warning(f"Failed to get epoch info (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)  # Wait before retry
+                # Try to reconnect
+                try:
+                    current_substrate.close()
+                    current_substrate = connect_substrate()
+                    logger.info("Reconnected substrate for epoch info")
+                except Exception as reconnect_error:
+                    logger.warning(f"Reconnection failed: {reconnect_error}")
+            else:
+                raise
 
 
 def get_epoch_block_position(current_block: int) -> int:
@@ -56,52 +75,67 @@ def get_epoch_start_block(epoch: int) -> int:
     return epoch * 100
 
 
-def is_epoch_validator(substrate: SubstrateInterface, our_validator_account: str) -> Tuple[bool, Optional[str], Optional[int]]:
+def is_epoch_validator(substrate: SubstrateInterface, our_validator_account: str) -> Tuple[bool, Optional[str], Optional[int], SubstrateInterface]:
     """
-    Check if we are the current epoch validator.
+    Check if we are the current epoch validator with retry logic.
     
     Args:
         substrate: Connected substrate interface
         our_validator_account: Our validator account ID from environment
         
     Returns:
-        Tuple of (is_validator, current_validator_account, epoch_start_block)
+        Tuple of (is_validator, current_validator_account, epoch_start_block, updated_substrate)
     """
-    try:
-        # Query the current epoch validator from the chain
-        result = substrate.query(
-            module='IpfsPallet',
-            storage_function='CurrentEpochValidator'
-        )
-        
-        if result is None or result.value is None:
-            logger.warning("No current epoch validator found on chain")
-            return False, None, None
-        
-        # Extract validator account and epoch start block
-        validator_account, epoch_start_block = result.value
-        
-        # Convert to string for comparison
-        current_validator = str(validator_account)
-        epoch_start = int(epoch_start_block)
-        
-        logger.info(f"Current epoch validator: {current_validator}")
-        logger.info(f"Epoch start block: {epoch_start}")
-        logger.info(f"Our validator account: {our_validator_account}")
-        
-        # Check if we are the validator
-        is_validator = (current_validator == our_validator_account)
-        
-        if is_validator:
-            logger.info("✅ We ARE the current epoch validator")
-        else:
-            logger.info("❌ We are NOT the current epoch validator")
-        
-        return is_validator, current_validator, epoch_start
-        
-    except Exception as e:
-        logger.error(f"Error checking epoch validator: {e}")
-        return False, None, None
+    max_retries = 3
+    current_substrate = substrate
+    
+    for attempt in range(max_retries):
+        try:
+            # Query the current epoch validator from the chain
+            result = current_substrate.query(
+                module='IpfsPallet',
+                storage_function='CurrentEpochValidator'
+            )
+            
+            if result is None or result.value is None:
+                logger.warning("No current epoch validator found on chain")
+                return False, None, None, current_substrate
+            
+            # Extract validator account and epoch start block
+            validator_account, epoch_start_block = result.value
+            
+            # Convert to string for comparison
+            current_validator = str(validator_account)
+            epoch_start = int(epoch_start_block)
+            
+            logger.info(f"Current epoch validator: {current_validator}")
+            logger.info(f"Epoch start block: {epoch_start}")
+            logger.info(f"Our validator account: {our_validator_account}")
+            
+            # Check if we are the validator
+            is_validator = (current_validator == our_validator_account)
+            
+            if is_validator:
+                logger.info("✅ We ARE the current epoch validator")
+            else:
+                logger.info("❌ We are NOT the current epoch validator")
+            
+            return is_validator, current_validator, epoch_start, current_substrate
+            
+        except Exception as e:
+            logger.warning(f"Failed to check epoch validator (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)  # Wait before retry
+                # Try to reconnect
+                try:
+                    current_substrate.close()
+                    current_substrate = connect_substrate()
+                    logger.info("Reconnected substrate for validator check")
+                except Exception as reconnect_error:
+                    logger.warning(f"Reconnection failed: {reconnect_error}")
+            else:
+                logger.error(f"Error checking epoch validator after {max_retries} attempts: {e}")
+                return False, None, None, current_substrate
 
 
 def get_validator_account_from_env() -> str:
@@ -123,12 +157,25 @@ def get_validator_account_from_env() -> str:
 
 def connect_substrate() -> SubstrateInterface:
     """
-    Connect to the substrate chain.
+    Connect to the substrate chain with retry logic.
     
     Returns:
         Connected substrate interface
     """
-    logger.info(f"Connecting to substrate at {NODE_URL}")
-    substrate = SubstrateInterface(url=NODE_URL)
-    logger.info("Connected to substrate")
-    return substrate 
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Connecting to substrate at {NODE_URL} (attempt {attempt + 1}/{max_retries})")
+            substrate = SubstrateInterface(
+                url=NODE_URL,
+                use_remote_preset=True
+            )
+            logger.info("Connected to substrate")
+            return substrate
+        except Exception as e:
+            logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)  # Wait before retry
+            else:
+                logger.error(f"Failed to connect to substrate after {max_retries} attempts")
+                raise 

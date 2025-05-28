@@ -120,6 +120,7 @@ kubectl get pods -l app=epoch-orchestrator
 - Pinning phase (blocks 11-50)
 - Assignment phase (blocks 51-80)
 - Reconstruction phase (blocks 81-95)
+- **🆕 Blockchain submission** (during reconstruction phase, before block 95)
 - Finalization phase (blocks 96-99)
 
 ### **👤 Non-Validator Workflows**
@@ -138,6 +139,12 @@ kubectl get pods -l app=epoch-orchestrator
 - Queue status monitoring
 - Processor execution tracking
 - **NEW**: Pre-flight connectivity checks
+
+### **🆕 Blockchain Integration**
+- **NEW**: Automatic submission of reconstructed profiles and storage requests to chain
+- **NEW**: Validator transaction signing with seed phrase
+- **NEW**: State tracking for blockchain submission completion
+- **NEW**: Retry logic for failed submissions
 
 ## 🎯 Production Readiness
 
