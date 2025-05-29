@@ -24,12 +24,24 @@ async def init_db_pool():
     global db_pool
 
     dsn = os.getenv("DATABASE_URL")
+    
+    # Get connection pool settings from environment variables with sensible defaults
+    min_size = int(os.getenv("DB_POOL_MIN_SIZE", "2"))  # Reduced from 5 to 2
+    max_size = int(os.getenv("DB_POOL_MAX_SIZE", "8"))  # Reduced from 20 to 8
+    command_timeout = int(os.getenv("DB_COMMAND_TIMEOUT", "60"))
+    
     logger.info(f"Initializing database pool with DSN: {dsn}")
+    logger.info(f"Pool settings: min_size={min_size}, max_size={max_size}, command_timeout={command_timeout}")
+    
     db_pool = await asyncpg.create_pool(
         dsn=dsn,
-        min_size=5,
-        max_size=20,
-        command_timeout=60,
+        min_size=min_size,
+        max_size=max_size,
+        command_timeout=command_timeout,
+        # Add connection pool optimization settings
+        max_inactive_connection_lifetime=300,  # 5 minutes
+        max_queries=50000,  # Recycle connections after 50k queries
+        setup=None,  # No per-connection setup
     )
     logger.info("Database pool initialized successfully")
 

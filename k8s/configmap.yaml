@@ -9,6 +9,26 @@ data:
   POSTGRES_DB: "substrate_fetcher"
   DATABASE_URL: "postgres://user:password@postgres-service:5432/substrate_fetcher?sslmode=disable"
   
+  # Database Connection Pool Configuration
+  DB_POOL_MIN_SIZE: "2"          # Minimum connections per consumer (reduced from 5)
+  DB_POOL_MAX_SIZE: "8"          # Maximum connections per consumer (reduced from 20)
+  DB_COMMAND_TIMEOUT: "60"       # Command timeout in seconds
+  
+  # PostgreSQL Configuration - High Scale
+  POSTGRES_MAX_CONNECTIONS: "1000"       # Significantly increased for high scale
+  POSTGRES_SHARED_BUFFERS: "512MB"       # Increased shared buffer size
+  POSTGRES_EFFECTIVE_CACHE_SIZE: "2GB"   # Increased effective cache size
+  POSTGRES_WORK_MEM: "8MB"               # Increased work memory per operation
+  POSTGRES_MAINTENANCE_WORK_MEM: "128MB" # Increased maintenance work memory
+  POSTGRES_MAX_WAL_SIZE: "8GB"           # Increased WAL size for better performance
+  POSTGRES_MIN_WAL_SIZE: "2GB"           # Increased minimum WAL size
+  POSTGRES_CHECKPOINT_COMPLETION_TARGET: "0.9"
+  POSTGRES_WAL_BUFFERS: "32MB"           # Increased WAL buffers
+  POSTGRES_MAX_WORKER_PROCESSES: "16"    # Increased worker processes
+  POSTGRES_MAX_PARALLEL_WORKERS: "16"    # Increased parallel workers
+  POSTGRES_MAX_PARALLEL_WORKERS_PER_GATHER: "8"
+  POSTGRES_MAX_PARALLEL_MAINTENANCE_WORKERS: "8"
+  
   # RabbitMQ Configuration
   RABBITMQ_USER: "admin"
   RABBITMQ_PASSWORD: "admin"
@@ -37,11 +57,11 @@ data:
   NODE_METRICS_HISTORY_BLOCKS: "10"  # Number of blocks to keep per miner
   
   # Health Check Configuration
-  HEALTH_CHECK_FILES_PER_MINER: "3"  # Number of files to test per miner
+  HEALTH_CHECK_FILES_PER_MINER: "1"  # Number of files to test per miner (reduced from 3)
   PING_FAILURE_THRESHOLD: "1"        # Remove after 1 ping failure
   PIN_FAILURE_THRESHOLD: "2"         # Remove after 2 pin failures
-  IPFS_TIMEOUT_SECONDS: "10"         # Timeout for ping operations
-  IPFS_DHT_TIMEOUT_SECONDS: "60"     # Timeout for DHT provider lookups
+  IPFS_TIMEOUT_SECONDS: "60"         # Timeout for ping operations (increased)
+  IPFS_DHT_TIMEOUT_SECONDS: "120"    # Timeout for DHT provider lookups (increased)
   EPOCH_MAX_FILES_PER_MINER: "50"    # Max files to check per miner in epoch health checks
   
   # File Assignment Configuration
