@@ -20,9 +20,11 @@ warn() {
     echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"
 }
 
-error() {
-    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
-}
+# Build the Docker image
+echo "🏗️  Building Docker image..."
+cd ..
+docker build -t ipfs-service-validator:latest .
+cd k8s
 
 log "🚀 Deploying IPFS Service Validator with High-Scale PostgreSQL"
 

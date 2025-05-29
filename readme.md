@@ -787,3 +787,10 @@ The ConfigMap includes all necessary environment variables for the entire system
 - **Database**: `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
 - **RabbitMQ**: `RABBITMQ_URL`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`
 - **IPFS**: `IPFS_NODE_URL`, `IPFS_GATEWAY_URL`, `REMOTE_IPFS_URL`
+
+
+
+
+docker save ipfs-service-validator:latest -o ipfs-service-validator.tar
+
+sudo ctr -n k8s.io images import ipfs-service-validator.tar
