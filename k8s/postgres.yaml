@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
+  namespace: ipfs-validator
 spec:
   replicas: 1
   selector:
@@ -119,6 +120,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres-service
+  namespace: ipfs-validator
 spec:
   selector:
     app: postgres

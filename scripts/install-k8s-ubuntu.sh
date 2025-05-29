@@ -33,13 +33,13 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Check Ubuntu version
-if ! grep -q "24.04" /etc/os-release; then
+if ! grep -q "Ubuntu 24.04" /etc/os-release; then
     warn "This script is designed for Ubuntu 24.04. Proceeding anyway..."
 fi
 
 log "🚀 Starting Kubernetes installation on Ubuntu 24.04"
 
-# Update system
+# Update system packages
 log "📦 Updating system packages..."
 apt-get update -y
 apt-get upgrade -y
@@ -63,7 +63,7 @@ sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
 # Configure kernel modules
 log "🔧 Configuring kernel modules..."
-cat <<EOF | tee /etc/modules-load.d/k8s.conf
+cat > /etc/modules-load.d/k8s.conf << EOF
 overlay
 br_netfilter
 EOF
@@ -73,7 +73,7 @@ modprobe br_netfilter
 
 # Configure sysctl parameters
 log "🔧 Configuring sysctl parameters..."
-cat <<EOF | tee /etc/sysctl.d/k8s.conf
+cat > /etc/sysctl.d/k8s.conf << EOF
 net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward                 = 1
@@ -89,9 +89,9 @@ apt-get install -y containerd
 # Configure containerd
 log "🔧 Configuring containerd..."
 mkdir -p /etc/containerd
-containerd config default | tee /etc/containerd/config.toml
+containerd config default > /etc/containerd/config.toml
 
-# Enable SystemdCgroup in containerd config
+# Enable SystemdCgroup in containerd
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 
 # Restart and enable containerd
@@ -101,22 +101,22 @@ systemctl enable containerd
 # Add Kubernetes APT repository
 log "📦 Adding Kubernetes APT repository..."
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
-
-# Update package index
-apt-get update -y
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
 
 # Install Kubernetes components
-log "☸️ Installing Kubernetes components (kubeadm, kubelet, kubectl)..."
+log "☸️  Installing Kubernetes components..."
+apt-get update -y
 apt-get install -y kubelet kubeadm kubectl
+
+# Hold Kubernetes packages to prevent automatic updates
 apt-mark hold kubelet kubeadm kubectl
 
-# Enable and start kubelet
+# Enable kubelet service
 systemctl enable kubelet
 
 # Configure crictl
 log "🔧 Configuring crictl..."
-cat <<EOF | tee /etc/crictl.yaml
+cat > /etc/crictl.yaml << EOF
 runtime-endpoint: unix:///run/containerd/containerd.sock
 image-endpoint: unix:///run/containerd/containerd.sock
 timeout: 2
@@ -124,135 +124,95 @@ debug: false
 pull-image-on-create: false
 EOF
 
-# Install additional useful tools
-log "🛠️ Installing additional tools..."
+# Install additional networking tools
+log "🌐 Installing networking tools..."
 apt-get install -y \
-    bash-completion \
-    vim \
-    htop \
-    net-tools \
-    jq
+    iptables \
+    arptables \
+    ebtables
 
-# Setup kubectl bash completion
-log "🔧 Setting up kubectl bash completion..."
-kubectl completion bash | tee /etc/bash_completion.d/kubectl > /dev/null
-echo 'alias k=kubectl' >> /etc/bash.bashrc
-echo 'complete -o default -F __start_kubectl k' >> /etc/bash.bashrc
+# Switch to legacy versions for compatibility
+update-alternatives --set iptables /usr/sbin/iptables-legacy
+update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+update-alternatives --set arptables /usr/sbin/arptables-legacy
+update-alternatives --set ebtables /usr/sbin/ebtables-legacy
 
-# Create kubeadm init script
-log "📝 Creating kubeadm initialization script..."
-cat <<'EOF' > /root/init-cluster.sh
-#!/bin/bash
+# Create kubeadm configuration
+log "📝 Creating kubeadm configuration..."
+cat > /tmp/kubeadm-config.yaml << EOF
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: $(hostname -I | awk '{print $1}')
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+    cgroup-driver: systemd
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: v1.31.0
+controlPlaneEndpoint: $(hostname -I | awk '{print $1}'):6443
+networking:
+  serviceSubnet: 10.96.0.0/12
+  podSubnet: 10.244.0.0/16
+  dnsDomain: cluster.local
+apiServer:
+  bindPort: 6443
+controllerManager: {}
+scheduler: {}
+etcd:
+  local:
+    dataDir: /var/lib/etcd
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+EOF
 
-# Kubernetes Cluster Initialization Script
-# Run this script to initialize the cluster after installation
+log "✅ Kubernetes installation completed successfully!"
 
-set -e
-
-echo "🚀 Initializing Kubernetes cluster..."
-
-# Initialize the cluster
-kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///run/containerd/containerd.sock
-
-# Setup kubectl for root user
-mkdir -p /root/.kube
-cp -i /etc/kubernetes/admin.conf /root/.kube/config
-chown root:root /root/.kube/config
-
-echo "✅ Cluster initialized successfully!"
 echo ""
-echo "📋 Next steps:"
-echo "1. Install a CNI plugin (e.g., Flannel):"
-echo "   kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
+echo -e "${BLUE}🎉 Installation Summary:${NC}"
+echo "  ✅ System packages updated"
+echo "  ✅ Swap disabled permanently"
+echo "  ✅ Kernel modules configured"
+echo "  ✅ Containerd installed and configured"
+echo "  ✅ Kubernetes components installed (kubelet, kubeadm, kubectl)"
+echo "  ✅ Networking tools configured"
+echo "  ✅ Kubeadm configuration created"
+
 echo ""
-echo "2. To join worker nodes, run the kubeadm join command that was displayed above"
+echo -e "${YELLOW}🔄 Next Steps:${NC}"
 echo ""
-echo "3. To setup kubectl for a regular user:"
+echo -e "${BLUE}1. Reboot the system:${NC}"
+echo "   sudo reboot"
+echo ""
+echo -e "${BLUE}2. Initialize the cluster (after reboot):${NC}"
+echo "   sudo kubeadm init --config=/tmp/kubeadm-config.yaml"
+echo ""
+echo -e "${BLUE}3. Configure kubectl for regular user:${NC}"
 echo "   mkdir -p \$HOME/.kube"
 echo "   sudo cp -i /etc/kubernetes/admin.conf \$HOME/.kube/config"
 echo "   sudo chown \$(id -u):\$(id -g) \$HOME/.kube/config"
 echo ""
-echo "4. To remove the taint from master node (single-node cluster):"
-echo "   kubectl taint nodes --all node-role.kubernetes.io/control-plane-"
-EOF
-
-chmod +x /root/init-cluster.sh
-
-# Create worker node join script template
-log "📝 Creating worker node join script template..."
-cat <<'EOF' > /root/join-worker.sh
-#!/bin/bash
-
-# Worker Node Join Script Template
-# Replace the kubeadm join command below with the actual command from your master node
-
-set -e
-
-echo "🔗 Joining worker node to cluster..."
-
-# Replace this with the actual join command from your master node
-# Example:
-# kubeadm join <master-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
-
-echo "⚠️  Please replace the kubeadm join command in this script with the actual command from your master node"
-echo "The join command is displayed when you run 'kubeadm init' on the master node"
-EOF
-
-chmod +x /root/join-worker.sh
-
-# Create useful aliases and functions
-log "🔧 Creating useful aliases and functions..."
-cat <<'EOF' >> /root/.bashrc
-
-# Kubernetes aliases
-alias k='kubectl'
-alias kgp='kubectl get pods'
-alias kgs='kubectl get services'
-alias kgn='kubectl get nodes'
-alias kd='kubectl describe'
-alias kl='kubectl logs'
-alias ke='kubectl exec -it'
-
-# Useful functions
-kns() {
-    kubectl config set-context --current --namespace=$1
-}
-
-kpods() {
-    kubectl get pods -o wide --all-namespaces
-}
-EOF
-
-# Verify installation
-log "🔍 Verifying installation..."
-echo "Kubernetes version:"
-kubeadm version
-echo ""
-echo "Kubelet version:"
-kubelet --version
-echo ""
-echo "Kubectl version:"
-kubectl version --client
-echo ""
-echo "Containerd version:"
-containerd --version
-
-log "✅ Kubernetes installation completed successfully!"
-echo ""
-echo -e "${BLUE}📋 Next Steps:${NC}"
-echo "1. Reboot the system to ensure all changes take effect:"
-echo "   sudo reboot"
-echo ""
-echo "2. After reboot, initialize the cluster (on master node):"
-echo "   sudo /root/init-cluster.sh"
-echo ""
-echo "3. Install a CNI plugin (after cluster init):"
+echo -e "${BLUE}4. Install CNI plugin (Flannel):${NC}"
 echo "   kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
 echo ""
-echo "4. For worker nodes, use the join command displayed after cluster init"
+echo -e "${BLUE}5. Install local-path storage provisioner:${NC}"
+echo "   kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml"
 echo ""
-echo -e "${YELLOW}📁 Useful files created:${NC}"
-echo "- /root/init-cluster.sh - Initialize the cluster"
-echo "- /root/join-worker.sh - Template for joining worker nodes"
+echo -e "${BLUE}6. Set local-path as default storage class:${NC}"
+echo "   kubectl patch storageclass local-path -p '{\"metadata\": {\"annotations\": {\"storageclass.kubernetes.io/is-default-class\": \"true\"}}}'"
+echo ""
+echo -e "${BLUE}7. Remove taint from control plane (for single-node setup):${NC}"
+echo "   kubectl taint nodes --all node-role.kubernetes.io/control-plane-"
+echo ""
+echo -e "${BLUE}8. Verify installation:${NC}"
+echo "   kubectl get nodes"
+echo "   kubectl get pods --all-namespaces"
+echo "   kubectl get storageclass"
+
 echo ""
 echo -e "${GREEN}🎉 Installation complete! Please reboot and then initialize your cluster.${NC}" 

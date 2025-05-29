@@ -2,6 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ipfs-validator-config
+  namespace: ipfs-validator
 data:
   # Database Configuration
   POSTGRES_USER: "user"
@@ -44,7 +45,7 @@ data:
   NODE_URL: "wss://rpc.hippius.network"
   
   # Validator Configuration (UPDATE THESE WITH YOUR ACTUAL VALUES)
-  VALIDATOR_ACCOUNT_ID: "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"
+  VALIDATOR_ACCOUNT_ID: "YOUR_VALI_SS58"
   # VALIDATOR_SEED: "your twelve word seed phrase here for signing transactions"  # Uncomment and set for transaction signing
   
   # Epoch Orchestrator Configuration
