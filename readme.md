@@ -183,7 +183,7 @@ Handles storage pinning requests:
 
 ```bash
 # Process pinning requests
-python rabbitmq/pinning_request_processor.py
+python rabbitmq/pinning_request_processor.py 
 
 # Start consumer
 python rabbitmq/pinning_request_consumer.py
