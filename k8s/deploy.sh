@@ -1,89 +1,118 @@
 #!/bin/bash
 
+# IPFS Service Validator Deployment Script
+# This script deploys all components with high-scale PostgreSQL configuration built-in
+
 set -e
 
-echo "🚀 Deploying IPFS Service Validator to Minikube..."
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Check if minikube is running
-if ! minikube status > /dev/null 2>&1; then
-    echo "❌ Minikube is not running. Please start it with: minikube start"
-    exit 1
-fi
+log() {
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
+}
 
-# Configure Docker to use Minikube's daemon
-echo "🔧 Configuring Docker to use Minikube's daemon..."
-eval $(minikube docker-env)
+warn() {
+    echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"
+}
 
-# Build the Docker image
-echo "🏗️  Building Docker image..."
-cd ..
-docker build -t ipfs-service-validator:latest .
-cd k8s
+error() {
+    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
+}
 
-# Create migrations ConfigMap
-echo "📦 Creating migrations ConfigMap..."
-chmod +x create-migrations-configmap.sh
-./create-migrations-configmap.sh
+log "🚀 Deploying IPFS Service Validator with High-Scale PostgreSQL"
 
-# Apply Kubernetes manifests
-echo "☸️  Applying Kubernetes manifests..."
+# Apply ConfigMap
+log "⚙️  Applying ConfigMap..."
+kubectl apply -f k8s/configmap.yaml
 
-echo "  - ConfigMap..."
-kubectl apply -f configmap.yaml
+# Deploy PostgreSQL with built-in high-scale configuration
+log "🐘 Deploying PostgreSQL with high-scale configuration (1000 connections)..."
+kubectl apply -f k8s/postgres.yaml
 
-echo "  - PersistentVolumeClaims..."
-kubectl apply -f persistent-volumes.yaml
+# Wait for PostgreSQL to be ready
+log "⏳ Waiting for PostgreSQL to be ready..."
+kubectl wait --for=condition=ready pod -l app=postgres --timeout=300s
 
-echo "  - PostgreSQL..."
-kubectl apply -f postgres.yaml
+# Deploy RabbitMQ
+log "🐰 Deploying RabbitMQ..."
+kubectl apply -f k8s/rabbitmq.yaml
 
-echo "  - RabbitMQ..."
-kubectl apply -f rabbitmq.yaml
+# Wait for RabbitMQ to be ready
+log "⏳ Waiting for RabbitMQ to be ready..."
+kubectl wait --for=condition=ready pod -l app=rabbitmq --timeout=300s
 
-echo "  - IPFS..."
-kubectl apply -f ipfs.yaml
+# Deploy IPFS
+log "📦 Deploying IPFS StatefulSet..."
+kubectl apply -f k8s/ipfs.yaml
 
-echo "  - IPFS HPA (Horizontal Pod Autoscaler)..."
-kubectl apply -f ipfs-hpa.yaml
+# Deploy IPFS HPA
+log "📈 Deploying IPFS HPA..."
+kubectl apply -f k8s/ipfs-hpa.yaml
 
-# Wait for services to be ready
-echo "⏳ Waiting for services to be ready..."
-kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
-kubectl wait --for=condition=ready pod -l app=rabbitmq --timeout=120s
-kubectl wait --for=condition=ready pod -l app=ipfs --timeout=120s
+# Wait for IPFS to be ready
+log "⏳ Waiting for IPFS to be ready..."
+kubectl wait --for=condition=ready pod -l app=ipfs --timeout=300s
 
-echo "  - Migrations ConfigMap..."
-kubectl apply -f migrations-configmap.yaml
+# Deploy consumers
+log "🔄 Deploying consumers..."
+kubectl apply -f k8s/consumers.yaml
 
-echo "  - Running database migrations..."
-kubectl apply -f dbmate-job.yaml
-kubectl wait --for=condition=complete job/dbmate-migrations --timeout=60s
+# Deploy epoch orchestrator
+log "🎭 Deploying epoch orchestrator..."
+kubectl apply -f k8s/epoch-orchestrator.yaml
 
-echo "  - Deploying consumers..."
-kubectl apply -f consumers.yaml
+# Wait for all deployments to be ready
+log "⏳ Waiting for all deployments to be ready..."
+kubectl wait --for=condition=available deployment --all --timeout=600s
 
-echo "  - Deploying epoch orchestrator..."
-kubectl apply -f epoch-orchestrator.yaml
-
-echo "  - Creating NodePort services..."
-kubectl apply -f nodeports.yaml
-
-# Get Minikube IP
-MINIKUBE_IP=$(minikube ip)
+log "✅ Deployment complete!"
 
 echo ""
-echo "✅ Deployment complete!"
+echo -e "${BLUE}📊 Deployment Status:${NC}"
+kubectl get all
+
 echo ""
-echo "📋 Service URLs:"
-echo "  - PostgreSQL: $MINIKUBE_IP:30432"
-echo "  - RabbitMQ Management: http://$MINIKUBE_IP:30672 (admin/admin)"
-echo "  - IPFS Gateway: http://$MINIKUBE_IP:30080"
-echo "  - IPFS API: http://$MINIKUBE_IP:30501"
+echo -e "${GREEN}🎉 High-Scale PostgreSQL Configuration:${NC}"
+echo "  ✅ Max connections: 1000"
+echo "  ✅ Shared buffers: 512MB"
+echo "  ✅ Effective cache size: 2GB"
+echo "  ✅ Work memory: 8MB"
+echo "  ✅ WAL buffers: 32MB"
+echo "  ✅ Max WAL size: 8GB"
+echo "  ✅ Worker processes: 16"
+echo "  ✅ Parallel workers: 16"
+
 echo ""
-echo "💡 Tips:"
-echo "  - Mount your code for development: minikube mount $(dirname $(pwd)):/app"
-echo "  - Check pod status: kubectl get pods"
-echo "  - Check HPA status: kubectl get hpa"
-echo "  - View logs: kubectl logs <pod-name>"
-echo "  - View epoch orchestrator logs: kubectl logs -l app=epoch-orchestrator"
-echo "  - Run processors: kubectl run processor --image=ipfs-service-validator:latest --rm -it -- bash" 
+echo -e "${BLUE}💡 Useful Commands:${NC}"
+echo "  # Check all resources:"
+echo "  kubectl get all"
+echo ""
+echo "  # Check PostgreSQL logs:"
+echo "  kubectl logs -l app=postgres --tail=50"
+echo ""
+echo "  # Check PostgreSQL configuration:"
+echo "  kubectl exec -it deployment/postgres -- psql -U user -d substrate_fetcher -c \"SHOW max_connections;\""
+echo ""
+echo "  # Monitor PostgreSQL connections:"
+echo "  kubectl exec -it deployment/postgres -- psql -U user -d substrate_fetcher -c \"SELECT count(*) FROM pg_stat_activity;\""
+echo ""
+echo "  # Check epoch orchestrator logs:"
+echo "  kubectl logs -l app=epoch-orchestrator --tail=50"
+echo ""
+echo "  # Scale IPFS:"
+echo "  kubectl scale statefulset ipfs --replicas=3"
+
+echo ""
+echo -e "${YELLOW}📋 Connection Capacity:${NC}"
+echo "  • 9 consumers × 8 max connections = 72 connections"
+echo "  • 1 epoch orchestrator × 8 max connections = 8 connections"
+echo "  • Reserve for scaling: ~920 connections available"
+echo "  • Total capacity: 1000 connections"
+
+echo ""
+echo -e "${GREEN}🎉 Ready for high-scale operations!${NC}" 
