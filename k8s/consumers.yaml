@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: user-profile-consumer
 spec:
-  replicas: 1
+  replicas: 5
   selector:
     matchLabels:
       app: user-profile-consumer
@@ -59,7 +59,7 @@ kind: Deployment
 metadata:
   name: node-metrics-consumer
 spec:
-  replicas: 1
+  replicas: 10
   selector:
     matchLabels:
       app: node-metrics-consumer
@@ -87,7 +87,7 @@ kind: Deployment
 metadata:
   name: registration-consumer
 spec:
-  replicas: 1
+  replicas: 5
   selector:
     matchLabels:
       app: registration-consumer
@@ -115,7 +115,7 @@ kind: Deployment
 metadata:
   name: miner-profile-reconstruction-consumer
 spec:
-  replicas: 1
+  replicas: 10
   selector:
     matchLabels:
       app: miner-profile-reconstruction-consumer
@@ -143,7 +143,7 @@ kind: Deployment
 metadata:
   name: user-profile-reconstruction-consumer
 spec:
-  replicas: 1
+  replicas: 10
   selector:
     matchLabels:
       app: user-profile-reconstruction-consumer
@@ -171,7 +171,7 @@ kind: Deployment
 metadata:
   name: pinning-file-consumer
 spec:
-  replicas: 1
+  replicas: 10
   selector:
     matchLabels:
       app: pinning-file-consumer
@@ -199,7 +199,7 @@ kind: Deployment
 metadata:
   name: miner-health-consumer
 spec:
-  replicas: 1
+  replicas: 50
   selector:
     matchLabels:
       app: miner-health-consumer
@@ -227,7 +227,7 @@ kind: Deployment
 metadata:
   name: epoch-health-consumer
 spec:
-  replicas: 1
+  replicas: 10
   selector:
     matchLabels:
       app: epoch-health-consumer
@@ -255,7 +255,7 @@ kind: Deployment
 metadata:
   name: file-assignment-consumer
 spec:
-  replicas: 1
+  replicas: 10
   selector:
     matchLabels:
       app: file-assignment-consumer
