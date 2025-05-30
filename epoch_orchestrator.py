@@ -381,7 +381,7 @@ class EpochOrchestrator:
                 return True
             
             logger.info(f"Prepared for submission:")
-            logger.info(f"  - {len(storage_requests)} storage requests (individual file pin requests)")
+            logger.info(f"  - {len(storage_requests)} original storage requests (for closing)")
             logger.info(f"  - {len(miner_profiles)} miner profiles")
             
             # Submit to blockchain (this function will try different sizes if needed)
@@ -392,7 +392,7 @@ class EpochOrchestrator:
                 await mark_submissions_as_completed(self.db_pool, submitted_requests, submitted_profiles)
                 
                 logger.info(f"✅ Successfully submitted to blockchain and updated database")
-                logger.info(f"   - Submitted: {len(submitted_requests)}/{len(storage_requests)} storage requests (file pin requests)")
+                logger.info(f"   - Submitted: {len(submitted_requests)}/{len(storage_requests)} original storage requests (for closing)")
                 logger.info(f"   - Submitted: {len(submitted_profiles)}/{len(miner_profiles)} miner profiles")
                 
                 return True

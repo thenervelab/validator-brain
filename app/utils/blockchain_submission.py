@@ -52,14 +52,14 @@ def call_update_pin_and_storage_requests(
     Submits all data in a single transaction.
 
     Args:
-        requests (List[Dict[str, Any]]): List of storage requests (individual file pin requests)
+        requests (List[Dict[str, Any]]): List of original storage requests to close
         miner_profiles (List[Dict[str, Any]]): List of ALL miner profile updates
 
     Returns:
         tuple: (success: bool, submitted_requests: List, submitted_profiles: List)
     """
     logger.info(f"Submitting blockchain update:")
-    logger.info(f"  - {len(requests)} storage requests (individual file pin requests)")
+    logger.info(f"  - {len(requests)} original storage requests (to close)")
     logger.info(f"  - {len(miner_profiles)} miner profiles (all reconstructed)")
     
     # With the corrected data collection, we should be able to submit everything
@@ -132,7 +132,7 @@ def _submit_single_batch(
             }
             formatted_requests.append(formatted_req)
 
-        logger.info(f"Formatted {len(formatted_requests)} storage requests (individual file pin requests)")
+        logger.info(f"Formatted {len(formatted_requests)} original storage requests (for closing)")
 
         # Format miner profiles to match MinerProfileItem structure
         formatted_miner_profiles = []
@@ -171,7 +171,7 @@ def _submit_single_batch(
 
         if receipt.is_success:
             logger.info(f"✅ Extrinsic successful in block {receipt.block_hash}")
-            logger.info(f"   - Submitted {len(formatted_requests)} storage requests (individual file pin requests)")
+            logger.info(f"   - Submitted {len(formatted_requests)} original storage requests (for closing)")
             logger.info(f"   - Submitted {len(formatted_miner_profiles)} miner profiles")
             return True
         else:
@@ -194,9 +194,8 @@ def _submit_single_batch(
 
 async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any]]:
     """
-    Collect storage requests (user profile updates) that need to be submitted to the blockchain.
-    These represent the "pin requests" part of updatePinAndStorageRequests.
-    Each request should be for a specific file that needs to be pinned.
+    Collect storage requests that need to be submitted to the blockchain for closing.
+    These are the original pinning requests from the chain that need to be marked as fulfilled.
     
     Args:
         db_pool: Database connection pool
@@ -206,21 +205,21 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
     """
     try:
         async with db_pool.acquire() as conn:
-            # Get user profiles that have been published but not yet submitted
-            # AND get the individual files that need to be pinned for each user
+            # Get the original pinning requests that need to be closed
+            # paired with the user profile CIDs that have been published
             query = """
             SELECT DISTINCT
-                fa.owner as storage_request_owner,
-                fa.cid as storage_request_file_hash,
+                pr.owner as storage_request_owner,
+                pr.request_hash as storage_request_file_hash,
                 pup.files_size as file_size,
                 pup.cid as user_profile_cid
-            FROM pending_user_profile pup
-            JOIN file_assignments fa ON fa.owner = pup.owner
+            FROM pinning_requests pr
+            JOIN pending_user_profile pup ON pup.owner = pr.owner
             WHERE pup.status = 'published'
             AND pup.cid IS NOT NULL
-            AND fa.cid IS NOT NULL
             AND pup.files_size IS NOT NULL
-            ORDER BY fa.owner, fa.cid
+            AND pr.request_hash IS NOT NULL
+            ORDER BY pr.owner, pr.request_hash
             """
             
             rows = await conn.fetch(query)
@@ -229,13 +228,13 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
             for row in rows:
                 request = {
                     "storage_request_owner": row['storage_request_owner'],
-                    "storage_request_file_hash": row['storage_request_file_hash'],
-                    "file_size": row['file_size'] or 0,  # This is the total user profile size
-                    "user_profile_cid": row['user_profile_cid']
+                    "storage_request_file_hash": row['storage_request_file_hash'],  # Original request hash from chain
+                    "file_size": row['file_size'] or 0,  # Total user profile size
+                    "user_profile_cid": row['user_profile_cid']  # Reconstructed user profile CID
                 }
                 requests.append(request)
             
-            logger.info(f"Collected {len(requests)} storage requests (pin requests) for blockchain submission")
+            logger.info(f"Collected {len(requests)} original storage requests for closing on blockchain")
             return requests
             
     except Exception as e:
@@ -293,7 +292,7 @@ async def mark_submissions_as_completed(db_pool, requests: List[Dict[str, Any]],
     
     Args:
         db_pool: Database connection pool
-        requests: List of submitted storage requests (individual file pin requests)
+        requests: List of submitted storage requests (original requests for closing)
         miner_profiles: List of submitted miner profiles (only the ones actually submitted)
         
     Returns:
