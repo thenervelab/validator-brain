@@ -82,6 +82,10 @@ class EpochOrchestrator:
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
         
+        # Safety mechanism for mid-epoch startup
+        self.startup_epoch = None
+        self.waiting_for_next_epoch = False
+        
         # Connection management
         self.connection_failures = 0
         self.last_failure_time = 0
@@ -593,10 +597,50 @@ class EpochOrchestrator:
         self.health_metrics_submitted = False
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
+        
+        # Reset startup safety mechanism
+        self.waiting_for_next_epoch = False
+    
+    def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
+        """
+        Determine if we should wait for the next epoch before starting processing.
+        This prevents processing with incomplete data when starting mid-epoch.
+        
+        Args:
+            current_epoch: Current epoch number
+            block_position: Current position in epoch (0-99)
+            
+        Returns:
+            True if we should wait, False if we can proceed
+        """
+        # If this is the first time we're seeing this epoch (startup)
+        if self.startup_epoch is None:
+            self.startup_epoch = current_epoch
+            
+            # If we're starting after block 10, wait for next epoch
+            if block_position > 10:
+                logger.warning(f"🚨 Application started mid-epoch at block position {block_position}/99")
+                logger.warning(f"   Waiting for next epoch to avoid processing incomplete data")
+                self.waiting_for_next_epoch = True
+                return True
+            else:
+                logger.info(f"✅ Application started early in epoch at block position {block_position}/99")
+                logger.info(f"   Safe to proceed with current epoch processing")
+                return False
+        
+        # If we were waiting and we're now in a new epoch, we can proceed
+        if self.waiting_for_next_epoch and current_epoch > self.startup_epoch:
+            logger.info(f"🎯 New epoch {current_epoch} started - resuming normal processing")
+            self.waiting_for_next_epoch = False
+            return False
+        
+        # Continue waiting if we're still in the startup epoch
+        return self.waiting_for_next_epoch
     
     async def run(self):
         """Main orchestrator loop."""
         logger.info("🎯 Starting Epoch Orchestrator")
+        logger.info("🛡️ Safety mechanism: Will wait for next epoch if starting mid-epoch (after block 10)")
         
         try:
             await self.initialize()
@@ -630,6 +674,10 @@ class EpochOrchestrator:
                     if last_epoch is not None and current_epoch != last_epoch:
                         logger.info(f"🔄 New epoch detected: {last_epoch} -> {current_epoch}")
                         await self.reset_epoch_state()
+                        
+                        # Update startup epoch tracking for new epoch
+                        if self.startup_epoch == last_epoch:
+                            self.startup_epoch = current_epoch
                     
                     # Update state
                     self.current_epoch = current_epoch
@@ -642,6 +690,14 @@ class EpochOrchestrator:
                     
                     logger.info(f"📊 Epoch {current_epoch}, Block {current_block} (position {block_position}/99)")
                     logger.info(f"🎭 Role: {'VALIDATOR' if is_validator else 'NON-VALIDATOR'}")
+                    
+                    # Check if we should wait for next epoch (startup safety)
+                    if self.should_wait_for_next_epoch(current_epoch, block_position):
+                        if block_position % 10 == 0:  # Log every 10 blocks to avoid spam
+                            logger.info(f"⏳ Waiting for next epoch (started mid-epoch at position {block_position}/99)")
+                            logger.info(f"   This prevents processing incomplete data from partial epoch")
+                        await asyncio.sleep(self.block_check_interval)
+                        continue
                     
                     # Log monitoring frequency periodically
                     if block_position % 10 == 0:  # Every 10 blocks
