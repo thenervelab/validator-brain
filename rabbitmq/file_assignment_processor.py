@@ -33,6 +33,7 @@ from substrateinterface import SubstrateInterface
 
 from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 from app.utils.config import NODE_URL
+from app.utils.epoch_validator import calculate_epoch_from_block
 
 # Load environment variables
 load_dotenv()
@@ -92,7 +93,8 @@ class FileAssignmentProcessor:
                 self.connect_substrate()
             
             block_number = self.substrate.get_block_number(None)
-            epoch = block_number // 100  # Assuming 100 blocks per epoch
+            
+            epoch = calculate_epoch_from_block(block_number)
             logger.info(f"Current block: {block_number}, epoch: {epoch}")
             return epoch
         except Exception as e:

@@ -26,6 +26,7 @@ from app.services.substrate_client import fetch_current_block
 from app.services.substrate_fetcher import fetch_and_store_blockchain_data
 from app.utils.config import get_epoch_block_interval
 from app.utils.logging import logger
+from app.utils.epoch_validator import get_epoch_block_position, calculate_epoch_from_block, get_epoch_start_block
 
 
 class StorageRequest(BaseModel):
@@ -186,10 +187,8 @@ class ValidatorWorkflow:
         if epoch_start_block is not None:
             position_in_epoch = block_number - epoch_start_block
         else:
-            # Calculate epoch start from current block
-            current_epoch = block_number // epoch_length
-            epoch_start = current_epoch * epoch_length
-            position_in_epoch = block_number - epoch_start
+            # Use the correct epoch calculation that handles blocks ending in 38
+            position_in_epoch = get_epoch_block_position(block_number)
 
         # Rust-style epoch intervals:
         # Early epoch (blocks 0-5): Storage request processing and profile table refresh
@@ -1041,14 +1040,14 @@ class ValidatorWorkflow:
         """
         # Calculate epoch for metrics
         epoch_length = get_epoch_block_interval()
-        current_epoch = block_number // epoch_length
+        current_epoch = calculate_epoch_from_block(block_number)
 
         # Calculate epoch start if not provided
         if epoch_start_block is None:
-            epoch_start_block = current_epoch * epoch_length
+            epoch_start_block = get_epoch_start_block(current_epoch)
 
         # Calculate position within epoch (0 to 99)
-        block_position = block_number - epoch_start_block
+        block_position = get_epoch_block_position(block_number)
 
         # Initialize performance tracking
         from substrate_fetcher.monitoring import (
@@ -1326,8 +1325,8 @@ class ValidatorWorkflow:
 
                 # Calculate epoch boundaries (Rust-style)
                 epoch_length = get_epoch_block_interval()
-                current_epoch = current_block.number // epoch_length
-                epoch_start_block = current_epoch * epoch_length
+                current_epoch = calculate_epoch_from_block(current_block.number)
+                epoch_start_block = get_epoch_start_block(current_epoch)
 
                 # Check if we've already submitted in this epoch
                 async with db_pool.acquire() as conn:

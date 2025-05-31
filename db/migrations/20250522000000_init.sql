@@ -22,7 +22,12 @@ CREATE TABLE IF NOT EXISTS latest_block (
     id SERIAL PRIMARY KEY,
     block_number BIGINT NOT NULL,
     block_hash VARCHAR(100),
-    epoch BIGINT GENERATED ALWAYS AS (block_number / 100) STORED,  -- Auto-calculate epoch based on block
+    epoch BIGINT GENERATED ALWAYS AS (
+        CASE 
+            WHEN block_number < 38 THEN 0
+            ELSE (block_number - 38) / 100
+        END
+    ) STORED,  -- Auto-calculate epoch based on block (epochs start at blocks ending in 38)
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

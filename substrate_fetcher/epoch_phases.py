@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 from pydantic import BaseModel
 
 from app.utils.logging import logger
+from app.utils.epoch_validator import get_epoch_block_position
 
 
 class EpochPhase(str, Enum):
@@ -47,8 +48,8 @@ class EpochPhaseManager:
         Returns:
             Tuple of (epoch_phase, position_percentage)
         """
-        # Calculate current position within epoch (0 to epoch_length-1)
-        position_in_epoch = block_number % epoch_length
+        # Calculate current position within epoch (0 to epoch_length-1) using correct calculation
+        position_in_epoch = get_epoch_block_position(block_number)
 
         # Convert to percentage (0 to 100)
         position_percentage = (position_in_epoch / epoch_length) * 100
@@ -89,7 +90,7 @@ class EpochPhaseManager:
             actions.blockchain_submission = True
 
             # Special handling for block 90
-            if block_number and block_number % 100 == 90:
+            if block_number and get_epoch_block_position(block_number) == 90:
                 actions.profile_reconstruction = True
                 actions.file_redistribution = True
 

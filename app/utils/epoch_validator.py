@@ -32,7 +32,7 @@ def get_current_epoch_info(substrate: SubstrateInterface) -> Tuple[int, int, Sub
     for attempt in range(max_retries):
         try:
             current_block = current_substrate.get_block_number(None)
-            current_epoch = current_block // 100  # 100 blocks per epoch
+            current_epoch = calculate_epoch_from_block(current_block)
             return current_epoch, current_block, current_substrate
         except Exception as e:
             logger.warning(f"Failed to get epoch info (attempt {attempt + 1}/{max_retries}): {e}")
@@ -49,9 +49,37 @@ def get_current_epoch_info(substrate: SubstrateInterface) -> Tuple[int, int, Sub
                 raise
 
 
+def calculate_epoch_from_block(block_number: int) -> int:
+    """
+    Calculate epoch number from block number.
+    Epochs start at blocks ending in 38 (e.g., 771538, 771638, 771738, etc.)
+    
+    Args:
+        block_number: Current block number
+        
+    Returns:
+        Epoch number
+    """
+    # Epochs start at blocks ending in 38, with 100 blocks per epoch
+    # To find the epoch, we need to adjust for the 38 offset
+    # Example: block 771538 is epoch start, block 771637 is epoch end
+    
+    # Adjust block number by subtracting 38 to align with 0-based epochs
+    adjusted_block = block_number - 38
+    
+    # If we're before the first epoch (block < 38), we're in epoch 0
+    if adjusted_block < 0:
+        return 0
+    
+    # Calculate epoch from adjusted block
+    epoch = adjusted_block // 100
+    return epoch
+
+
 def get_epoch_block_position(current_block: int) -> int:
     """
     Get the position within the current epoch (0-99).
+    Epochs start at blocks ending in 38.
     
     Args:
         current_block: Current block number
@@ -59,12 +87,22 @@ def get_epoch_block_position(current_block: int) -> int:
     Returns:
         Block position within epoch (0-99)
     """
-    return current_block % 100
+    # Adjust block number by subtracting 38 to align with 0-based epochs
+    adjusted_block = current_block - 38
+    
+    # If we're before the first epoch (block < 38), position is the block number itself
+    if adjusted_block < 0:
+        return current_block
+    
+    # Calculate position within epoch
+    position = adjusted_block % 100
+    return position
 
 
 def get_epoch_start_block(epoch: int) -> int:
     """
     Get the starting block number for a given epoch.
+    Epochs start at blocks ending in 38.
     
     Args:
         epoch: Epoch number
@@ -72,7 +110,21 @@ def get_epoch_start_block(epoch: int) -> int:
     Returns:
         Starting block number for the epoch
     """
-    return epoch * 100
+    # Epoch 0 starts at block 38, epoch 1 starts at block 138, etc.
+    return (epoch * 100) + 38
+
+
+def get_epoch_end_block(epoch: int) -> int:
+    """
+    Get the ending block number for a given epoch.
+    
+    Args:
+        epoch: Epoch number
+        
+    Returns:
+        Ending block number for the epoch (inclusive)
+    """
+    return get_epoch_start_block(epoch) + 99
 
 
 def is_epoch_validator(substrate: SubstrateInterface, our_validator_account: str) -> Tuple[bool, Optional[str], Optional[int], SubstrateInterface]:

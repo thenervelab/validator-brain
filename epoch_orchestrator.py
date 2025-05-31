@@ -44,7 +44,10 @@ from app.utils.epoch_validator import (
     get_epoch_block_position, 
     is_epoch_validator, 
     get_validator_account_from_env,
-    connect_substrate
+    connect_substrate,
+    calculate_epoch_from_block,
+    get_epoch_start_block,
+    get_epoch_end_block
 )
 from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 

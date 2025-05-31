@@ -434,12 +434,14 @@ kubectl apply -f k8s/epoch-orchestrator.yaml
 ./launch_epoch_orchestrator.sh
 ```
 
-**Epoch Structure (100 blocks per epoch):**
+**Epoch Structure (100 blocks per epoch, starting at blocks ending in 38):**
 - **Block 0-10**: Initialization (registration, node metrics, user profiles)
 - **Block 11-50**: Pinning requests processing (validator only)
 - **Block 51-80**: File assignment and health checks
 - **Block 81-95**: Profile reconstruction, **submit to blockchain**
 - **Block 96-99**: Finalization and preparation for next epoch
+
+**Note**: Epochs start at blocks ending in 38 (e.g., 771538, 771638, 771738, etc.), not at blocks 0, 100, 200, etc.
 
 **Workflow Modes:**
 
@@ -794,3 +796,11 @@ The ConfigMap includes all necessary environment variables for the entire system
 docker save ipfs-service-validator:latest -o ipfs-service-validator.tar
 
 sudo ctr -n k8s.io images import ipfs-service-validator.tar
+
+apt install python3.12-venv
+python3 -m venv venv
+
+source venv/bin/activate
+
+ pip install substrate-interface
+
