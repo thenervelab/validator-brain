@@ -79,8 +79,126 @@ class UserProfileReconstructionProcessor:
             # Use a default block number if we can't fetch it
             self.current_block = 0
     
+    async def assign_fallback_miners(self, owner: str, unassigned_files: List[Dict[str, Any]], conn) -> None:
+        """
+        Assign miners to unassigned files as a fallback during profile reconstruction.
+        This ensures no files are lost if the main file assignment process missed them.
+        """
+        try:
+            # Get available miners with capacity
+            available_miners = await conn.fetch("""
+                SELECT 
+                    r.node_id,
+                    r.ipfs_peer_id,
+                    COALESCE(nm.ipfs_storage_max, 1000000000) as storage_capacity_bytes,
+                    COALESCE(nm.ipfs_repo_size, 0) as used_storage_bytes,
+                    COALESCE(ms.total_files_pinned, 0) as total_files_pinned,
+                    COALESCE(ms.total_files_size_bytes, 0) as total_files_size_bytes,
+                    COALESCE(ms.health_score, 100) as health_score
+                FROM registration r
+                LEFT JOIN (
+                    SELECT DISTINCT ON (miner_id) 
+                        miner_id, ipfs_storage_max, ipfs_repo_size
+                    FROM node_metrics 
+                    ORDER BY miner_id, block_number DESC
+                ) nm ON r.node_id = nm.miner_id
+                LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
+                WHERE r.node_type = 'StorageMiner' 
+                  AND r.status = 'active'
+                  AND COALESCE(ms.health_score, 100) >= 70
+                ORDER BY COALESCE(ms.health_score, 100) DESC, r.node_id
+                LIMIT 20
+            """)
+            
+            if not available_miners:
+                logger.error(f"No available miners found for fallback assignment for user {owner}")
+                return
+            
+            # Simple round-robin assignment for fallback
+            replicas_per_file = 5
+            
+            for file_data in unassigned_files:
+                cid = file_data['cid']
+                file_size = file_data['size']
+                filename = file_data['name']
+                
+                # Add 20% safety margin for IPFS overhead, metadata, and growth
+                safety_margin = int(file_size * 0.2)
+                required_space = file_size + safety_margin
+                
+                # Select miners with improved capacity checking
+                selected_miners = []
+                for i, miner in enumerate(available_miners[:replicas_per_file]):
+                    # Use actual IPFS repo size as primary indicator of usage
+                    ipfs_repo_size = miner['used_storage_bytes']  # from node_metrics.ipfs_repo_size
+                    calculated_size = miner['total_files_size_bytes']  # from our miner_stats
+                    
+                    # Use the higher value as a safety measure, but prefer actual IPFS data
+                    if ipfs_repo_size > 0:
+                        used_storage = ipfs_repo_size
+                        if calculated_size > ipfs_repo_size:
+                            used_storage = calculated_size
+                    else:
+                        used_storage = calculated_size
+                    
+                    storage_capacity = miner['storage_capacity_bytes']
+                    available_storage = max(0, storage_capacity - used_storage)
+                    
+                    if available_storage >= required_space:
+                        selected_miners.append(miner['node_id'])
+                        logger.debug(f"Fallback: Miner {miner['node_id']} has {available_storage:,} available >= {required_space:,} required")
+                    else:
+                        logger.debug(f"Fallback: Miner {miner['node_id']} has {available_storage:,} available < {required_space:,} required")
+                
+                if not selected_miners:
+                    logger.error(f"No miners with sufficient capacity for file {cid} (size: {file_size:,}, need: {required_space:,} with safety margin)")
+                    # Assign to first available miners anyway as last resort
+                    selected_miners = [m['node_id'] for m in available_miners[:min(3, len(available_miners))]]
+                    logger.warning(f"Using {len(selected_miners)} miners as last resort for file {cid}")
+                
+                # Update the file_data with assigned miners
+                file_data['miner_ids'] = selected_miners
+                file_data['total_replicas'] = len(selected_miners)
+                
+                # Insert into file_assignments table
+                miners_padded = (selected_miners + [None] * 5)[:5]
+                
+                await conn.execute("""
+                    INSERT INTO files (cid, name, size, created_date)
+                    VALUES ($1, $2, $3, NOW())
+                    ON CONFLICT (cid) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        size = EXCLUDED.size
+                """, cid, filename, file_size)
+                
+                await conn.execute("""
+                    INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (cid) DO UPDATE SET
+                        owner = EXCLUDED.owner,
+                        miner1 = EXCLUDED.miner1,
+                        miner2 = EXCLUDED.miner2,
+                        miner3 = EXCLUDED.miner3,
+                        miner4 = EXCLUDED.miner4,
+                        miner5 = EXCLUDED.miner5,
+                        updated_at = CURRENT_TIMESTAMP
+                """, cid, owner, miners_padded[0], miners_padded[1], 
+                    miners_padded[2], miners_padded[3], miners_padded[4])
+                
+                # Mark as assigned in pending_assignment_file
+                await conn.execute("""
+                    UPDATE pending_assignment_file
+                    SET status = 'assigned', processed_at = CURRENT_TIMESTAMP
+                    WHERE cid = $1 AND owner = $2
+                """, cid, owner)
+                
+                logger.info(f"Fallback assigned file {filename} ({cid[:16]}...) to {len(selected_miners)} miners: {', '.join(selected_miners[:3])}{'...' if len(selected_miners) > 3 else ''}")
+                
+        except Exception as e:
+            logger.error(f"Error in fallback miner assignment for user {owner}: {e}")
+
     async def fetch_user_profiles_to_reconstruct(self) -> List[Dict[str, Any]]:
-        """Fetch user profiles that need to be reconstructed from file_assignments"""
+        """Fetch user profiles that need to be reconstructed from file_assignments and pending files"""
         # Get batch size from environment variable (0 means no limit)
         batch_size = int(os.getenv('USER_PROFILE_BATCH_SIZE', '100'))
         
@@ -195,7 +313,7 @@ class UserProfileReconstructionProcessor:
             return [{'owner': row['owner']} for row in users_rows]
     
     async def fetch_user_profile_files(self, owner: str) -> List[Dict[str, Any]]:
-        """Fetch all files owned by a specific user and convert to proper format"""
+        """Fetch all files owned by a specific user and assign miners to any unassigned files"""
         async with self.db_pool.acquire() as conn:
             # Get files from file_assignments table (already assigned files)
             assigned_rows = await conn.fetch("""
@@ -248,6 +366,8 @@ class UserProfileReconstructionProcessor:
             
             # Convert to proper format and handle datetime serialization
             files = []
+            unassigned_files = []
+            
             for row in all_rows:
                 # Collect assigned miners (filter out None values)
                 miner_ids = [
@@ -263,7 +383,7 @@ class UserProfileReconstructionProcessor:
                     'size': row['size'] or 0,
                     'miner_ids': miner_ids,
                     'total_replicas': len(miner_ids),
-                    'source': row['source']  # Track whether file is assigned or pending
+                    'source': row['source']
                 }
                 
                 # Convert datetime to string if present
@@ -272,7 +392,16 @@ class UserProfileReconstructionProcessor:
                 if row['updated_at']:
                     file_data['last_charged_at'] = row['updated_at'].isoformat()
                 
+                # Track files that need miner assignment
+                if len(miner_ids) == 0:
+                    unassigned_files.append(file_data)
+                
                 files.append(file_data)
+            
+            # Assign miners to unassigned files as fallback
+            if unassigned_files:
+                logger.warning(f"User {owner}: Found {len(unassigned_files)} files without miners - assigning fallback miners")
+                await self.assign_fallback_miners(owner, unassigned_files, conn)
             
             # Log what we found for debugging
             assigned_count = len(assigned_rows)
@@ -280,7 +409,7 @@ class UserProfileReconstructionProcessor:
             logger.info(f"User {owner}: Found {assigned_count} assigned files + {pending_count} pending files = {len(files)} total files")
             
             if pending_count > 0:
-                logger.info(f"Including {pending_count} NEW files from storage requests in profile for {owner}")
+                logger.info(f"Including {pending_count} files from storage requests in profile for {owner}")
                 # Log sample pending files
                 for row in pending_rows[:3]:  # Show first 3
                     logger.info(f"  - NEW: {row['name']} ({row['cid'][:16]}...) - {row['size']:,} bytes")

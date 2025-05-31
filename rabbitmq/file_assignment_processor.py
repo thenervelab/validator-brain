@@ -185,9 +185,21 @@ class FileAssignmentProcessor:
         
         Higher score = better candidate for assignment
         """
-        # Basic capacity scoring
+        # Basic capacity scoring with improved logic
         storage_capacity = miner['storage_capacity_bytes']
-        used_storage = max(miner['used_storage_bytes'], miner['total_files_size_bytes'])
+        
+        # Use actual IPFS repo size as primary indicator of usage
+        ipfs_repo_size = miner['used_storage_bytes']  # from node_metrics.ipfs_repo_size
+        calculated_size = miner['total_files_size_bytes']  # from our miner_stats
+        
+        # Use the higher value as a safety measure, but prefer actual IPFS data
+        if ipfs_repo_size > 0:
+            used_storage = ipfs_repo_size
+            if calculated_size > ipfs_repo_size:
+                used_storage = calculated_size
+        else:
+            used_storage = calculated_size
+        
         available_storage = max(0, storage_capacity - used_storage)
         
         if storage_capacity <= 0:
@@ -251,21 +263,44 @@ class FileAssignmentProcessor:
         """
         exclude_miners = exclude_miners or []
         
+        # Add 20% safety margin for IPFS overhead, metadata, and growth
+        safety_margin = int(file_size * 0.2)
+        required_space = file_size + safety_margin
+        
         # Filter miners that have enough storage for this file and are not excluded
         suitable_miners = []
         for miner in miners:
             if miner['node_id'] in exclude_miners:
                 continue
-                
-            available_storage = max(0, 
-                miner['storage_capacity_bytes'] - 
-                max(miner['used_storage_bytes'], miner['total_files_size_bytes'])
-            )
-            if available_storage >= file_size:
+            
+            # Use actual IPFS repo size as primary indicator of usage
+            ipfs_repo_size = miner['used_storage_bytes']  # from node_metrics.ipfs_repo_size
+            calculated_size = miner['total_files_size_bytes']  # from our miner_stats
+            
+            # Use the higher value as a safety measure, but prefer actual IPFS data
+            if ipfs_repo_size > 0:
+                # IPFS repo size is available and non-zero, use it as primary
+                used_storage = ipfs_repo_size
+                # But ensure it's at least as much as our calculated size
+                if calculated_size > ipfs_repo_size:
+                    logger.debug(f"Miner {miner['node_id']}: Our calculated size ({calculated_size:,}) > IPFS repo size ({ipfs_repo_size:,}), using calculated")
+                    used_storage = calculated_size
+            else:
+                # IPFS repo size not available, fall back to our calculated size
+                used_storage = calculated_size
+                logger.debug(f"Miner {miner['node_id']}: No IPFS repo size data, using calculated size ({calculated_size:,})")
+            
+            storage_capacity = miner['storage_capacity_bytes']
+            available_storage = max(0, storage_capacity - used_storage)
+            
+            if available_storage >= required_space:
                 suitable_miners.append(miner)
+                logger.debug(f"Miner {miner['node_id']}: ✅ {available_storage:,} available >= {required_space:,} required")
+            else:
+                logger.debug(f"Miner {miner['node_id']}: ❌ {available_storage:,} available < {required_space:,} required")
         
         if len(suitable_miners) < self.replicas_per_file:
-            logger.warning(f"Only {len(suitable_miners)} suitable miners found for file size {file_size}, "
+            logger.warning(f"Only {len(suitable_miners)} suitable miners found for file size {file_size:,} bytes (need {required_space:,} with safety margin), "
                           f"need {self.replicas_per_file}")
             # Use what we have
             return [m['node_id'] for m in suitable_miners]
@@ -309,21 +344,39 @@ class FileAssignmentProcessor:
         # Exclude currently assigned miners
         exclude_miners = [m for m in current_miners if m is not None]
         
+        # Add 20% safety margin for IPFS overhead, metadata, and growth
+        safety_margin = int(file_size * 0.2)
+        required_space = file_size + safety_margin
+        
         # Filter suitable miners
         suitable_miners = []
         for miner in miners:
             if miner['node_id'] in exclude_miners:
                 continue
-                
-            available_storage = max(0, 
-                miner['storage_capacity_bytes'] - 
-                max(miner['used_storage_bytes'], miner['total_files_size_bytes'])
-            )
-            if available_storage >= file_size:
+            
+            # Use actual IPFS repo size as primary indicator of usage
+            ipfs_repo_size = miner['used_storage_bytes']  # from node_metrics.ipfs_repo_size
+            calculated_size = miner['total_files_size_bytes']  # from our miner_stats
+            
+            # Use the higher value as a safety measure, but prefer actual IPFS data
+            if ipfs_repo_size > 0:
+                # IPFS repo size is available and non-zero, use it as primary
+                used_storage = ipfs_repo_size
+                # But ensure it's at least as much as our calculated size
+                if calculated_size > ipfs_repo_size:
+                    used_storage = calculated_size
+            else:
+                # IPFS repo size not available, fall back to our calculated size
+                used_storage = calculated_size
+            
+            storage_capacity = miner['storage_capacity_bytes']
+            available_storage = max(0, storage_capacity - used_storage)
+            
+            if available_storage >= required_space:
                 suitable_miners.append(miner)
         
         if len(suitable_miners) < empty_slots:
-            logger.warning(f"Only {len(suitable_miners)} suitable miners found for reassignment, "
+            logger.warning(f"Only {len(suitable_miners)} suitable miners found for reassignment (need {required_space:,} bytes with safety margin), "
                           f"need {empty_slots}")
         
         # Calculate scores and select best miners
