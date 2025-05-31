@@ -3,7 +3,7 @@ RUN apk add --no-cache git
 RUN go install github.com/amacneil/dbmate/v2@v2.6.0
 
 # Build stage - install dependencies
-FROM python:3.9-slim AS builder
+FROM python:3.9-alpine AS builder
 
 # Set environment variables for build
 ENV PIP_NO_CACHE_DIR=1 \
@@ -11,23 +11,23 @@ ENV PIP_NO_CACHE_DIR=1 \
     PIP_DEFAULT_TIMEOUT=100
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    openssl-dev \
     python3-dev \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+    build-base
 
-# Copy only requirements first for better caching
+# Copy requirements and install
 COPY requirements.txt /tmp/
 WORKDIR /tmp
-
-# Install dependencies from requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
     && find /usr/local -type d -name __pycache__ -exec rm -rf {} + \
     && find /usr/local -type f -name "*.pyc" -delete
 
-# Runtime stage - minimal image
-FROM python:3.9-slim AS runtime
+# Runtime stage - minimal Alpine image
+FROM python:3.9-alpine AS runtime
 
 # Set environment variables
 ENV PYTHONFAULTHANDLER=1 \
@@ -36,12 +36,10 @@ ENV PYTHONFAULTHANDLER=1 \
     PYTHONPATH=/app
 
 # Install only runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     curl \
     netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean \
-    && apt-get autoremove -y
+    && rm -rf /var/cache/apk/*
 
 # Copy Python packages from builder
 COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
@@ -66,8 +64,8 @@ COPY start.sh ./start.sh
 RUN chmod +x /app/start.sh
 
 # Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
+RUN adduser -D -s /bin/sh app && chown -R app:app /app
 USER app
 
 # Set entrypoint
-ENTRYPOINT ["/app/start.sh"]
+ENTRYPOINT ["/app/start.sh"] 

@@ -86,3 +86,22 @@ htmlcov/
 *.tar.gz
 *.zip
 *.rar
+
+# Additional exclusions for size optimization
+*.so
+*.dylib
+*.dll
+.pytest_cache/
+.mypy_cache/
+.tox/
+.coverage.*
+.cache/
+.eggs/
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Exclude any large development files
+migrations-configmap.yaml
+TEST_RESULTS.md
+EPOCH_ORCHESTRATOR_SUMMARY.md
