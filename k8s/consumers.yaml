@@ -18,8 +18,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never  # For local development with minikube
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always  # For local development with minikube
         command: ["python", "rabbitmq/user_profile_consumer.py"]
         envFrom:
         - configMapRef:
@@ -46,8 +46,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/pinning_request_consumer.py"]
         envFrom:
         - configMapRef:
@@ -59,7 +59,7 @@ kind: Deployment
 metadata:
   name: node-metrics-consumer
 spec:
-  replicas: 10
+  replicas: 5
   selector:
     matchLabels:
       app: node-metrics-consumer
@@ -74,8 +74,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/node_metrics_consumer.py"]
         envFrom:
         - configMapRef:
@@ -102,8 +102,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/registration_consumer.py"]
         envFrom:
         - configMapRef:
@@ -130,8 +130,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/miner_profile_reconstruction_consumer.py"]
         envFrom:
         - configMapRef:
@@ -158,8 +158,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/user_profile_reconstruction_consumer.py"]
         envFrom:
         - configMapRef:
@@ -171,7 +171,7 @@ kind: Deployment
 metadata:
   name: pinning-file-consumer
 spec:
-  replicas: 10
+  replicas: 5
   selector:
     matchLabels:
       app: pinning-file-consumer
@@ -186,8 +186,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/pinning_file_consumer.py"]
         envFrom:
         - configMapRef:
@@ -214,8 +214,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/miner_health_consumer.py"]
         envFrom:
         - configMapRef:
@@ -227,7 +227,7 @@ kind: Deployment
 metadata:
   name: epoch-health-consumer
 spec:
-  replicas: 10
+  replicas: 60
   selector:
     matchLabels:
       app: epoch-health-consumer
@@ -242,8 +242,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/epoch_health_consumer.py"]
         envFrom:
         - configMapRef:
@@ -270,8 +270,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: consumer
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/file_assignment_consumer.py"]
         envFrom:
         - configMapRef:

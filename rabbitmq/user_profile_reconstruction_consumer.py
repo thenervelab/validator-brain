@@ -141,11 +141,11 @@ class UserProfileReconstructionConsumer:
                 
                 logger.info(f"Processing user profile: {owner} -> {profile_cid}")
                 
-                # Check if already processed by owner
+                # Check if we have an existing profile
                 existing = await PendingUserProfile.get_by_owner(owner)
-                if existing and existing.status == 'published':
-                    logger.info(f"Profile for user {owner} already published (CID: {existing.cid}), skipping")
-                    return
+                
+                # Always reconstruct the profile to include any new files
+                # (Remove the skip logic that was preventing updates)
                 
                 # Reconstruct the profile JSON
                 profile_json = await self.reconstruct_profile_json(message_data)
@@ -156,17 +156,25 @@ class UserProfileReconstructionConsumer:
                 if published_cid:
                     # Update or create the pending profile record with the actual IPFS CID
                     if existing:
-                        # Update the existing record with the actual IPFS CID
+                        # Update the existing record with the new IPFS CID
                         from app.db.connection import get_db_pool
                         pool = await get_db_pool()
                         async with pool.acquire() as conn:
                             await conn.execute(
-                                "UPDATE pending_user_profile SET cid = $1 WHERE id = $2",
-                                published_cid, existing.id
+                                """UPDATE pending_user_profile 
+                                   SET cid = $1, files_count = $2, files_size = $3, 
+                                       block_number = $4, status = 'published', 
+                                       published_at = NOW(), created_at = NOW()
+                                   WHERE id = $5""",
+                                published_cid, 
+                                message_data.get('file_count', 0),
+                                message_data.get('total_size', 0),
+                                message_data.get('block_number', 0),
+                                existing.id
                             )
-                        existing.cid = published_cid
-                        await existing.mark_published()
+                        logger.info(f"Updated existing profile for user {owner}: {existing.cid} -> {published_cid}")
                     else:
+                        # Create new profile record
                         files_count = message_data.get('file_count', 0)
                         total_size = message_data.get('total_size', 0)
                         block_number = message_data.get('block_number', 0)
@@ -178,6 +186,7 @@ class UserProfileReconstructionConsumer:
                             block_number=block_number
                         )
                         await profile_record.mark_published()
+                        logger.info(f"Created new profile for user {owner}: {published_cid}")
                     
                     logger.info(f"Successfully processed user profile {profile_cid} -> {published_cid}")
                 else:

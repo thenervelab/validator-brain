@@ -85,33 +85,72 @@ class UserProfileReconstructionProcessor:
         batch_size = int(os.getenv('USER_PROFILE_BATCH_SIZE', '100'))
         
         async with self.db_pool.acquire() as conn:
-            if batch_size > 0:
-                # Get limited number of users
-                users_rows = await conn.fetch("""
-                    SELECT DISTINCT owner
-                    FROM file_assignments 
-                    WHERE owner IS NOT NULL
-                    AND owner NOT IN (
-                        SELECT owner FROM pending_user_profile 
-                        WHERE owner IS NOT NULL AND status = 'published'
-                    )
-                    ORDER BY owner
-                    LIMIT $1
-                """, batch_size)
-            else:
-                # Get all users (no limit)
-                users_rows = await conn.fetch("""
-                    SELECT DISTINCT owner
-                    FROM file_assignments 
-                    WHERE owner IS NOT NULL
-                    AND owner NOT IN (
-                        SELECT owner FROM pending_user_profile 
-                        WHERE owner IS NOT NULL AND status = 'published'
-                    )
-                    ORDER BY owner
-                """)
+            # Get users who either:
+            # 1. Don't have any published profile yet, OR
+            # 2. Have new files since their last profile was published
+            query = """
+            WITH user_file_stats AS (
+                SELECT 
+                    fa.owner,
+                    COUNT(*) as current_file_count,
+                    SUM(COALESCE(f.size, 0)) as current_total_size,
+                    MAX(fa.updated_at) as latest_file_update
+                FROM file_assignments fa
+                LEFT JOIN files f ON f.cid = fa.cid
+                WHERE fa.owner IS NOT NULL
+                GROUP BY fa.owner
+            ),
+            latest_profiles AS (
+                SELECT DISTINCT ON (owner) 
+                    owner,
+                    files_count,
+                    files_size,
+                    created_at as profile_created_at
+                FROM pending_user_profile 
+                WHERE status = 'published'
+                ORDER BY owner, created_at DESC
+            )
+            SELECT DISTINCT
+                ufs.owner,
+                ufs.current_file_count,
+                ufs.current_total_size,
+                ufs.latest_file_update,
+                COALESCE(lp.files_count, 0) as last_profile_file_count,
+                COALESCE(lp.files_size, 0) as last_profile_total_size,
+                lp.profile_created_at
+            FROM user_file_stats ufs
+            LEFT JOIN latest_profiles lp ON lp.owner = ufs.owner
+            WHERE 
+                -- No published profile yet
+                lp.owner IS NULL
+                OR 
+                -- File count changed
+                ufs.current_file_count != COALESCE(lp.files_count, 0)
+                OR 
+                -- Total size changed
+                ufs.current_total_size != COALESCE(lp.files_size, 0)
+                OR
+                -- New files added since last profile (if we have timestamps)
+                (lp.profile_created_at IS NOT NULL AND ufs.latest_file_update > lp.profile_created_at)
+            ORDER BY ufs.owner
+            """
             
-            return [dict(row) for row in users_rows]
+            if batch_size > 0:
+                query += f" LIMIT {batch_size}"
+            
+            users_rows = await conn.fetch(query)
+            
+            # Log what we found for debugging
+            for row in users_rows:
+                if row['last_profile_file_count'] > 0:
+                    logger.info(f"User {row['owner']} needs profile update: "
+                              f"files {row['last_profile_file_count']} -> {row['current_file_count']}, "
+                              f"size {row['last_profile_total_size']} -> {row['current_total_size']}")
+                else:
+                    logger.info(f"User {row['owner']} needs initial profile: "
+                              f"{row['current_file_count']} files, {row['current_total_size']} bytes")
+            
+            return [{'owner': row['owner']} for row in users_rows]
     
     async def fetch_user_profile_files(self, owner: str) -> List[Dict[str, Any]]:
         """Fetch all files owned by a specific user and convert to proper format"""

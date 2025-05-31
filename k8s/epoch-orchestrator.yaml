@@ -18,8 +18,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
       containers:
       - name: orchestrator
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "epoch_orchestrator.py"]
         env:
         # Override ConfigMap values if needed for this specific deployment

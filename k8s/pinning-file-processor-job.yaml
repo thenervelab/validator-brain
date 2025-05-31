@@ -8,7 +8,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: processor
-        image: ipfs-service-validator:latest
+        image: registry.starkleytech.com/library/ipfs-service-validator
         imagePullPolicy: Never
         command: ["python", "rabbitmq/pinning_file_processor.py"]
         envFrom:
