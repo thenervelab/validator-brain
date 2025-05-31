@@ -4,14 +4,16 @@ RUN apk add --no-cache git
 RUN go install github.com/amacneil/dbmate/v2@v2.6.0
 
 # Build stage for Python dependencies
-FROM python:3.9-slim AS builder
+FROM python:3.9-alpine AS builder
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    openssl-dev \
     python3-dev \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+    build-base
 
 # Set working directory
 WORKDIR /app
@@ -23,7 +25,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir --target=/app/deps .
 
 # Runtime stage
-FROM python:3.9-slim
+FROM python:3.9-alpine
 
 # Set environment variables
 ENV PYTHONFAULTHANDLER=1 \
@@ -32,11 +34,9 @@ ENV PYTHONFAULTHANDLER=1 \
     PYTHONPATH=/app:/app/deps
 
 # Install only runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     curl \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    netcat-openbsd
 
 # Copy dbmate from the first stage
 COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
@@ -61,7 +61,5 @@ COPY start.sh ./
 # Make start script executable
 RUN chmod +x /app/start.sh
 
-# No port needed for validator-only mode
-
 # Set entrypoint
-ENTRYPOINT ["/app/start.sh"]
+ENTRYPOINT ["/app/start.sh"] 

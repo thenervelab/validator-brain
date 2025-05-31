@@ -22,7 +22,7 @@ data:
   
   # IPFS Configuration
   IPFS_NODE_URL: "http://ipfs-service:5001"
-  IPFS_GATEWAY_URL: "https://ipfs.io"
+  IPFS_GATEWAY_URL: "https://get.hippius.network"
   REMOTE_IPFS_URL: "https://store.hippius.network"
   
   # Blockchain Configuration

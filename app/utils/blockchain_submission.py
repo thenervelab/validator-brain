@@ -212,10 +212,10 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
                 pr.owner as storage_request_owner,
                 pr.request_hash as storage_request_file_hash,
                 pup.files_size as file_size,
-                pup.cid as user_profile_cid
+                pup.cid as user_profile_cid  -- NEW reconstructed profile CID (not original)
             FROM pinning_requests pr
             JOIN pending_user_profile pup ON pup.owner = pr.owner
-            WHERE pup.status = 'published'
+            WHERE pup.status = 'published'  -- Only profiles that have been reconstructed and published
             AND pup.cid IS NOT NULL
             AND pup.files_size IS NOT NULL
             AND pr.request_hash IS NOT NULL
@@ -233,8 +233,19 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
                     "user_profile_cid": row['user_profile_cid']  # Reconstructed user profile CID
                 }
                 requests.append(request)
+                
+                # Log each request for verification
+                logger.debug(f"Storage request: {row['storage_request_owner']} -> "
+                           f"original_hash: {row['storage_request_file_hash'][:16]}... -> "
+                           f"new_profile_cid: {row['user_profile_cid']}")
             
             logger.info(f"Collected {len(requests)} original storage requests for closing on blockchain")
+            if requests:
+                # Log a sample to verify we're using new profile CIDs
+                sample = requests[0]
+                logger.info(f"Sample request: owner={sample['storage_request_owner']}, "
+                          f"new_profile_cid={sample['user_profile_cid'][:16]}...")
+            
             return requests
             
     except Exception as e:

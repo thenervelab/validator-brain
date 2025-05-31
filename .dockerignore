@@ -1,0 +1,88 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache and virtual environments
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Docker files (don't include other Dockerfiles)
+Dockerfile.*
+docker-compose*.yml
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Large data files
+*.db
+*.sqlite
+*.sqlite3
+
+# Kubernetes files
+k8s/
+
+# Environment files (these should be set via environment variables)
+.env
+.env.*
+environment.*
+
+# Node modules (if any)
+node_modules/
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# Jupyter notebooks
+*.ipynb
+
+# Large binary files
+*.tar
+*.tar.gz
+*.zip
+*.rar 
