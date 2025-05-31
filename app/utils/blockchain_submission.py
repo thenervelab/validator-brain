@@ -197,6 +197,9 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
     Collect storage requests that need to be submitted to the blockchain for closing.
     These are the original pinning requests from the chain that need to be marked as fulfilled.
     
+    NOTE: The user_profile_cid now includes ALL files for the user, including the NEW files
+    from the storage request, thanks to the updated user profile reconstruction logic.
+    
     Args:
         db_pool: Database connection pool
         

@@ -87,18 +87,52 @@ class UserProfileReconstructionProcessor:
         async with self.db_pool.acquire() as conn:
             # Get users who either:
             # 1. Don't have any published profile yet, OR
-            # 2. Have new files since their last profile was published
+            # 2. Have new files since their last profile was published (from either table)
             query = """
             WITH user_file_stats AS (
+                -- Files from file_assignments table (already assigned)
                 SELECT 
                     fa.owner,
-                    COUNT(*) as current_file_count,
-                    SUM(COALESCE(f.size, 0)) as current_total_size,
-                    MAX(fa.updated_at) as latest_file_update
+                    COUNT(*) as assigned_file_count,
+                    SUM(COALESCE(f.size, 0)) as assigned_total_size,
+                    MAX(fa.updated_at) as latest_assigned_update
                 FROM file_assignments fa
                 LEFT JOIN files f ON f.cid = fa.cid
                 WHERE fa.owner IS NOT NULL
                 GROUP BY fa.owner
+            ),
+            user_pending_stats AS (
+                -- Files from pending_assignment_file table (new from storage requests)
+                SELECT 
+                    paf.owner,
+                    COUNT(*) as pending_file_count,
+                    SUM(COALESCE(paf.file_size_bytes, 0)) as pending_total_size,
+                    MAX(paf.processed_at) as latest_pending_update
+                FROM pending_assignment_file paf
+                WHERE paf.owner IS NOT NULL
+                AND paf.status = 'processed'
+                AND paf.file_size_bytes IS NOT NULL
+                -- Only count files that are NOT already in file_assignments
+                AND NOT EXISTS (
+                    SELECT 1 FROM file_assignments fa 
+                    WHERE fa.cid = paf.cid
+                )
+                GROUP BY paf.owner
+            ),
+            combined_user_stats AS (
+                -- Combine stats from both tables
+                SELECT 
+                    COALESCE(ufs.owner, ups.owner) as owner,
+                    COALESCE(ufs.assigned_file_count, 0) + COALESCE(ups.pending_file_count, 0) as current_file_count,
+                    COALESCE(ufs.assigned_total_size, 0) + COALESCE(ups.pending_total_size, 0) as current_total_size,
+                    GREATEST(
+                        COALESCE(ufs.latest_assigned_update, '1970-01-01'::timestamp),
+                        COALESCE(ups.latest_pending_update, '1970-01-01'::timestamp)
+                    ) as latest_file_update,
+                    COALESCE(ups.pending_file_count, 0) as new_pending_files
+                FROM user_file_stats ufs
+                FULL OUTER JOIN user_pending_stats ups ON ufs.owner = ups.owner
+                WHERE COALESCE(ufs.assigned_file_count, 0) + COALESCE(ups.pending_file_count, 0) > 0
             ),
             latest_profiles AS (
                 SELECT DISTINCT ON (owner) 
@@ -111,28 +145,32 @@ class UserProfileReconstructionProcessor:
                 ORDER BY owner, created_at DESC
             )
             SELECT DISTINCT
-                ufs.owner,
-                ufs.current_file_count,
-                ufs.current_total_size,
-                ufs.latest_file_update,
+                cus.owner,
+                cus.current_file_count,
+                cus.current_total_size,
+                cus.latest_file_update,
+                cus.new_pending_files,
                 COALESCE(lp.files_count, 0) as last_profile_file_count,
                 COALESCE(lp.files_size, 0) as last_profile_total_size,
                 lp.profile_created_at
-            FROM user_file_stats ufs
-            LEFT JOIN latest_profiles lp ON lp.owner = ufs.owner
+            FROM combined_user_stats cus
+            LEFT JOIN latest_profiles lp ON lp.owner = cus.owner
             WHERE 
                 -- No published profile yet
                 lp.owner IS NULL
                 OR 
                 -- File count changed
-                ufs.current_file_count != COALESCE(lp.files_count, 0)
+                cus.current_file_count != COALESCE(lp.files_count, 0)
                 OR 
                 -- Total size changed
-                ufs.current_total_size != COALESCE(lp.files_size, 0)
+                cus.current_total_size != COALESCE(lp.files_size, 0)
                 OR
                 -- New files added since last profile (if we have timestamps)
-                (lp.profile_created_at IS NOT NULL AND ufs.latest_file_update > lp.profile_created_at)
-            ORDER BY ufs.owner
+                (lp.profile_created_at IS NOT NULL AND cus.latest_file_update > lp.profile_created_at)
+                OR
+                -- Has new pending files from storage requests
+                cus.new_pending_files > 0
+            ORDER BY cus.owner
             """
             
             if batch_size > 0:
@@ -146,16 +184,21 @@ class UserProfileReconstructionProcessor:
                     logger.info(f"User {row['owner']} needs profile update: "
                               f"files {row['last_profile_file_count']} -> {row['current_file_count']}, "
                               f"size {row['last_profile_total_size']} -> {row['current_total_size']}")
+                    if row['new_pending_files'] > 0:
+                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
                 else:
                     logger.info(f"User {row['owner']} needs initial profile: "
                               f"{row['current_file_count']} files, {row['current_total_size']} bytes")
+                    if row['new_pending_files'] > 0:
+                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
             
             return [{'owner': row['owner']} for row in users_rows]
     
     async def fetch_user_profile_files(self, owner: str) -> List[Dict[str, Any]]:
         """Fetch all files owned by a specific user and convert to proper format"""
         async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch("""
+            # Get files from file_assignments table (already assigned files)
+            assigned_rows = await conn.fetch("""
                 SELECT DISTINCT
                     f.cid,
                     f.name,
@@ -166,16 +209,46 @@ class UserProfileReconstructionProcessor:
                     fa.miner3,
                     fa.miner4,
                     fa.miner5,
-                    fa.updated_at
+                    fa.updated_at,
+                    'assigned' as source
                 FROM files f
                 JOIN file_assignments fa ON f.cid = fa.cid
                 WHERE fa.owner = $1
                 ORDER BY f.created_date ASC
             """, owner)
             
+            # Get files from pending_assignment_file table (new files from storage requests)
+            pending_rows = await conn.fetch("""
+                SELECT DISTINCT
+                    paf.cid,
+                    paf.filename as name,
+                    paf.file_size_bytes as size,
+                    paf.created_at as created_date,
+                    NULL as miner1,
+                    NULL as miner2,
+                    NULL as miner3,
+                    NULL as miner4,
+                    NULL as miner5,
+                    paf.processed_at as updated_at,
+                    'pending' as source
+                FROM pending_assignment_file paf
+                WHERE paf.owner = $1
+                AND paf.status = 'processed'
+                AND paf.file_size_bytes IS NOT NULL
+                -- Only include files that are NOT already in file_assignments
+                AND NOT EXISTS (
+                    SELECT 1 FROM file_assignments fa 
+                    WHERE fa.cid = paf.cid
+                )
+                ORDER BY paf.created_at ASC
+            """, owner)
+            
+            # Combine both sets of files
+            all_rows = list(assigned_rows) + list(pending_rows)
+            
             # Convert to proper format and handle datetime serialization
             files = []
-            for row in rows:
+            for row in all_rows:
                 # Collect assigned miners (filter out None values)
                 miner_ids = [
                     miner for miner in [
@@ -186,10 +259,11 @@ class UserProfileReconstructionProcessor:
                 
                 file_data = {
                     'cid': row['cid'],
-                    'name': row['name'],
-                    'size': row['size'],
+                    'name': row['name'] or 'unknown',
+                    'size': row['size'] or 0,
                     'miner_ids': miner_ids,
-                    'total_replicas': len(miner_ids)
+                    'total_replicas': len(miner_ids),
+                    'source': row['source']  # Track whether file is assigned or pending
                 }
                 
                 # Convert datetime to string if present
@@ -199,6 +273,17 @@ class UserProfileReconstructionProcessor:
                     file_data['last_charged_at'] = row['updated_at'].isoformat()
                 
                 files.append(file_data)
+            
+            # Log what we found for debugging
+            assigned_count = len(assigned_rows)
+            pending_count = len(pending_rows)
+            logger.info(f"User {owner}: Found {assigned_count} assigned files + {pending_count} pending files = {len(files)} total files")
+            
+            if pending_count > 0:
+                logger.info(f"Including {pending_count} NEW files from storage requests in profile for {owner}")
+                # Log sample pending files
+                for row in pending_rows[:3]:  # Show first 3
+                    logger.info(f"  - NEW: {row['name']} ({row['cid'][:16]}...) - {row['size']:,} bytes")
             
             return files
     
