@@ -1,64 +1,41 @@
-# Build stage for dbmate
 FROM golang:1.21-alpine AS dbmate
 RUN apk add --no-cache git
 RUN go install github.com/amacneil/dbmate/v2@v2.6.0
 
-# Build stage for Python dependencies
-FROM python:3.9-slim AS builder
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-dev \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
-WORKDIR /app
-
-# Copy dependency files
-COPY pyproject.toml ./
-
-# Install dependencies to a specific directory
-RUN pip install --no-cache-dir --target=/app/deps .
-
-# Runtime stage
 FROM python:3.9-slim
 
 # Set environment variables
 ENV PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
-    PYTHONPATH=/app:/app/deps
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/app
 
-# Install only runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    build-essential \
+    python3-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy dbmate from the first stage
 COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
 
-# Copy Python dependencies from builder stage
-COPY --from=builder /app/deps /app/deps
-
 # Set working directory
 WORKDIR /app
 
-# Copy only necessary application files
-COPY app/ ./app/
-COPY rabbitmq/ ./rabbitmq/
-COPY substrate_fetcher/ ./substrate_fetcher/
-COPY scripts/ ./scripts/
-COPY db/ ./db/
-COPY *.py ./
-COPY *.yml ./
-COPY *.yaml ./
-COPY start.sh ./
+# Copy all project files first
+COPY . .
 
-# Make start script executable
+# Install dependencies
+RUN pip install --no-cache-dir .
+
+
+# Copy the entrypoint script
+COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 # No port needed for validator-only mode
