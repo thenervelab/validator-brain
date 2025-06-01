@@ -82,6 +82,7 @@ class EpochOrchestrator:
         self.assignment_completed = False
         self.health_checks_completed = False
         self.health_metrics_submitted = False
+        self.availability_completed = False  # Track availability maintenance
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
         
@@ -333,6 +334,18 @@ class EpochOrchestrator:
         
         return success
     
+    async def run_availability_maintenance(self) -> bool:
+        """Run file availability maintenance to handle empty assignments and failures."""
+        logger.info("🛠️ Running file availability maintenance")
+        
+        success = self.run_processor(
+            'availability_manager_processor.py',
+            'File availability maintenance'
+        )
+        
+        # No queue to wait for since availability manager runs synchronously
+        return success
+    
     async def reconstruct_profiles(self) -> bool:
         """Reconstruct user and miner profiles."""
         logger.info("🔧 Reconstructing profiles")
@@ -481,6 +494,15 @@ class EpochOrchestrator:
             else:
                 logger.error("❌ Health checks failed")
         
+        # Run availability maintenance (non-validators can help maintain the network)
+        if self.health_checks_completed and not self.availability_completed:
+            success = await self.run_availability_maintenance()
+            if success:
+                self.availability_completed = True
+                logger.info("✅ File availability maintenance completed")
+            else:
+                logger.warning("⚠️ File availability maintenance failed")
+        
         # Submit health metrics to blockchain
         if self.health_checks_completed and not self.health_metrics_submitted:
             success = await self.submit_health_metrics()
@@ -533,6 +555,15 @@ class EpochOrchestrator:
                 if success:
                     self.assignment_completed = True
             
+            # Run availability maintenance after file assignment
+            if self.assignment_completed and not self.availability_completed:
+                success = await self.run_availability_maintenance()
+                if success:
+                    self.availability_completed = True
+                    logger.info("✅ File availability maintenance completed")
+                else:
+                    logger.warning("⚠️ File availability maintenance failed")
+            
             if not self.health_checks_completed:
                 success = await self.perform_health_checks()
                 if success:
@@ -577,6 +608,7 @@ class EpochOrchestrator:
             logger.info(f"   ✅ Initialization: {self.initialization_completed}")
             logger.info(f"   ✅ Pinning: {self.pinning_completed}")
             logger.info(f"   ✅ Assignment: {self.assignment_completed}")
+            logger.info(f"   ✅ Availability: {self.availability_completed}")
             logger.info(f"   ✅ Health Checks: {self.health_checks_completed}")
             logger.info(f"   ✅ Health Metrics Submitted: {self.health_metrics_submitted}")
             logger.info(f"   ✅ Profile Reconstruction: {self.profiles_reconstructed}")
@@ -598,6 +630,7 @@ class EpochOrchestrator:
         self.assignment_completed = False
         self.health_checks_completed = False
         self.health_metrics_submitted = False
+        self.availability_completed = False  # Reset availability state
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
         

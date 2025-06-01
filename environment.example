@@ -50,6 +50,16 @@ export REPLICAS_PER_FILE="5"             # Number of replicas per file
 export MAX_FILES_PER_BATCH="100"         # Files processed per batch
 export MIN_MINER_HEALTH_SCORE="70.0"     # Minimum health score for assignment
 
+# File availability management (AUTOMATIC - runs during epochs)
+export ENABLE_AUTOMATIC_REASSIGNMENTS="true"        # Enable automatic file reassignments
+export MAX_AVAILABILITY_FILES_PER_RUN="50"         # Max files to process per availability run
+export MIN_REPLICAS_PER_FILE="5"                   # Minimum replicas required per file
+export MAX_REPLICAS_PER_FILE="5"                   # Maximum replicas allowed per file
+export MIN_AVAILABILITY_SCORE="0.7"                # Minimum miner availability score (0.0-1.0)
+export MAX_CONSECUTIVE_FAILURES="3"                # Max consecutive failures before reassignment
+export FAILURE_WINDOW_HOURS="24"                   # Time window to check for failures
+export REASSIGNMENT_COOLDOWN_HOURS="6"             # Cooldown between reassignments for same file
+
 # ============================================
 # USAGE INSTRUCTIONS
 # ============================================
@@ -68,4 +78,10 @@ export MIN_MINER_HEALTH_SCORE="70.0"     # Minimum health score for assignment
 #    ./launch_epoch_orchestrator.sh --check-only
 
 # 6. Or show current status:
-#    ./launch_epoch_orchestrator.sh --status 
+#    ./launch_epoch_orchestrator.sh --status
+
+# NOTE: File availability management runs AUTOMATICALLY during each epoch:
+# - Fixes files with empty miner assignments (no manual intervention needed)
+# - Reassigns files from failing miners based on health metrics
+# - Maintains network file availability without manual oversight
+# - Configure behavior with ENABLE_AUTOMATIC_REASSIGNMENTS and related settings above 

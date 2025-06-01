@@ -300,7 +300,69 @@ python scripts/query_file_assignments.py --capacity
 - Processor runs on-demand using the job manifest
 - Integrates with existing health monitoring and capacity tracking
 
-### 8. Node Metrics
+### 8. File Availability Management (Automatic)
+
+**🆕 AUTOMATIC MAINTENANCE**: The file availability manager runs automatically during each epoch to ensure no files are lost due to empty assignments or miner failures. This requires **no manual intervention**.
+
+```bash
+# Test the availability manager (optional - it runs automatically)
+python scripts/test_availability_manager.py
+
+# The availability manager runs automatically via the epoch orchestrator
+# - Fixes files with empty miner assignments
+# - Reassigns files from failing miners
+# - Maintains network file availability
+```
+
+**Automatic Operation:**
+1. **Empty Assignment Detection**: Finds files with all NULL miner columns (left behind by failed assignments or health check removals)
+2. **Failing Miner Detection**: Identifies miners with poor health performance and files at risk
+3. **Smart Reassignment**: Uses the same load balancing and capacity checking as regular file assignment
+4. **Seamless Integration**: Runs as part of the epoch workflow with no manual oversight required
+
+**When It Runs:**
+- **Validators**: During file assignment phase (blocks 51-80) after main assignment processor
+- **Non-Validators**: After health checks to help maintain network health
+- **Frequency**: Once per epoch, automatically triggered by the epoch orchestrator
+
+**What It Fixes:**
+- Files with empty miner assignments (all miners NULL)
+- Files assigned to consistently failing miners
+- Network availability degradation
+- Lost files that would otherwise be inaccessible
+
+**Configuration:**
+```env
+# File availability management (runs automatically)
+ENABLE_AUTOMATIC_REASSIGNMENTS=true        # Enable automatic file reassignments
+MAX_AVAILABILITY_FILES_PER_RUN=50         # Max files to process per availability run
+MIN_REPLICAS_PER_FILE=5                   # Minimum replicas required per file
+MAX_REPLICAS_PER_FILE=5                   # Maximum replicas allowed per file
+MIN_AVAILABILITY_SCORE=0.7                # Minimum miner availability score (0.0-1.0)
+MAX_CONSECUTIVE_FAILURES=3                # Max consecutive failures before reassignment
+FAILURE_WINDOW_HOURS=24                   # Time window to check for failures
+REASSIGNMENT_COOLDOWN_HOURS=6             # Cooldown between reassignments for same file
+```
+
+**Availability Rules:**
+- **Minimum Availability Score**: Miners must maintain 70% success rate to avoid reassignment
+- **Consecutive Failures**: Files reassigned after 3 consecutive failures from a miner
+- **Failure Window**: Only failures within last 24 hours are considered
+- **Reassignment Cooldown**: 6-hour cooldown prevents thrashing of file assignments
+
+**Integration:**
+- Uses the same scoring algorithm as regular file assignment for optimal miner selection
+- Respects capacity limits and load balancing to prevent overloading miners
+- Updates `file_assignments` table and triggers profile reconstruction as needed
+- Logs all activities for monitoring and debugging
+
+**No Manual Intervention Required:**
+- Runs automatically as part of epoch workflow
+- Handles edge cases like mid-epoch startup and connection failures
+- Self-monitors and reports statistics
+- Integrates seamlessly with existing health checks and assignment processes
+
+### 9. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
 
@@ -325,7 +387,7 @@ python rabbitmq/clear_queue.py node_metrics_latest
 - The consumer runs automatically in Docker Compose using `node_metrics_consumer.py` (latest metrics only)
 - For historical data retention, manually run `node_metrics_consumer_with_history.py` instead
 
-### 9. Miner Health Checks
+### 10. Miner Health Checks
 
 Performs IPFS ping and pin tests on miners to validate their connectivity and file availability. **Failed miners are automatically removed from file assignments**, and the file assignment system handles reassignment:
 
@@ -393,7 +455,7 @@ python scripts/query_miner_health.py --miner 12D3KooWKnhGPbTtCgEPWRxGJhtFFcbMTEe
 python scripts/query_miner_health.py --epoch 7104 --stats
 ```
 
-### 10. Epoch Orchestrator
+### 11. Epoch Orchestrator
 
 The **Epoch Orchestrator** is the main controller that manages the entire IPFS Service Validator application lifecycle based on whether we are the current epoch validator or not. It runs continuously and coordinates all processors and consumers.
 
