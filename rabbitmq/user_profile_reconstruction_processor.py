@@ -83,6 +83,7 @@ class UserProfileReconstructionProcessor:
         """
         Assign miners to unassigned files as a fallback during profile reconstruction.
         This ensures no files are lost if the main file assignment process missed them.
+        Uses load balancing to distribute files across available miners.
         """
         try:
             # Get available miners with capacity
@@ -107,14 +108,15 @@ class UserProfileReconstructionProcessor:
                   AND r.status = 'active'
                   AND COALESCE(ms.health_score, 100) >= 70
                 ORDER BY COALESCE(ms.health_score, 100) DESC, r.node_id
-                LIMIT 20
+                LIMIT 50
             """)
             
             if not available_miners:
                 logger.error(f"No available miners found for fallback assignment for user {owner}")
                 return
             
-            # Simple round-robin assignment for fallback
+            # Track assignments for load balancing within this fallback session
+            fallback_assignments = {}
             replicas_per_file = 5
             
             for file_data in unassigned_files:
@@ -126,9 +128,9 @@ class UserProfileReconstructionProcessor:
                 safety_margin = int(file_size * 0.2)
                 required_space = file_size + safety_margin
                 
-                # Select miners with improved capacity checking
-                selected_miners = []
-                for i, miner in enumerate(available_miners[:replicas_per_file]):
+                # Score miners based on capacity and current fallback assignments
+                scored_miners = []
+                for miner in available_miners:
                     # Use actual IPFS repo size as primary indicator of usage
                     ipfs_repo_size = miner['used_storage_bytes']  # from node_metrics.ipfs_repo_size
                     calculated_size = miner['total_files_size_bytes']  # from our miner_stats
@@ -144,17 +146,39 @@ class UserProfileReconstructionProcessor:
                     storage_capacity = miner['storage_capacity_bytes']
                     available_storage = max(0, storage_capacity - used_storage)
                     
-                    if available_storage >= required_space:
-                        selected_miners.append(miner['node_id'])
-                        logger.debug(f"Fallback: Miner {miner['node_id']} has {available_storage:,} available >= {required_space:,} required")
-                    else:
-                        logger.debug(f"Fallback: Miner {miner['node_id']} has {available_storage:,} available < {required_space:,} required")
+                    # Check if miner has enough space
+                    if available_storage < required_space:
+                        continue
+                    
+                    # Calculate score based on available storage and current assignments
+                    storage_score = available_storage / storage_capacity if storage_capacity > 0 else 0
+                    health_score = min(1.0, miner['health_score'] / 100.0)
+                    
+                    # Penalize miners that have been assigned files in this fallback session
+                    fallback_count = fallback_assignments.get(miner['node_id'], 0)
+                    load_penalty = 0.8 ** fallback_count  # Exponential penalty
+                    
+                    # Combined score
+                    final_score = (storage_score * 0.6 + health_score * 0.4) * load_penalty
+                    
+                    scored_miners.append({
+                        'node_id': miner['node_id'],
+                        'score': final_score,
+                        'available_storage': available_storage
+                    })
                 
-                if not selected_miners:
+                if not scored_miners:
                     logger.error(f"No miners with sufficient capacity for file {cid} (size: {file_size:,}, need: {required_space:,} with safety margin)")
-                    # Assign to first available miners anyway as last resort
+                    # Use first available miners as last resort
                     selected_miners = [m['node_id'] for m in available_miners[:min(3, len(available_miners))]]
                     logger.warning(f"Using {len(selected_miners)} miners as last resort for file {cid}")
+                else:
+                    # Use weighted random selection for better distribution
+                    selected_miners = self._fallback_weighted_selection(scored_miners, replicas_per_file)
+                
+                # Update fallback assignment tracking
+                for miner_id in selected_miners:
+                    fallback_assignments[miner_id] = fallback_assignments.get(miner_id, 0) + 1
                 
                 # Update the file_data with assigned miners
                 file_data['miner_ids'] = selected_miners
@@ -193,9 +217,51 @@ class UserProfileReconstructionProcessor:
                 """, cid, owner)
                 
                 logger.info(f"Fallback assigned file {filename} ({cid[:16]}...) to {len(selected_miners)} miners: {', '.join(selected_miners[:3])}{'...' if len(selected_miners) > 3 else ''}")
+            
+            # Log fallback distribution stats
+            if fallback_assignments:
+                total_fallback = sum(fallback_assignments.values())
+                unique_miners = len(fallback_assignments)
+                logger.info(f"Fallback assignment stats for {owner}: {total_fallback} assignments across {unique_miners} miners")
                 
         except Exception as e:
             logger.error(f"Error in fallback miner assignment for user {owner}: {e}")
+    
+    def _fallback_weighted_selection(self, scored_miners: List[Dict[str, Any]], count: int) -> List[str]:
+        """Weighted random selection for fallback assignments."""
+        import random
+        
+        if len(scored_miners) <= count:
+            return [m['node_id'] for m in scored_miners]
+        
+        # Create probability distribution based on scores
+        total_score = sum(m['score'] for m in scored_miners)
+        if total_score <= 0:
+            # Fallback to random selection if all scores are zero
+            return [m['node_id'] for m in random.sample(scored_miners, count)]
+        
+        # Select miners without replacement using weighted probabilities
+        selected_miners = []
+        remaining_miners = scored_miners.copy()
+        
+        for _ in range(count):
+            if not remaining_miners:
+                break
+            
+            # Calculate current probabilities
+            current_total = sum(m['score'] for m in remaining_miners)
+            if current_total <= 0:
+                # Random selection for remaining
+                selected_miner = random.choice(remaining_miners)
+            else:
+                probabilities = [m['score'] / current_total for m in remaining_miners]
+                selected_idx = random.choices(range(len(remaining_miners)), weights=probabilities)[0]
+                selected_miner = remaining_miners[selected_idx]
+            
+            selected_miners.append(selected_miner['node_id'])
+            remaining_miners.remove(selected_miner)
+        
+        return selected_miners
 
     async def fetch_user_profiles_to_reconstruct(self) -> List[Dict[str, Any]]:
         """Fetch user profiles that need to be reconstructed from file_assignments and pending files"""

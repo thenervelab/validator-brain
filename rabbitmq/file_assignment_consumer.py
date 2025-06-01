@@ -243,9 +243,105 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
     
+    async def process_failing_miner_replacement(self, assignment_data: Dict[str, Any]) -> bool:
+        """
+        Process a failing miner replacement task.
+        
+        Args:
+            assignment_data: Replacement data from the queue
+            
+        Returns:
+            True if processed successfully, False otherwise
+        """
+        cid = assignment_data.get('cid')
+        owner = assignment_data.get('owner')
+        filename = assignment_data.get('filename', '')
+        file_size_bytes = assignment_data.get('file_size_bytes', 0)
+        old_miners = assignment_data.get('old_miners', [])
+        new_miners = assignment_data.get('new_miners', [])
+        failing_miners = assignment_data.get('failing_miners', [])
+        replacement_miners = assignment_data.get('replacement_miners', [])
+        
+        if not cid or not owner or not new_miners:
+            logger.error(f"Invalid failing miner replacement data: missing cid, owner, or new_miners. Data: {assignment_data}")
+            return False
+        
+        logger.info(f"Processing failing miner replacement for file {filename} ({cid[:16]}...) - "
+                   f"replacing {len(failing_miners)} failing miners with {len(replacement_miners)} healthy miners")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    # 1. Get current assignment state (to handle race conditions)
+                    current_assignment = await conn.fetchrow("""
+                        SELECT miner1, miner2, miner3, miner4, miner5, updated_at
+                        FROM file_assignments
+                        WHERE cid = $1
+                        FOR UPDATE
+                    """, cid)
+                    
+                    if not current_assignment:
+                        logger.error(f"File assignment not found for CID {cid}")
+                        return False
+                    
+                    # 2. Update file assignments with new miners (this will update updated_at timestamp)
+                    # The new_miners list already has the replacements in the correct positions
+                    result = await conn.execute("""
+                        UPDATE file_assignments
+                        SET miner1 = $2, miner2 = $3, miner3 = $4, miner4 = $5, miner5 = $6,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE cid = $1
+                        AND updated_at = $7
+                    """, cid, new_miners[0], new_miners[1], new_miners[2], 
+                        new_miners[3], new_miners[4], current_assignment['updated_at'])
+                    
+                    # Check if update was successful (no race condition)
+                    if result == "UPDATE 0":
+                        logger.warning(f"Race condition detected for file {cid} - assignment was modified by another process")
+                        return False
+                    
+                    # 3. Update miner stats for newly assigned miners (add)
+                    for miner_id in replacement_miners:
+                        if miner_id:  # Skip None values
+                            await conn.execute("""
+                                INSERT INTO miner_stats (
+                                    node_id, total_files_pinned, total_files_size_bytes, updated_at
+                                )
+                                VALUES ($1, 1, $2, NOW())
+                                ON CONFLICT (node_id) DO UPDATE SET
+                                    total_files_pinned = miner_stats.total_files_pinned + 1,
+                                    total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
+                                    updated_at = NOW()
+                            """, miner_id, file_size_bytes)
+                    
+                    # 4. Update miner stats for removed failing miners (subtract)
+                    for miner_id in failing_miners:
+                        if miner_id:  # Skip None values
+                            await conn.execute("""
+                                UPDATE miner_stats
+                                SET total_files_pinned = GREATEST(0, total_files_pinned - 1),
+                                    total_files_size_bytes = GREATEST(0, total_files_size_bytes - $2),
+                                    updated_at = NOW()
+                                WHERE node_id = $1
+                            """, miner_id, file_size_bytes)
+                    
+                    logger.info(f"Successfully replaced failing miners for file {cid[:16]}... - "
+                               f"removed: {', '.join(failing_miners)}, added: {', '.join(replacement_miners)}")
+                    
+                    # The updated_at timestamp change will automatically trigger user profile reconstruction
+                    # in the next user_profile_reconstruction_processor run
+                    logger.info(f"File assignment updated - user profile for {owner} will be reconstructed in next cycle")
+                    
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error processing failing miner replacement for file {cid}: {e}")
+            logger.exception("Full traceback:")
+            return False
+    
     async def process_assignment(self, assignment_data: Dict[str, Any]) -> bool:
         """
-        Process a file assignment task (either new or reassignment).
+        Process a file assignment task (new, reassignment, or failing miner replacement).
         
         Args:
             assignment_data: Assignment data from the queue
@@ -259,6 +355,8 @@ class FileAssignmentConsumer:
             return await self.process_new_assignment(assignment_data)
         elif assignment_type == 'reassignment':
             return await self.process_reassignment(assignment_data)
+        elif assignment_type == 'failing_miner_replacement':
+            return await self.process_failing_miner_replacement(assignment_data)
         else:
             logger.error(f"Unknown assignment type: {assignment_type}")
             return False
