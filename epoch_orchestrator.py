@@ -485,6 +485,13 @@ class EpochOrchestrator:
                 logger.error("Failed to initialize epoch data")
                 return
         
+        # Periodically refresh user profiles to stay current (every ~20 blocks)
+        current_block = self.current_block
+        block_position = get_epoch_block_position(current_block)
+        if block_position % 20 == 0 and block_position > 10:  # Every 20 blocks after initialization
+            logger.info("🔄 Refreshing user profiles to stay current with network changes")
+            await self.refresh_user_profiles()
+        
         # Perform health checks and submit to chain
         if not self.health_checks_completed:
             success = await self.perform_health_checks()
@@ -580,6 +587,16 @@ class EpochOrchestrator:
         
         # Phase 4: Profile reconstruction (blocks 81-95)
         elif 81 <= block_position <= 95:
+            # CRITICAL: Refetch user profiles before reconstruction to include new files
+            if block_position == 81 and not getattr(self, 'user_profiles_refreshed_for_reconstruction', False):
+                logger.info("🔄 Refetching user profiles before reconstruction to include new files from storage requests")
+                refresh_success = await self.refresh_user_profiles()
+                if refresh_success:
+                    self.user_profiles_refreshed_for_reconstruction = True
+                    logger.info("✅ User profiles refreshed with latest data including new storage request files")
+                else:
+                    logger.warning("⚠️ Failed to refresh user profiles - proceeding with existing data")
+            
             if not self.profiles_reconstructed:
                 success = await self.reconstruct_profiles()
                 if success:
@@ -611,6 +628,7 @@ class EpochOrchestrator:
             logger.info(f"   ✅ Availability: {self.availability_completed}")
             logger.info(f"   ✅ Health Checks: {self.health_checks_completed}")
             logger.info(f"   ✅ Health Metrics Submitted: {self.health_metrics_submitted}")
+            logger.info(f"   ✅ User Profiles Refreshed: {getattr(self, 'user_profiles_refreshed_for_reconstruction', False)}")
             logger.info(f"   ✅ Profile Reconstruction: {self.profiles_reconstructed}")
             logger.info(f"   ✅ Blockchain Submission: {self.blockchain_submitted}")
             
@@ -633,6 +651,7 @@ class EpochOrchestrator:
         self.availability_completed = False  # Reset availability state
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
+        self.user_profiles_refreshed_for_reconstruction = False  # Reset user profile refresh flag
         
         # Reset startup safety mechanism
         self.waiting_for_next_epoch = False

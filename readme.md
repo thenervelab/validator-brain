@@ -362,6 +362,19 @@ REASSIGNMENT_COOLDOWN_HOURS=6             # Cooldown between reassignments for s
 - Self-monitors and reports statistics
 - Integrates seamlessly with existing health checks and assignment processes
 
+**Emergency Manual Fix:**
+If files get stuck with empty assignments outside the automatic cycle:
+```bash
+# Fix all empty assignments immediately
+python scripts/fix_empty_assignment_simple.py --fix
+
+# Check status of specific file
+python scripts/fix_empty_assignment_simple.py bafkreifrm5azdkeoyxg5om7eeqfidabraxoecllmm4enkovzj7ber5hvkm
+
+# Interactive mode
+python scripts/fix_empty_assignment_simple.py
+```
+
 ### 9. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
@@ -500,8 +513,13 @@ kubectl apply -f k8s/epoch-orchestrator.yaml
 - **Block 0-10**: Initialization (registration, node metrics, user profiles)
 - **Block 11-50**: Pinning requests processing (validator only)
 - **Block 51-80**: File assignment and health checks
-- **Block 81-95**: Profile reconstruction, **submit to blockchain**
+- **Block 81-95**: **🆕 Refresh user profiles**, Profile reconstruction, **submit to blockchain**
 - **Block 96-99**: Finalization and preparation for next epoch
+
+**🆕 CRITICAL DATA SYNCHRONIZATION FIX:**
+- **Block 81**: Automatically refetches user profiles before reconstruction to include ALL new files from storage requests
+- **Non-Validators**: Refresh user profiles every 20 blocks to stay current with network changes
+- **Why This Matters**: Ensures reconstructed profiles include files added during the epoch, preventing data loss
 
 **Note**: Epochs start at blocks ending in 38 (e.g., 771538, 771638, 771738, etc.), not at blocks 0, 100, 200, etc.
 
