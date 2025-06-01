@@ -829,16 +829,19 @@ class FileAssignmentProcessor:
             # 2. They have recent pin check failures in current/recent epochs
             # 3. Their overall health score is below minimum threshold
             
+            # Calculate the epoch window start in Python to avoid SQL type ambiguity
+            epoch_window_start = max(0, current_epoch - self.recent_epochs_window)
+            
             rows = await conn.fetch("""
                 WITH failing_miners AS (
                     -- Get miners with poor pin check performance in recent epochs
                     SELECT DISTINCT meh.node_id
                     FROM miner_epoch_health meh
-                    WHERE meh.epoch >= $1 - $2  -- Recent epochs
+                    WHERE meh.epoch >= $1  -- Recent epochs (calculated in Python)
                     AND (meh.pin_check_successes + meh.pin_check_failures) > 0  -- Has pin check activity
                     AND (
                         -- Poor recent pin check success rate
-                        (meh.pin_check_successes * 100.0 / (meh.pin_check_successes + meh.pin_check_failures)) < $3
+                        (meh.pin_check_successes * 100.0 / (meh.pin_check_successes + meh.pin_check_failures)) < $2
                         OR
                         -- Has recent failures and low success rate
                         (meh.pin_check_failures > 0 AND 
@@ -850,7 +853,7 @@ class FileAssignmentProcessor:
                     -- Also include miners with overall poor health scores
                     SELECT ms.node_id
                     FROM miner_stats ms
-                    WHERE ms.health_score < $4
+                    WHERE ms.health_score < $3
                     AND ms.total_pin_checks > 5  -- Only consider miners with some history
                 ),
                 files_with_failing_miners AS (
@@ -893,10 +896,9 @@ class FileAssignmentProcessor:
                 FROM files_with_failing_miners
                 WHERE failing_miner_count > 0
                 ORDER BY failing_miner_count DESC, updated_at ASC  -- Prioritize files with more failing miners
-                LIMIT $5
+                LIMIT $4
             """, 
-            current_epoch, 
-            self.recent_epochs_window, 
+            epoch_window_start,
             self.pin_check_failure_threshold, 
             self.min_miner_health_score,
             self.max_failing_replacements_per_batch)
