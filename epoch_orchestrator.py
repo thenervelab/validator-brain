@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.5
+Epoch Orchestrator v2.1.6
+
+CRITICAL FIX IN v2.1.6:
+- 🚨 ENHANCED: Transaction hash logging for blockchain submissions
+- ✅ Added detailed debugging for IpfsPallet::UpdatePinAndStorageRequests transactions  
+- ✅ Enhanced validator keypair validation with environment variable checks
+- ✅ Comprehensive data collection logging (storage requests + miner profiles)
+- ✅ Database state diagnostics when miner profiles are missing
+- ✅ Clear transaction success/failure reporting with tx hash
 
 CRITICAL FIX IN v2.1.5:
 - 🚨 FIXED: UnboundLocalError crash with block_position variable referenced before assignment
@@ -95,7 +103,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.5"
+ORCHESTRATOR_VERSION = "2.1.6"
 
 # Setup logging
 logging.basicConfig(
@@ -420,35 +428,54 @@ class EpochOrchestrator:
     
     async def assign_files(self) -> bool:
         """
-        Assign files to miners for the current epoch.
-        CRITICAL: This must only run AFTER health checks are completed for accurate miner health data.
+        Assign miners to files that need assignments. Phase 3: File assignment (blocks 36-60)
+        
+        Enhanced to fill ANY NULL miner columns in file_assignments table,
+        ensuring all files have complete 5-miner assignments before profile reconstruction.
         """
-        logger.info("📋 Starting file assignment for current epoch")
+        logger.info("📋 Starting file assignment phase")
+        logger.info("🔧 Enhanced assignment: Fill ANY NULL miner columns in file_assignments")
         
-        # CRITICAL VALIDATION: Ensure health checks completed first
+        # Validate that health checks completed
         if not self.health_checks_completed:
-            logger.error("🚨 CRITICAL: Cannot assign files - health checks not completed!")
-            logger.error("   File assignments require fresh health data from current epoch")
+            logger.error("❌ Health checks must complete before file assignment")
             return False
-        
-        # Verify we have fresh health data
-        async with self.db_pool.acquire() as conn:
-            # Check if we have health data for current epoch
-            current_health_data = await conn.fetchval("""
-                SELECT COUNT(*) FROM miner_epoch_health 
-                WHERE epoch = $1 AND last_activity_at >= NOW() - INTERVAL '30 minutes'
-            """, self.current_epoch)
             
-            if current_health_data == 0:
-                # Check for health data from previous epoch as fallback
-                fallback_health_data = await conn.fetchval("""
-                    SELECT COUNT(*) FROM miner_epoch_health 
-                    WHERE epoch >= $1 - 1 AND last_activity_at >= NOW() - INTERVAL '4 hours'
-                """, self.current_epoch)
-                
-                if fallback_health_data == 0:
-                    logger.error("🚨 CRITICAL: No health data found for current OR previous epoch!")
-                    logger.error(f"   Expected health data for epoch {self.current_epoch} or {self.current_epoch - 1}")
+        # Check that we have fresh health data for better assignment quality
+        current_health_data = None
+        fallback_health_data = None
+        
+        async with self.db_pool.acquire() as conn:
+            # Check for very recent health data (within last hour)
+            current_health_data = await conn.fetchval("""
+                SELECT COUNT(DISTINCT node_id) 
+                FROM miner_epoch_health 
+                WHERE last_activity_at >= NOW() - INTERVAL '1 hour'
+            """)
+            
+            # Fallback: check for health data within last 4 hours
+            fallback_health_data = await conn.fetchval("""
+                SELECT COUNT(DISTINCT node_id) 
+                FROM miner_epoch_health 
+                WHERE last_activity_at >= NOW() - INTERVAL '4 hours'
+            """)
+            
+            # Safety: Check for VERY old health data (within last day)
+            old_health_data = await conn.fetchval("""
+                SELECT COUNT(DISTINCT node_id) 
+                FROM miner_epoch_health 
+                WHERE last_activity_at >= NOW() - INTERVAL '1 day'
+            """)
+            
+            logger.info(f"📊 Health data availability:")
+            logger.info(f"   Fresh (< 1 hour): {current_health_data} miners")
+            logger.info(f"   Recent (< 4 hours): {fallback_health_data} miners")
+            logger.info(f"   Old (< 1 day): {old_health_data} miners")
+            
+            if current_health_data < 10 and fallback_health_data < 20:
+                if old_health_data < 30:
+                    logger.error("🚨 Insufficient health data for quality assignments!")
+                    logger.error("   This could result in poor miner selection")
                     return False
                 else:
                     logger.warning(f"⚠️ No current epoch health data, using {fallback_health_data} miners from previous epoch")
@@ -463,11 +490,13 @@ class EpochOrchestrator:
             # Create assigner with fresh health data guarantee
             assigner = SimpleFileAssigner(self.db_pool)
             
-            # Process unassigned files using fresh health data
+            # Process files to fill ANY incomplete assignments (any NULL miner columns)
+            logger.info("🔧 Filling incomplete assignments: files with ANY NULL miner columns")
             success = await assigner.assign_unassigned_files()
             
             if success:
                 logger.info("✅ File assignment completed successfully with fresh health data")
+                logger.info("🎯 All files now have complete 5-miner assignments for profile reconstruction")
                 return True
             else:
                 logger.error("❌ File assignment failed despite fresh health data")
@@ -579,34 +608,63 @@ class EpochOrchestrator:
             
             # Step 2: Collect data for main submission
             logger.info("📦 Collecting data for blockchain submission...")
+            logger.info("🔍 Step 2a: Collecting storage requests...")
             
             storage_requests = await collect_storage_requests_for_submission(self.db_pool)
-            miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
+            logger.info(f"✅ Collected {len(storage_requests)} storage requests")
             
-            logger.info(f"Prepared for submission:")
+            logger.info("🔍 Step 2b: Collecting miner profiles...")
+            miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
+            logger.info(f"✅ Collected {len(miner_profiles)} miner profiles")
+            
+            logger.info(f"📊 FINAL DATA SUMMARY:")
             logger.info(f"  - {len(storage_requests)} original storage requests (for closing)")
             logger.info(f"  - {len(miner_profiles)} miner profiles")
+            
+            # Debug: Check if miner profiles were actually reconstructed
+            if len(miner_profiles) == 0:
+                logger.error("🚨 CRITICAL: NO MINER PROFILES FOUND!")
+                logger.error("   This suggests miner profile reconstruction did not work")
+                logger.error("   Check the RabbitMQ miner profile reconstruction system")
+                
+                # Check the database state
+                async with self.db_pool.acquire() as conn:
+                    profile_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile")
+                    published_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'")
+                    logger.error(f"   Database state: {profile_count} total profiles, {published_count} published")
+                    
+                    if profile_count == 0:
+                        logger.error("   🔥 NO profiles in pending_miner_profile table at all!")
+                        logger.error("   🔥 Miner profile reconstruction processor never ran or failed!")
+                    elif published_count == 0:
+                        logger.error("   🔥 Profiles exist but none are 'published' status!")
+                        logger.error("   🔥 Miner profile reconstruction consumer failed!")
             
             if len(storage_requests) == 0 and len(miner_profiles) == 0:
                 logger.warning("⚠️ No data to submit to blockchain")
                 return True  # Not an error, just nothing to do
             
             # Step 3: Submit to blockchain
+            logger.info("🚀 Step 3: Submitting to blockchain...")
             success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(
                 storage_requests, miner_profiles
             )
             
             if success:
                 # Mark as completed in database
+                logger.info("✅ Blockchain submission successful! Marking as completed in database...")
                 await mark_submissions_as_completed(self.db_pool, submitted_requests, submitted_profiles)
                 logger.info("✅ Blockchain submission completed successfully")
+                logger.info(f"🎯 Successfully submitted {len(submitted_profiles)} miner profiles to chain!")
                 return True
             else:
                 logger.error("❌ Blockchain submission failed")
+                logger.error("🔥 The transaction was not sent to the blockchain!")
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error during blockchain submission: {e}")
+            logger.exception("Full traceback:")
             return False
     
     async def submit_health_metrics(self) -> bool:

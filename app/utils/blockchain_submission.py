@@ -87,17 +87,34 @@ def call_update_pin_and_storage_requests(
     Returns:
         tuple: (success: bool, submitted_requests: List, submitted_profiles: List)
     """
-    logger.info(f"Submitting blockchain update:")
-    logger.info(f"  - {len(requests)} original storage requests (to close)")
-    logger.info(f"  - {len(miner_profiles)} miner profiles (all reconstructed)")
+    logger.info(f"🚀 STARTING BLOCKCHAIN SUBMISSION:")
+    logger.info(f"📋 Data to submit:")
+    logger.info(f"   - {len(requests)} original storage requests (to close)")
+    logger.info(f"   - {len(miner_profiles)} miner profiles (all reconstructed)")
+    
+    # Debug: Show sample data if available
+    if requests:
+        sample_request = requests[0]
+        logger.info(f"📄 Sample storage request: {sample_request['storage_request_owner']} -> {sample_request['user_profile_cid'][:16]}...")
+    
+    if miner_profiles:
+        sample_profile = miner_profiles[0]
+        logger.info(f"⛏️ Sample miner profile: {sample_profile['miner_node_id'][:20]}... -> {sample_profile['cid'][:16]}...")
+    
+    if not requests and not miner_profiles:
+        logger.error("🚨 CRITICAL: No data to submit! Both requests and miner_profiles are empty")
+        logger.error("   This suggests profile reconstruction did not complete successfully")
+        return False, [], []
     
     # Submit everything in a single transaction (as it was working before)
+    logger.info("📤 Attempting single transaction submission...")
     success = _submit_single_batch(requests, miner_profiles)
     if success:
+        logger.info("✅ Single transaction submission successful!")
         return True, requests, miner_profiles
     
     # If it fails, try without storage requests (profiles only)
-    logger.warning("Submission failed, trying with miner profiles only...")
+    logger.warning("⚠️ Single transaction failed, trying with miner profiles only...")
     success = _submit_single_batch([], miner_profiles)
     if success:
         logger.warning("⚠️ Submitted miner profiles only - storage requests skipped")
@@ -169,10 +186,28 @@ def _submit_single_batch(
         # Load the validator keypair for signing
         keypair = load_validator_keypair()
         if not keypair:
-            logger.error("No validator keypair available for signing")
+            logger.error("🚨 CRITICAL: No validator keypair available for signing!")
+            logger.error("❌ Environment check:")
+            validator_seed = os.getenv('VALIDATOR_SEED')
+            validator_account = os.getenv('VALIDATOR_ACCOUNT_ID')
+            logger.error(f"   - VALIDATOR_SEED: {'✅ SET' if validator_seed else '❌ MISSING'}")
+            logger.error(f"   - VALIDATOR_ACCOUNT_ID: {'✅ SET' if validator_account else '❌ MISSING'}")
+            if not validator_seed:
+                logger.error("🔥 VALIDATOR_SEED environment variable is required for transaction signing!")
+                logger.error("🔥 No blockchain transactions can be sent without a valid signing key!")
             return False
 
-        logger.info(f"Using account {keypair.ss58_address} for signing")
+        logger.info(f"✅ Validator keypair loaded successfully")
+        logger.info(f"🔑 Using account {keypair.ss58_address} for signing")
+        
+        # Log expected vs actual account for transparency
+        expected_account = os.getenv('VALIDATOR_ACCOUNT_ID')
+        if expected_account and expected_account != keypair.ss58_address:
+            logger.info(f"🔗 Proxy configuration: epoch validator {expected_account}, signing with {keypair.ss58_address}")
+        elif expected_account:
+            logger.info(f"✅ Direct signing: using validator account {keypair.ss58_address}")
+        else:
+            logger.info(f"⚠️ No VALIDATOR_ACCOUNT_ID set - signing with {keypair.ss58_address}")
 
         # Format the requests to match the StorageRequestUpdate structure
         formatted_requests = []
@@ -291,10 +326,20 @@ def _submit_single_batch(
 
         # Create and sign the extrinsic
         extrinsic = substrate.create_signed_extrinsic(call, keypair)
-        logger.debug(f"Created extrinsic: {extrinsic}")
+        logger.info(f"✅ Created and signed extrinsic")
+        logger.info(f"📋 Transaction details:")
+        logger.info(f"   - Signing account: {keypair.ss58_address}")
+        logger.info(f"   - Call module: IpfsPallet")
+        logger.info(f"   - Call function: update_pin_and_storage_requests")
+        logger.info(f"   - Storage requests: {len(formatted_requests)}")
+        logger.info(f"   - Miner profiles: {len(formatted_miner_profiles)}")
+        
+        # Get the extrinsic hash before submission
+        extrinsic_hash = extrinsic.extrinsic_hash
+        logger.info(f"🔗 TRANSACTION HASH: {extrinsic_hash}")
+        logger.info(f"🚀 Submitting transaction {extrinsic_hash} to blockchain...")
 
         # Submit the extrinsic and wait for finalization
-        logger.info("Submitting extrinsic to blockchain...")
         receipt = substrate.submit_extrinsic(
             extrinsic,
             wait_for_inclusion=True,
@@ -302,12 +347,21 @@ def _submit_single_batch(
         )
 
         if receipt.is_success:
-            logger.info(f"✅ Extrinsic successful in block {receipt.block_hash}")
-            logger.info(f"   - Submitted {len(formatted_requests)} original storage requests (for closing)")
-            logger.info(f"   - Submitted {len(formatted_miner_profiles)} miner profiles")
+            logger.info(f"✅ ✨ TRANSACTION SUCCESSFUL! ✨")
+            logger.info(f"🔗 Transaction Hash: {extrinsic_hash}")
+            logger.info(f"📦 Block Hash: {receipt.block_hash}")
+            logger.info(f"📊 Submitted Data:")
+            logger.info(f"   - {len(formatted_requests)} original storage requests (for closing)")
+            logger.info(f"   - {len(formatted_miner_profiles)} miner profiles")
+            logger.info(f"🎯 IpfsPallet::UpdatePinAndStorageRequests transaction completed successfully!")
             return True
         else:
-            logger.error(f"❌ Extrinsic failed with error: {receipt.error_message}")
+            logger.error(f"❌ TRANSACTION FAILED!")
+            logger.error(f"🔗 Transaction Hash: {extrinsic_hash}")
+            logger.error(f"❌ Error: {receipt.error_message}")
+            logger.error(f"📋 Failed transaction details:")
+            logger.error(f"   - Storage requests: {len(formatted_requests)}")
+            logger.error(f"   - Miner profiles: {len(formatted_miner_profiles)}")
             return False
 
     except SubstrateRequestException as e:

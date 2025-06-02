@@ -244,7 +244,8 @@ class SimpleFileAssigner:
     
     async def assign_unassigned_files(self):
         """
-        Public method for epoch orchestrator to assign unassigned files.
+        Public method for epoch orchestrator to fill incomplete file assignments.
+        Fills any NULL miner slots in file_assignments table.
         Returns True if successful, False otherwise.
         """
         try:
@@ -257,7 +258,7 @@ class SimpleFileAssigner:
             success, count = await self.fix_empty_assignments()
             
             if success:
-                logger.info(f"✅ Successfully assigned miners to {count} unassigned files")
+                logger.info(f"✅ Successfully filled incomplete assignments for {count} files")
                 return True
             else:
                 logger.error(f"❌ Assignment partially failed - fixed {count} files")
@@ -268,48 +269,93 @@ class SimpleFileAssigner:
             return False
     
     async def assign_miners_to_file(self, cid, file_size, owner, filename=""):
-        """Assign miners to a single file."""
+        """Assign miners to fill NULL slots in a file assignment (preserves existing miners)."""
         try:
-            logger.info(f"🔧 Assigning miners to file: {filename or cid[:16]}...")
+            logger.info(f"🔧 Filling missing miners for file: {filename or cid[:16]}...")
             
-            # Get reliable miners
-            miners = await self.get_reliable_miners()
-            if len(miners) < self.replicas_per_file:
-                logger.warning(f"⚠️ Only {len(miners)} reliable miners available, need {self.replicas_per_file}")
-            
-            if len(miners) == 0:
-                logger.error("❌ No reliable miners available!")
-                return False
-            
-            # Select miners using simple distribution
-            selected_miners = self.select_miners_simple(miners, self.replicas_per_file)
-            
-            logger.info(f"📋 Selected {len(selected_miners)} miners:")
-            for i, miner_id in enumerate(selected_miners):
-                assignments = self.assignment_count.get(miner_id, 1)
-                logger.info(f"   {i+1}. {miner_id} (session assignments: {assignments})")
-            
-            # Pad to 5 miners
-            miners_padded = (selected_miners + [None] * 5)[:5]
-            
-            # Update database
+            # First, get current assignment to see what we already have
             async with self.db_pool.acquire() as conn:
+                current_assignment = await conn.fetchrow("""
+                    SELECT miner1, miner2, miner3, miner4, miner5
+                    FROM file_assignments 
+                    WHERE cid = $1
+                """, cid)
+                
+                if not current_assignment:
+                    logger.error(f"❌ File not found in assignments table: {cid}")
+                    return False
+                
+                # Get current miners (non-NULL)
+                current_miners = [
+                    m for m in [current_assignment['miner1'], current_assignment['miner2'], 
+                               current_assignment['miner3'], current_assignment['miner4'], 
+                               current_assignment['miner5']]
+                    if m is not None
+                ]
+                
+                missing_count = 5 - len(current_miners)
+                
+                if missing_count == 0:
+                    logger.info(f"✅ File already has complete assignment (5/5 miners)")
+                    return True
+                
+                logger.info(f"📋 Current assignment: {len(current_miners)}/5 miners, need {missing_count} more")
+                for i, miner in enumerate(current_miners):
+                    logger.info(f"   Existing {i+1}. {miner}")
+                
+                # Get reliable miners
+                miners = await self.get_reliable_miners()
+                if len(miners) == 0:
+                    logger.error("❌ No reliable miners available!")
+                    return False
+                
+                # Filter out miners already assigned to this file
+                available_miners = [m for m in miners if m['node_id'] not in current_miners]
+                
+                logger.info(f"📊 Available miners: {len(available_miners)} (after excluding already assigned)")
+                
+                if len(available_miners) < missing_count:
+                    logger.warning(f"⚠️ Only {len(available_miners)} available miners, need {missing_count}")
+                
+                # Select new miners using simple distribution
+                new_miners = self.select_miners_simple(available_miners, missing_count)
+                
+                if new_miners:
+                    logger.info(f"📋 Selected {len(new_miners)} new miners:")
+                    for i, miner_id in enumerate(new_miners):
+                        assignments = self.assignment_count.get(miner_id, 1)
+                        logger.info(f"   New {i+1}. {miner_id} (session assignments: {assignments})")
+                
+                # Build final assignment preserving existing miners and adding new ones
+                final_miners = list(current_assignment)  # Start with current state
+                next_slot = 0
+                
+                # Fill NULL slots with new miners
+                for new_miner in new_miners:
+                    # Find next NULL slot
+                    while next_slot < 5 and final_miners[next_slot] is not None:
+                        next_slot += 1
+                    
+                    if next_slot < 5:
+                        final_miners[next_slot] = new_miner
+                        next_slot += 1
+                
+                # Update database with preserved + new assignments
                 async with conn.transaction():
-                    # Update file assignment
                     result = await conn.execute("""
                         UPDATE file_assignments
                         SET miner1 = $2, miner2 = $3, miner3 = $4, miner4 = $5, miner5 = $6,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE cid = $1
-                    """, cid, miners_padded[0], miners_padded[1], miners_padded[2], 
-                        miners_padded[3], miners_padded[4])
+                    """, cid, final_miners[0], final_miners[1], final_miners[2], 
+                        final_miners[3], final_miners[4])
                     
                     if result == "UPDATE 0":
-                        logger.error(f"❌ File not found in assignments table: {cid}")
+                        logger.error(f"❌ Failed to update file assignment: {cid}")
                         return False
                     
-                    # Update miner stats (simple increment)
-                    for miner_id in selected_miners:
+                    # Update miner stats for NEW miners only
+                    for miner_id in new_miners:
                         if miner_id:
                             await conn.execute("""
                                 INSERT INTO miner_stats (
@@ -321,39 +367,52 @@ class SimpleFileAssigner:
                                     total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
                                     updated_at = NOW()
                             """, miner_id, file_size)
-            
-            logger.info(f"✅ Successfully assigned {len(selected_miners)} miners to file")
-            return True
+                
+                # Final count
+                final_count = sum(1 for m in final_miners if m is not None)
+                logger.info(f"✅ Assignment updated: {len(current_miners)}/5 → {final_count}/5 miners")
+                return True
             
         except Exception as e:
             logger.error(f"❌ Error assigning miners to file: {e}")
             return False
     
     async def fix_empty_assignments(self):
-        """Fix all files with empty miner assignments."""
+        """Fix all files with incomplete miner assignments (any NULL miner columns)."""
         try:
             async with self.db_pool.acquire() as conn:
-                # Get files with empty assignments
-                empty_files = await conn.fetch("""
+                # Get files with ANY missing miner assignments (not just completely empty)
+                incomplete_files = await conn.fetch("""
                     SELECT 
-                        fa.cid, fa.owner, f.name, f.size
+                        fa.cid, fa.owner, f.name, f.size,
+                        fa.miner1, fa.miner2, fa.miner3, fa.miner4, fa.miner5
                     FROM file_assignments fa
                     JOIN files f ON fa.cid = f.cid
-                    WHERE fa.miner1 IS NULL AND fa.miner2 IS NULL AND fa.miner3 IS NULL 
-                      AND fa.miner4 IS NULL AND fa.miner5 IS NULL
+                    WHERE fa.miner1 IS NULL OR fa.miner2 IS NULL OR fa.miner3 IS NULL 
+                      OR fa.miner4 IS NULL OR fa.miner5 IS NULL
                     ORDER BY f.size ASC  -- Process smaller files first
                 """)
                 
-                if not empty_files:
-                    logger.info("✅ No files with empty assignments found")
+                if not incomplete_files:
+                    logger.info("✅ No files with missing miner assignments found")
                     return True, 0
                 
-                logger.info(f"📋 Found {len(empty_files)} files with empty assignments")
+                logger.info(f"📋 Found {len(incomplete_files)} files with incomplete assignments")
                 
                 success_count = 0
-                for i, file_info in enumerate(empty_files, 1):
+                for i, file_info in enumerate(incomplete_files, 1):
+                    # Count how many miners are already assigned
+                    current_miners = [
+                        m for m in [file_info['miner1'], file_info['miner2'], 
+                                   file_info['miner3'], file_info['miner4'], file_info['miner5']]
+                        if m is not None
+                    ]
+                    
+                    missing_miners = 5 - len(current_miners)
+                    
                     logger.info(f"\n{'='*50}")
-                    logger.info(f"Processing {i}/{len(empty_files)}: {file_info['name']}")
+                    logger.info(f"Processing {i}/{len(incomplete_files)}: {file_info['name']}")
+                    logger.info(f"   Current miners: {len(current_miners)}/5, need {missing_miners} more")
                     
                     success = await self.assign_miners_to_file(
                         file_info['cid'], 
@@ -370,12 +429,24 @@ class SimpleFileAssigner:
                         await asyncio.sleep(1)
                 
                 logger.info(f"\n{'='*50}")
-                logger.info(f"✅ Assignment complete: {success_count}/{len(empty_files)} files fixed")
+                logger.info(f"✅ Assignment complete: {success_count}/{len(incomplete_files)} files fixed")
                 
-                return success_count == len(empty_files), success_count
+                # Show final summary
+                remaining_incomplete = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
+                      OR miner4 IS NULL OR miner5 IS NULL
+                """)
+                
+                if remaining_incomplete == 0:
+                    logger.info("🎉 ALL files now have complete 5-miner assignments!")
+                else:
+                    logger.warning(f"⚠️ {remaining_incomplete} files still need miner assignments")
+                
+                return success_count == len(incomplete_files), success_count
                 
         except Exception as e:
-            logger.error(f"❌ Error fixing empty assignments: {e}")
+            logger.error(f"❌ Error fixing incomplete assignments: {e}")
             return False, 0
     
     async def fix_specific_file(self, cid):
@@ -520,11 +591,11 @@ async def main():
             arg = sys.argv[1]
             
             if arg == "--fix-all":
-                # Fix all empty assignments
+                # Fix all incomplete assignments
                 success, count = await assigner.fix_empty_assignments()
                 logger.info(f"\n{'='*60}")
                 if success:
-                    logger.info(f"✅ Successfully fixed {count} empty assignments")
+                    logger.info(f"✅ Successfully filled incomplete assignments for {count} files")
                 else:
                     logger.error(f"❌ Fixed {count} files but some failed")
                 
@@ -543,7 +614,7 @@ async def main():
         else:
             # Interactive mode
             print("\nOptions:")
-            print("1. Fix all empty assignments")
+            print("1. Fill all incomplete assignments (any NULL miner columns)")
             print("2. Check assignment distribution")
             print("3. Fix specific file")
             
@@ -552,7 +623,7 @@ async def main():
             if choice == "1":
                 success, count = await assigner.fix_empty_assignments()
                 if success:
-                    logger.info(f"✅ Successfully fixed {count} empty assignments")
+                    logger.info(f"✅ Successfully filled incomplete assignments for {count} files")
                 else:
                     logger.error(f"❌ Fixed {count} files but some failed")
                     
