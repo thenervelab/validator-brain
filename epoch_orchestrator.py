@@ -1114,8 +1114,7 @@ class EpochOrchestrator:
         """Get reliable miners for the healing routine."""
         try:
             async with self.db_pool.acquire() as conn:
-                cutoff_date = datetime.now() - timedelta(days=1)  # 1+ day old miners
-                
+                # Use SQL INTERVAL instead of Python datetime to avoid parameter issues
                 miners = await conn.fetch("""
                     SELECT 
                         r.node_id,
@@ -1134,10 +1133,10 @@ class EpochOrchestrator:
                     LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
                     WHERE r.node_type = 'StorageMiner' 
                       AND r.status = 'active'
-                      AND r.registered_at <= $1
+                      AND r.registered_at <= NOW() - INTERVAL '1 day'
                       AND COALESCE(ms.health_score, 100) >= 50
                     ORDER BY RANDOM()
-                """, cutoff_date)
+                """)
                 
                 # Filter for capacity (10MB minimum available)
                 reliable_miners = []
