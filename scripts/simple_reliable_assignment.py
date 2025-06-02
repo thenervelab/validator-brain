@@ -33,30 +33,56 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleFileAssigner:
-    def __init__(self):
-        self.db_pool = None
+    def __init__(self, db_pool=None):
+        self.db_pool = db_pool  # Accept external db_pool
         self.replicas_per_file = 5
         self.min_miner_age_days = 1
         self.assignment_count = {}  # Track assignments per miner in this session
         
     async def initialize(self):
-        """Initialize database connection."""
+        """Initialize database connection if not provided."""
         try:
-            from app.db.connection import init_db_pool, get_db_pool
-            await init_db_pool()
-            self.db_pool = await get_db_pool()
-            logger.info("✅ Database connection initialized")
+            if self.db_pool is None:
+                # Only initialize if not provided externally
+                from app.db.connection import init_db_pool, get_db_pool
+                await init_db_pool()
+                self.db_pool = await get_db_pool()
+                logger.info("✅ Database connection initialized")
+            else:
+                logger.info("✅ Using provided database pool")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to initialize database: {e}")
             return False
     
+    async def validate_health_data(self):
+        """Validate that we have fresh health data before assignment."""
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Check for recent health data (within last 2 hours)
+                recent_health = await conn.fetchval("""
+                    SELECT COUNT(*) FROM miner_epoch_health 
+                    WHERE updated_at >= NOW() - INTERVAL '2 hours'
+                """)
+                
+                if recent_health == 0:
+                    logger.warning("⚠️ No recent health data found - assignments may use stale miner info")
+                    return False
+                else:
+                    logger.info(f"✅ Found health data for {recent_health} miners")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"❌ Error validating health data: {e}")
+            return False
+    
     async def get_reliable_miners(self):
-        """Get reliable miners that are 1+ days old with capacity."""
+        """Get reliable miners that are 1+ days old with capacity and fresh health data."""
         try:
             async with self.db_pool.acquire() as conn:
                 cutoff_date = datetime.now() - timedelta(days=self.min_miner_age_days)
                 
+                # Enhanced query that prefers miners with recent health data
                 miners = await conn.fetch("""
                     SELECT 
                         r.node_id,
@@ -64,7 +90,15 @@ class SimpleFileAssigner:
                         COALESCE(nm.ipfs_storage_max, 1000000000) as storage_max,
                         COALESCE(nm.ipfs_repo_size, 0) as storage_used,
                         COALESCE(ms.health_score, 100) as health_score,
-                        COALESCE(ms.total_files_pinned, 0) as files_pinned
+                        COALESCE(ms.total_files_pinned, 0) as files_pinned,
+                        meh.updated_at as health_updated,
+                        -- Prefer miners with recent health checks
+                        CASE 
+                            WHEN meh.updated_at >= NOW() - INTERVAL '1 hour' THEN 100
+                            WHEN meh.updated_at >= NOW() - INTERVAL '4 hours' THEN 75
+                            WHEN meh.updated_at >= NOW() - INTERVAL '1 day' THEN 50
+                            ELSE 25
+                        END as health_freshness_score
                     FROM registration r
                     LEFT JOIN (
                         SELECT DISTINCT ON (miner_id) 
@@ -73,27 +107,43 @@ class SimpleFileAssigner:
                         ORDER BY miner_id, block_number DESC
                     ) nm ON r.node_id = nm.miner_id
                     LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
+                    LEFT JOIN miner_epoch_health meh ON r.node_id = meh.node_id
                     WHERE r.node_type = 'StorageMiner' 
                       AND r.status = 'active'
                       AND r.registered_at <= $1
                       AND COALESCE(ms.health_score, 100) >= 50
-                    ORDER BY RANDOM()  -- Random order for better distribution
+                    ORDER BY 
+                        health_freshness_score DESC,  -- Prefer fresh health data
+                        RANDOM()  -- Random order for better distribution
                 """, cutoff_date)
                 
                 # Filter for capacity (keep it simple - just check they have some space)
                 reliable_miners = []
+                fresh_health_count = 0
+                
                 for miner in miners:
                     available_space = miner['storage_max'] - miner['storage_used']
                     if available_space > 100000:  # At least 100KB available (very low bar)
                         reliable_miners.append({
                             'node_id': miner['node_id'],
                             'health_score': miner['health_score'],
+                            'health_freshness_score': miner['health_freshness_score'],
                             'files_pinned': miner['files_pinned'],
                             'available_space': available_space,
-                            'age_days': (datetime.now() - miner['registered_at']).days
+                            'age_days': (datetime.now() - miner['registered_at']).days,
+                            'health_updated': miner['health_updated']
                         })
-                
+                        
+                        # Count miners with fresh health data
+                        if miner['health_freshness_score'] >= 75:  # Within 4 hours
+                            fresh_health_count += 1
+
                 logger.info(f"✅ Found {len(reliable_miners)} reliable miners (1+ day old with capacity)")
+                logger.info(f"   {fresh_health_count} miners have fresh health data (within 4 hours)")
+                
+                if fresh_health_count < len(reliable_miners) * 0.5:
+                    logger.warning(f"⚠️ Only {fresh_health_count}/{len(reliable_miners)} miners have fresh health data")
+                
                 return reliable_miners
                 
         except Exception as e:
@@ -101,24 +151,26 @@ class SimpleFileAssigner:
             return []
     
     def select_miners_simple(self, miners, count=5):
-        """Simple miner selection with network distribution."""
+        """Simple miner selection with network distribution and health data preference."""
         if len(miners) <= count:
             return [m['node_id'] for m in miners]
         
-        # Simple distribution strategy:
-        # 1. Sort by current assignment count (fewer = better)
-        # 2. Add some randomness to avoid always picking the same ones
+        # Enhanced distribution strategy:
+        # 1. Prefer miners with fresh health data
+        # 2. Sort by current assignment count (fewer = better)
+        # 3. Add some randomness to avoid always picking the same ones
         
         # Update assignment counts
         for miner in miners:
             node_id = miner['node_id']
             miner['session_assignments'] = self.assignment_count.get(node_id, 0)
         
-        # Sort by assignment count, then by files pinned, then random
+        # Sort by health freshness, assignment count, files pinned, then random
         miners_sorted = sorted(miners, key=lambda m: (
-            m['session_assignments'],          # Fewer assignments this session
-            m['files_pinned'],                # Fewer total files
-            random.random()                   # Random factor for distribution
+            -m['health_freshness_score'],     # Higher health freshness first
+            m['session_assignments'],         # Fewer assignments this session
+            m['files_pinned'],               # Fewer total files
+            random.random()                  # Random factor for distribution
         ))
         
         # Select the best distributed miners
@@ -129,7 +181,37 @@ class SimpleFileAssigner:
         for node_id in selected_ids:
             self.assignment_count[node_id] = self.assignment_count.get(node_id, 0) + 1
         
+        # Log health data quality for selected miners
+        fresh_count = sum(1 for m in selected if m['health_freshness_score'] >= 75)
+        if fresh_count < len(selected):
+            logger.info(f"   Selected {fresh_count}/{len(selected)} miners with fresh health data")
+        
         return selected_ids
+    
+    async def assign_unassigned_files(self):
+        """
+        Public method for epoch orchestrator to assign unassigned files.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            # Validate health data first
+            health_valid = await self.validate_health_data()
+            if not health_valid:
+                logger.warning("⚠️ Proceeding with assignment despite stale health data")
+            
+            # Use the existing fix_empty_assignments method
+            success, count = await self.fix_empty_assignments()
+            
+            if success:
+                logger.info(f"✅ Successfully assigned miners to {count} unassigned files")
+                return True
+            else:
+                logger.error(f"❌ Assignment partially failed - fixed {count} files")
+                return count > 0  # Return True if we fixed at least some files
+                
+        except Exception as e:
+            logger.error(f"❌ Error in assign_unassigned_files: {e}")
+            return False
     
     async def assign_miners_to_file(self, cid, file_size, owner, filename=""):
         """Assign miners to a single file."""
