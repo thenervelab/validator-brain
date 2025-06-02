@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator
+Epoch Orchestrator v2.1.0
+
+MAJOR IMPROVEMENTS IN v2.1.0:
+- ✅ Fixed critical timing issue: Blockchain submission now happens in blocks 76-90 (before block 95 deadline)
+- ✅ Optimized workflow phases with proper health-checks-first ordering
+- ✅ Enhanced startup safety: Non-validators can start immediately, validators wait if starting mid-epoch
+- ✅ Schema fixes: Resolved all updated_at column errors
+- ✅ Comprehensive phase-by-phase monitoring and error reporting
 
 This is the main orchestrator that manages the entire IPFS Service Validator application
 based on whether we are the current epoch validator or not.
 
-Epoch Structure (100 blocks):
-- Block 0-10: Initialization (registration, node metrics, user profiles)
-- Block 11-50: Pinning requests processing (validator only)
-- Block 51-80: File assignment and health checks
-- Block 81-95: Profile reconstruction
-- Block 96-99: Finalization and preparation for next epoch
+OPTIMIZED EPOCH WORKFLOW (100 blocks):
+- Phase 1 (0-5): Initialization 
+- Phase 2 (6-35): Health Checks + Self-healing
+- Phase 3 (36-60): File Assignments  
+- Phase 4 (61-75): Profile Reconstruction
+- Phase 5 (76-90): Blockchain Submission (EARLY - before block 95 deadline!)
+- Phase 6 (91-99): Cleanup & Summary
 
 Non-Validator Mode:
-- Refresh data at epoch start
-- Perform health checks and submit to chain
-- Wait for next epoch
+- Can start processing immediately (no epoch timing restrictions)
+- Performs health checks and submits to chain
+- Helps maintain network availability
 
 Validator Mode:
-- Refresh data at epoch start
-- Process pinning requests (blocks 11-50)
-- Assign files and perform health checks
-- Reconstruct profiles (must finish by block 95)
+- Follows strict phase timing for epoch processing
+- Waits for next epoch if starting after block 10 (startup safety)
+- Must complete blockchain submission before block 95
 """
 
 import asyncio
@@ -53,6 +60,9 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 
 # Load environment variables
 load_dotenv()
+
+# Orchestrator version
+ORCHESTRATOR_VERSION = "2.1.0"
 
 # Setup logging
 logging.basicConfig(
@@ -546,51 +556,75 @@ class EpochOrchestrator:
         """Execute non-validator workflow."""
         logger.info("👤 Executing NON-VALIDATOR workflow")
         
-        # Initialize epoch data
+        # Get current position for context
+        current_block = self.current_block
+        block_position = get_epoch_block_position(current_block)
+        
+        logger.info(f"👤 Non-validator can process at any time - current position: {block_position}/99")
+        
+        # Initialize epoch data if not done
         if not self.initialization_completed:
+            logger.info("🚀 Non-validator: Starting epoch initialization...")
             success = await self.epoch_initialization()
             if success:
                 self.initialization_completed = True
+                logger.info("✅ Non-validator: Epoch initialization completed")
             else:
-                logger.error("Failed to initialize epoch data")
+                logger.error("❌ Non-validator: Failed to initialize epoch data")
                 return
         
         # Periodically refresh user profiles to stay current (every ~20 blocks)
-        current_block = self.current_block
-        block_position = get_epoch_block_position(current_block)
         if block_position % 20 == 0 and block_position > 10:  # Every 20 blocks after initialization
-            logger.info("🔄 Refreshing user profiles to stay current with network changes")
-            await self.refresh_user_profiles()
+            logger.info("🔄 Non-validator: Refreshing user profiles to stay current with network changes")
+            profile_success = await self.refresh_user_profiles()
+            if profile_success:
+                logger.info("✅ Non-validator: User profiles refreshed successfully")
+            else:
+                logger.warning("⚠️ Non-validator: User profile refresh failed")
         
         # Perform health checks and submit to chain
         if not self.health_checks_completed:
+            logger.info("🏥 Non-validator: Starting health checks...")
             success = await self.perform_health_checks()
             if success:
                 self.health_checks_completed = True
-                logger.info("✅ Health checks completed")
+                logger.info("✅ Non-validator: Health checks completed")
             else:
-                logger.error("❌ Health checks failed")
+                logger.error("❌ Non-validator: Health checks failed")
         
         # Run availability maintenance (non-validators can help maintain the network)
         if self.health_checks_completed and not self.availability_completed:
+            logger.info("🛠️ Non-validator: Running availability maintenance to help network...")
             success = await self.run_availability_maintenance()
             if success:
                 self.availability_completed = True
-                logger.info("✅ File availability maintenance completed")
+                logger.info("✅ Non-validator: File availability maintenance completed")
             else:
-                logger.warning("⚠️ File availability maintenance failed")
+                logger.warning("⚠️ Non-validator: File availability maintenance failed")
         
         # Submit health metrics to blockchain
         if self.health_checks_completed and not self.health_metrics_submitted:
+            logger.info("📊 Non-validator: Submitting health metrics to blockchain...")
             success = await self.submit_health_metrics()
             if success:
                 self.health_metrics_submitted = True
-                logger.info("✅ Health metrics submitted to blockchain")
+                logger.info("✅ Non-validator: Health metrics submitted to blockchain")
             else:
-                logger.error("❌ Health metrics submission failed")
+                logger.error("❌ Non-validator: Health metrics submission failed")
+        
+        # Status summary for non-validators
+        if block_position % 25 == 0:  # Every 25 blocks show summary
+            logger.info("📋 Non-validator status summary:")
+            logger.info(f"   Initialization: {'✅' if self.initialization_completed else '❌'}")
+            logger.info(f"   Health checks: {'✅' if self.health_checks_completed else '❌'}")
+            logger.info(f"   Availability maintenance: {'✅' if self.availability_completed else '❌'}")
+            logger.info(f"   Health metrics submitted: {'✅' if self.health_metrics_submitted else '❌'}")
         
         # Wait for end of epoch
-        logger.info("⏳ Waiting for end of epoch...")
+        if block_position % 30 == 0:  # Every 30 blocks
+            logger.info("⏳ Non-validator: Monitoring network and waiting for next epoch...")
+            remaining_blocks = 99 - block_position
+            logger.info(f"   {remaining_blocks} blocks remaining in current epoch")
     
     async def validator_workflow(self):
         """Execute validator workflow."""
@@ -689,15 +723,17 @@ class EpochOrchestrator:
     
     def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
         """
-        Determine if we should wait for the next epoch before starting processing.
-        This prevents processing with incomplete data when starting mid-epoch.
+        Determine if VALIDATORS should wait for the next epoch before starting processing.
+        This prevents validator processing with incomplete data when starting mid-epoch.
+        
+        NOTE: This safety mechanism ONLY applies to validators. Non-validators can start immediately.
         
         Args:
             current_epoch: Current epoch number
             block_position: Current position in epoch (0-99)
             
         Returns:
-            True if we should wait, False if we can proceed
+            True if validator should wait, False if validator can proceed
         """
         # If this is the first time we're seeing this epoch (startup)
         if self.startup_epoch is None:
@@ -705,18 +741,18 @@ class EpochOrchestrator:
             
             # If we're starting after block 10, wait for next epoch
             if block_position > 10:
-                logger.warning(f"🚨 Application started mid-epoch at block position {block_position}/99")
-                logger.warning(f"   Waiting for next epoch to avoid processing incomplete data")
+                logger.warning(f"🚨 Validator started mid-epoch at block position {block_position}/99")
+                logger.warning(f"   Validator waiting for next epoch to avoid processing incomplete data")
                 self.waiting_for_next_epoch = True
                 return True
             else:
-                logger.info(f"✅ Application started early in epoch at block position {block_position}/99")
-                logger.info(f"   Safe to proceed with current epoch processing")
+                logger.info(f"✅ Validator started early in epoch at block position {block_position}/99")
+                logger.info(f"   Safe for validator to proceed with current epoch processing")
                 return False
         
         # If we were waiting and we're now in a new epoch, we can proceed
         if self.waiting_for_next_epoch and current_epoch > self.startup_epoch:
-            logger.info(f"🎯 New epoch {current_epoch} started - resuming normal processing")
+            logger.info(f"🎯 New epoch {current_epoch} started - validator resuming normal processing")
             self.waiting_for_next_epoch = False
             return False
         
@@ -726,7 +762,9 @@ class EpochOrchestrator:
     async def run(self):
         """Main orchestrator loop."""
         logger.info("🎯 Starting Epoch Orchestrator")
-        logger.info("🛡️ Safety mechanism: Will wait for next epoch if starting mid-epoch (after block 10)")
+        logger.info(f"📦 Version: {ORCHESTRATOR_VERSION}")
+        logger.info("🛡️ Safety mechanism: Only validators wait for next epoch if starting mid-epoch (after block 10)")
+        logger.info("👤 Non-validators can start processing immediately")
         
         try:
             await self.initialize()
@@ -777,13 +815,17 @@ class EpochOrchestrator:
                     logger.info(f"📊 Epoch {current_epoch}, Block {current_block} (position {block_position}/99)")
                     logger.info(f"🎭 Role: {'VALIDATOR' if is_validator else 'NON-VALIDATOR'}")
                     
-                    # Check if we should wait for next epoch (startup safety)
-                    if self.should_wait_for_next_epoch(current_epoch, block_position):
+                    # ENHANCED STARTUP SAFETY: Only apply to validators
+                    if is_validator and self.should_wait_for_next_epoch(current_epoch, block_position):
                         if block_position % 10 == 0:  # Log every 10 blocks to avoid spam
-                            logger.info(f"⏳ Waiting for next epoch (started mid-epoch at position {block_position}/99)")
-                            logger.info(f"   This prevents processing incomplete data from partial epoch")
+                            logger.info(f"⏳ Validator waiting for next epoch (started mid-epoch at position {block_position}/99)")
+                            logger.info(f"   This prevents validator processing with incomplete epoch data")
                         await asyncio.sleep(self.block_check_interval)
                         continue
+                    
+                    # Non-validators can always start immediately
+                    if not is_validator and block_position % 20 == 0:  # Periodic status for non-validators
+                        logger.info(f"👤 Non-validator processing: Can start immediately at any block position")
                     
                     # Log monitoring frequency periodically
                     if block_position % 10 == 0:  # Every 10 blocks
