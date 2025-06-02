@@ -341,9 +341,9 @@ async def collect_miner_profiles_for_submission(db_pool) -> List[Dict[str, Any]]
                 for profile in profiles:
                     await conn.execute("""
                         INSERT INTO pending_miner_profile (
-                            node_id, cid, files_count, files_size, status, published_at, updated_at
+                            node_id, cid, files_count, files_size, status, published_at
                         )
-                        VALUES ($1, $2, $3, $4, 'published', NOW(), NOW())
+                        VALUES ($1, $2, $3, $4, 'published', NOW())
                     """, profile["miner_node_id"], profile["cid"], 
                         profile["files_count"], profile["files_size"])
                 
@@ -422,19 +422,16 @@ async def rebuild_user_profiles_simple(db_pool) -> int:
                 content_hash = hashlib.md5(f"{owner}{files_count}{files_size}".encode()).hexdigest()
                 profile_cid = f"Qm{content_hash[:44]}"
                 
-                # Update or insert profile
+                # Update or insert profile (use delete + insert since no unique constraint on owner)
+                # First, delete any existing profile for this owner
+                await conn.execute("DELETE FROM pending_user_profile WHERE owner = $1", owner)
+                
+                # Then insert the new profile
                 await conn.execute("""
                     INSERT INTO pending_user_profile (
-                        owner, cid, files_count, files_size, status, published_at, updated_at
+                        owner, cid, files_count, files_size, status, published_at
                     )
-                    VALUES ($1, $2, $3, $4, 'published', NOW(), NOW())
-                    ON CONFLICT (owner) DO UPDATE SET
-                        cid = $2,
-                        files_count = $3,
-                        files_size = $4,
-                        status = 'published',
-                        published_at = NOW(),
-                        updated_at = NOW()
+                    VALUES ($1, $2, $3, $4, 'published', NOW())
                 """, owner, profile_cid, files_count, files_size)
                 
                 rebuilt_count += 1
