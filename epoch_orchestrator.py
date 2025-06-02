@@ -492,7 +492,7 @@ class EpochOrchestrator:
             # Import the reconstruction utilities
             from app.utils.blockchain_submission import rebuild_user_profiles_simple, collect_miner_profiles_for_submission
             
-            # Rebuild user profiles from file assignments
+            # Step 1: Rebuild user profiles from file assignments
             logger.info("👥 Rebuilding user profiles from file assignments...")
             user_count = await rebuild_user_profiles_simple(self.db_pool)
             
@@ -501,18 +501,38 @@ class EpochOrchestrator:
             else:
                 logger.warning("⚠️ No user profiles to rebuild")
             
-            # Collect miner profiles for verification
-            logger.info("⛏️ Collecting miner profiles from file assignments...")
+            # Step 2: Reconstruct miner profiles using RabbitMQ system
+            logger.info("⛏️ Starting miner profile reconstruction...")
+            miner_reconstruction_success = self.run_processor(
+                'miner_profile_reconstruction_processor.py',
+                'Miner profile reconstruction'
+            )
+            
+            if miner_reconstruction_success:
+                logger.info("✅ Miner profile reconstruction processor completed")
+                
+                # Wait for the consumer to finish processing miner profiles
+                logger.info("⏳ Waiting for miner profile reconstruction to complete...")
+                await self.wait_for_queues_empty(['miner_profile_reconstruction'], 600)  # 10 minute timeout
+                logger.info("✅ Miner profile reconstruction completed")
+            else:
+                logger.error("❌ Miner profile reconstruction processor failed")
+                return False
+            
+            # Step 3: Verify miner profiles were created
+            logger.info("🔍 Verifying miner profiles were reconstructed...")
             miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
             
             if len(miner_profiles) > 0:
-                logger.info(f"✅ Collected {len(miner_profiles)} miner profiles")
+                logger.info(f"✅ Successfully reconstructed {len(miner_profiles)} miner profiles")
             else:
-                logger.warning("⚠️ No miner profiles collected")
+                logger.warning("⚠️ No miner profiles found after reconstruction")
             
             # Verify we have data to submit
             if user_count > 0 or len(miner_profiles) > 0:
                 logger.info("✅ Profile reconstruction completed successfully")
+                logger.info(f"   - {user_count} user profiles rebuilt")
+                logger.info(f"   - {len(miner_profiles)} miner profiles reconstructed")
                 return True
             else:
                 logger.error("❌ Profile reconstruction failed - no profiles generated")
