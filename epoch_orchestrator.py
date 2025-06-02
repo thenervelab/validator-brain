@@ -337,13 +337,23 @@ class EpochOrchestrator:
             # Check if we have health data for current epoch
             current_health_data = await conn.fetchval("""
                 SELECT COUNT(*) FROM miner_epoch_health 
-                WHERE epoch = $1 AND updated_at >= NOW() - INTERVAL '30 minutes'
+                WHERE epoch = $1 AND last_activity_at >= NOW() - INTERVAL '30 minutes'
             """, self.current_epoch)
             
             if current_health_data == 0:
-                logger.error("🚨 CRITICAL: No fresh health data found for current epoch!")
-                logger.error(f"   Expected health data for epoch {self.current_epoch}")
-                return False
+                # Check for health data from previous epoch as fallback
+                fallback_health_data = await conn.fetchval("""
+                    SELECT COUNT(*) FROM miner_epoch_health 
+                    WHERE epoch >= $1 - 1 AND last_activity_at >= NOW() - INTERVAL '4 hours'
+                """, self.current_epoch)
+                
+                if fallback_health_data == 0:
+                    logger.error("🚨 CRITICAL: No health data found for current OR previous epoch!")
+                    logger.error(f"   Expected health data for epoch {self.current_epoch} or {self.current_epoch - 1}")
+                    return False
+                else:
+                    logger.warning(f"⚠️ No current epoch health data, using {fallback_health_data} miners from previous epoch")
+                    logger.warning("   Assignment quality may be reduced but will proceed")
             else:
                 logger.info(f"✅ Verified fresh health data available: {current_health_data} miners with recent health data")
         
@@ -940,7 +950,6 @@ class EpochOrchestrator:
         
         tables_to_clean = [
             'pinning_requests',
-            'miner_epoch_health', 
             'node_metrics',
             'parsed_cids',
             'pending_assignment_file',
@@ -956,6 +965,19 @@ class EpochOrchestrator:
                 return False
             
             async with self.db_pool.acquire() as conn:
+                # Special handling for miner_epoch_health - only clean OLD data (>2 epochs ago)
+                try:
+                    # Keep health data from current and previous epoch, clean older data
+                    result = await conn.execute("""
+                        DELETE FROM miner_epoch_health 
+                        WHERE epoch < $1 - 1
+                    """, self.current_epoch)
+                    deleted_count = result.split()[-1] if result else "0"
+                    logger.info(f"✅ Cleaned old health data (>2 epochs): {deleted_count} records deleted")
+                    logger.info(f"✅ Preserved health data from current epoch {self.current_epoch} and previous epoch")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not clean old health data: {e}")
+                
                 for table in tables_to_clean:
                     try:
                         # Delete all records from the table
@@ -966,7 +988,7 @@ class EpochOrchestrator:
                         # Some tables might not exist, which is okay
                         logger.warning(f"⚠️ Could not clean table '{table}': {e}")
             
-            logger.info("✅ Epoch table cleanup completed")
+            logger.info("✅ Epoch table cleanup completed (preserved health data as fallback)")
             return True
             
         except Exception as e:
@@ -990,7 +1012,7 @@ class EpochOrchestrator:
         async with self.db_pool.acquire() as conn:
             health_data_count = await conn.fetchval("""
                 SELECT COUNT(*) FROM miner_epoch_health 
-                WHERE updated_at >= NOW() - INTERVAL '2 hours'
+                WHERE last_activity_at >= NOW() - INTERVAL '2 hours'
             """)
             
             if health_data_count == 0:

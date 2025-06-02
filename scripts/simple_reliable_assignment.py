@@ -62,14 +62,26 @@ class SimpleFileAssigner:
                 # Check for recent health data (within last 2 hours)
                 recent_health = await conn.fetchval("""
                     SELECT COUNT(*) FROM miner_epoch_health 
-                    WHERE updated_at >= NOW() - INTERVAL '2 hours'
+                    WHERE last_activity_at >= NOW() - INTERVAL '2 hours'
                 """)
                 
                 if recent_health == 0:
-                    logger.warning("⚠️ No recent health data found - assignments may use stale miner info")
-                    return False
+                    # Check for fallback health data (within last 8 hours)
+                    fallback_health = await conn.fetchval("""
+                        SELECT COUNT(*) FROM miner_epoch_health 
+                        WHERE last_activity_at >= NOW() - INTERVAL '8 hours'
+                    """)
+                    
+                    if fallback_health == 0:
+                        logger.error("🚨 CRITICAL: No health data found (recent or fallback)!")
+                        logger.error("   Assignments require some health data to determine miner availability")
+                        return False
+                    else:
+                        logger.warning(f"⚠️ No recent health data, using {fallback_health} miners from fallback data (up to 8 hours old)")
+                        logger.warning("   Assignment quality may be reduced but will proceed")
+                        return True
                 else:
-                    logger.info(f"✅ Found health data for {recent_health} miners")
+                    logger.info(f"✅ Found health data for {recent_health} miners (within 2 hours)")
                     return True
                     
         except Exception as e:
@@ -91,13 +103,15 @@ class SimpleFileAssigner:
                         COALESCE(nm.ipfs_repo_size, 0) as storage_used,
                         COALESCE(ms.health_score, 100) as health_score,
                         COALESCE(ms.total_files_pinned, 0) as files_pinned,
-                        meh.updated_at as health_updated,
-                        -- Prefer miners with recent health checks
+                        meh.last_activity_at as health_updated,
+                        -- Prefer miners with recent health checks (more tolerant thresholds)
                         CASE 
-                            WHEN meh.updated_at >= NOW() - INTERVAL '1 hour' THEN 100
-                            WHEN meh.updated_at >= NOW() - INTERVAL '4 hours' THEN 75
-                            WHEN meh.updated_at >= NOW() - INTERVAL '1 day' THEN 50
-                            ELSE 25
+                            WHEN meh.last_activity_at >= NOW() - INTERVAL '1 hour' THEN 100
+                            WHEN meh.last_activity_at >= NOW() - INTERVAL '4 hours' THEN 75
+                            WHEN meh.last_activity_at >= NOW() - INTERVAL '8 hours' THEN 50
+                            WHEN meh.last_activity_at >= NOW() - INTERVAL '1 day' THEN 25
+                            WHEN meh.last_activity_at IS NULL THEN 10  -- Miners with no health data get low priority
+                            ELSE 5
                         END as health_freshness_score
                     FROM registration r
                     LEFT JOIN (
@@ -107,7 +121,13 @@ class SimpleFileAssigner:
                         ORDER BY miner_id, block_number DESC
                     ) nm ON r.node_id = nm.miner_id
                     LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
-                    LEFT JOIN miner_epoch_health meh ON r.node_id = meh.node_id
+                    LEFT JOIN (
+                        -- Get most recent health data for each miner (even if old)
+                        SELECT DISTINCT ON (node_id) 
+                            node_id, last_activity_at
+                        FROM miner_epoch_health 
+                        ORDER BY node_id, last_activity_at DESC
+                    ) meh ON r.node_id = meh.node_id
                     WHERE r.node_type = 'StorageMiner' 
                       AND r.status = 'active'
                       AND r.registered_at <= $1
@@ -120,6 +140,8 @@ class SimpleFileAssigner:
                 # Filter for capacity (keep it simple - just check they have some space)
                 reliable_miners = []
                 fresh_health_count = 0
+                fallback_health_count = 0
+                no_health_count = 0
                 
                 for miner in miners:
                     available_space = miner['storage_max'] - miner['storage_used']
@@ -134,15 +156,25 @@ class SimpleFileAssigner:
                             'health_updated': miner['health_updated']
                         })
                         
-                        # Count miners with fresh health data
+                        # Count miners by health data quality
                         if miner['health_freshness_score'] >= 75:  # Within 4 hours
                             fresh_health_count += 1
+                        elif miner['health_freshness_score'] >= 25:  # Within 1 day
+                            fallback_health_count += 1
+                        else:
+                            no_health_count += 1
 
                 logger.info(f"✅ Found {len(reliable_miners)} reliable miners (1+ day old with capacity)")
                 logger.info(f"   {fresh_health_count} miners have fresh health data (within 4 hours)")
+                logger.info(f"   {fallback_health_count} miners have fallback health data (within 1 day)")
+                logger.info(f"   {no_health_count} miners have no recent health data")
                 
-                if fresh_health_count < len(reliable_miners) * 0.5:
+                if fresh_health_count == 0 and fallback_health_count == 0:
+                    logger.warning(f"⚠️ No miners with recent health data - using miners without health checks")
+                    logger.warning(f"   Assignment quality will be reduced but network will continue functioning")
+                elif fresh_health_count < len(reliable_miners) * 0.3:
                     logger.warning(f"⚠️ Only {fresh_health_count}/{len(reliable_miners)} miners have fresh health data")
+                    logger.warning(f"   Using fallback health data for remaining miners")
                 
                 return reliable_miners
                 
