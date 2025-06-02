@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.3
+Epoch Orchestrator v2.1.4
+
+CRITICAL FIX IN v2.1.4:
+- 🚨 FIXED: AttributeError for missing state variables (profiles_completed, submission_completed)
+- ✅ Properly initialize all workflow state variables in __init__ method
+- ✅ Prevents runtime crashes during validator workflow execution
 
 CRITICAL FIX IN v2.1.3:
 - 🚨 FIXED: Validator state confusion during connection failures (broken pipe errors)
@@ -82,7 +87,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.3"
+ORCHESTRATOR_VERSION = "2.1.4"
 
 # Setup logging
 logging.basicConfig(
@@ -115,6 +120,11 @@ class EpochOrchestrator:
         self.availability_completed = False  # Track availability maintenance
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
+        
+        # New state variables for enhanced workflow tracking
+        self.profiles_completed = False  # Phase 4: Profile reconstruction
+        self.submission_completed = False  # Phase 5: Blockchain submission
+        self.cleanup_completed = False  # Phase 6: Cleanup and summary
         
         # Enhanced state persistence across connection failures
         self.validator_state_cache = {
