@@ -1,12 +1,27 @@
 #!/usr/bin/env python3
 """
-Simple Reliable File Assignment
+Simple Reliable File Assignment v2.0 - Fair Distribution
 
 A straightforward assignment system that:
 1. Assigns per file (not batch)
 2. Ensures broad network distribution 
 3. Uses simple criteria: 1+ day old miners with capacity
 4. Avoids complex scoring that causes issues
+5. FAIR DISTRIBUTION: Prevents "rich get richer" bias
+
+Enhanced Space Checking v2.0:
+- Realistic space thresholds (100MB minimum vs previous 100KB)
+- File-size specific capacity checking with buffer space
+- Space checking used as QUALIFICATION FILTER (not preference bias)
+- Fair distribution among qualified miners (no storage favoritism)
+- Comprehensive space logging and verification
+- Fills ANY NULL miner columns (not just completely empty files)
+
+Fair Distribution Principles:
+- Miners must have adequate space for the file (qualification filter)
+- Among qualified miners, prefer fair distribution over storage abundance
+- Balances assignments across the network to prevent centralization
+- Uses health data, assignment counts, and randomness for selection
 """
 
 import asyncio
@@ -152,15 +167,23 @@ class SimpleFileAssigner:
                         RANDOM()  -- Random order for better distribution
                 """, cutoff_block, 50)
                 
-                # Filter for capacity (keep it simple - just check they have some space)
+                # Enhanced capacity filtering with realistic thresholds
                 reliable_miners = []
                 fresh_health_count = 0
                 fallback_health_count = 0
                 no_health_count = 0
+                insufficient_space_count = 0
+                
+                # Calculate minimum space requirements (more realistic thresholds)
+                min_free_space_mb = 100  # Minimum 100MB free space
+                min_free_space_bytes = min_free_space_mb * 1024 * 1024
                 
                 for miner in miners:
                     available_space = miner['storage_max'] - miner['storage_used']
-                    if available_space > 100000:  # At least 100KB available (very low bar)
+                    available_space_mb = available_space / (1024 * 1024)
+                    
+                    # Enhanced space checking with realistic thresholds
+                    if available_space > min_free_space_bytes:  # At least 100MB available
                         # Calculate age in blocks instead of days
                         try:
                             age_blocks = current_block - miner['registered_at']
@@ -174,6 +197,7 @@ class SimpleFileAssigner:
                             'health_freshness_score': miner['health_freshness_score'],
                             'files_pinned': miner['files_pinned'],
                             'available_space': available_space,
+                            'available_space_mb': available_space_mb,
                             'age_days': age_days,
                             'health_updated': miner['health_updated']
                         })
@@ -185,18 +209,34 @@ class SimpleFileAssigner:
                             fallback_health_count += 1
                         else:
                             no_health_count += 1
+                    else:
+                        insufficient_space_count += 1
 
                 logger.info(f"✅ Found {len(reliable_miners)} reliable miners (1+ day old with capacity)")
+                logger.info(f"   💾 Space requirement: minimum {min_free_space_mb}MB available")
                 logger.info(f"   {fresh_health_count} miners have fresh health data (within 4 hours)")
                 logger.info(f"   {fallback_health_count} miners have fallback health data (within 1 day)")
                 logger.info(f"   {no_health_count} miners have no recent health data")
                 
+                if insufficient_space_count > 0:
+                    logger.info(f"   ⚠️ {insufficient_space_count} miners excluded due to insufficient space (<{min_free_space_mb}MB)")
+                
+                # Health data quality warnings
                 if fresh_health_count == 0 and fallback_health_count == 0:
                     logger.warning(f"⚠️ No miners with recent health data - using miners without health checks")
                     logger.warning(f"   Assignment quality will be reduced but network will continue functioning")
                 elif fresh_health_count < len(reliable_miners) * 0.3:
                     logger.warning(f"⚠️ Only {fresh_health_count}/{len(reliable_miners)} miners have fresh health data")
                     logger.warning(f"   Using fallback health data for remaining miners")
+                
+                # Log storage capacity summary
+                if reliable_miners:
+                    total_available = sum(m['available_space'] for m in reliable_miners)
+                    avg_available = total_available / len(reliable_miners) / (1024 * 1024 * 1024)  # GB
+                    min_available = min(m['available_space_mb'] for m in reliable_miners)
+                    max_available = max(m['available_space_mb'] for m in reliable_miners)
+                    
+                    logger.info(f"   📊 Storage capacity: avg {avg_available:.1f}GB, range {min_available:.0f}MB - {max_available:.0f}MB available")
                 
                 return reliable_miners
                 
@@ -205,26 +245,38 @@ class SimpleFileAssigner:
             return []
     
     def select_miners_simple(self, miners, count=5):
-        """Simple miner selection with network distribution and health data preference."""
+        """
+        Fair miner selection with network distribution priority.
+        
+        Selection Criteria (in order):
+        1. Health data freshness (prefer recent health checks)
+        2. Assignment balance (fewer assignments this session)
+        3. Load balance (fewer total files pinned)
+        4. Random distribution (prevents bias and "rich get richer")
+        
+        Space checking is done as a qualification filter (before this method),
+        NOT as a preference factor to ensure fair network distribution.
+        """
         if len(miners) <= count:
             return [m['node_id'] for m in miners]
         
-        # Enhanced distribution strategy:
-        # 1. Prefer miners with fresh health data
-        # 2. Sort by current assignment count (fewer = better)
-        # 3. Add some randomness to avoid always picking the same ones
+        # Fair distribution strategy (prevents "rich get richer"):
+        # 1. Prefer miners with fresh health data (network reliability)
+        # 2. Balance assignments across miners (fair distribution)
+        # 3. Distribute load evenly (network efficiency)
+        # 4. Add randomness to prevent systematic bias
         
         # Update assignment counts
         for miner in miners:
             node_id = miner['node_id']
             miner['session_assignments'] = self.assignment_count.get(node_id, 0)
         
-        # Sort by health freshness, assignment count, files pinned, then random
+        # Sort by health freshness, assignment count, files pinned, then random (FAIR DISTRIBUTION)
         miners_sorted = sorted(miners, key=lambda m: (
             -m['health_freshness_score'],     # Higher health freshness first
-            m['session_assignments'],         # Fewer assignments this session
-            m['files_pinned'],               # Fewer total files
-            random.random()                  # Random factor for distribution
+            m['session_assignments'],         # Fewer assignments this session (FAIR DISTRIBUTION)
+            m['files_pinned'],               # Fewer total files (FAIR DISTRIBUTION)
+            random.random()                  # Random factor for distribution (PREVENTS "RICH GET RICHER")
         ))
         
         # Select the best distributed miners
@@ -309,8 +361,27 @@ class SimpleFileAssigner:
                     logger.error("❌ No reliable miners available!")
                     return False
                 
+                # Filter miners to ensure they have enough space for this specific file
+                file_size_mb = file_size / (1024 * 1024) if file_size else 0
+                buffer_space_mb = 50  # Extra 50MB buffer space
+                required_space_bytes = file_size + (buffer_space_mb * 1024 * 1024)
+                
+                space_sufficient_miners = []
+                insufficient_space_miners = 0
+                
+                for miner in miners:
+                    if miner['available_space'] >= required_space_bytes:
+                        space_sufficient_miners.append(miner)
+                    else:
+                        insufficient_space_miners += 1
+                
+                logger.info(f"📊 File size: {file_size_mb:.1f}MB (+ {buffer_space_mb}MB buffer)")
+                logger.info(f"📊 Miners with sufficient space: {len(space_sufficient_miners)}/{len(miners)}")
+                if insufficient_space_miners > 0:
+                    logger.info(f"   ⚠️ {insufficient_space_miners} miners excluded due to insufficient space for this file")
+                
                 # Filter out miners already assigned to this file
-                available_miners = [m for m in miners if m['node_id'] not in current_miners]
+                available_miners = [m for m in space_sufficient_miners if m['node_id'] not in current_miners]
                 
                 logger.info(f"📊 Available miners: {len(available_miners)} (after excluding already assigned)")
                 
@@ -321,10 +392,17 @@ class SimpleFileAssigner:
                 new_miners = self.select_miners_simple(available_miners, missing_count)
                 
                 if new_miners:
-                    logger.info(f"📋 Selected {len(new_miners)} new miners:")
+                    logger.info(f"📋 Selected {len(new_miners)} new miners with space verification:")
                     for i, miner_id in enumerate(new_miners):
+                        # Find the miner data to show space info
+                        miner_data = next((m for m in available_miners if m['node_id'] == miner_id), None)
                         assignments = self.assignment_count.get(miner_id, 1)
-                        logger.info(f"   New {i+1}. {miner_id} (session assignments: {assignments})")
+                        
+                        if miner_data:
+                            space_gb = miner_data['available_space_mb'] / 1024
+                            logger.info(f"   New {i+1}. {miner_id} (space: {space_gb:.1f}GB, assignments: {assignments})")
+                        else:
+                            logger.info(f"   New {i+1}. {miner_id} (assignments: {assignments})")
                 
                 # Build final assignment preserving existing miners and adding new ones
                 final_miners = list(current_assignment)  # Start with current state
@@ -492,7 +570,7 @@ class SimpleFileAssigner:
             return False
     
     async def check_assignment_distribution(self):
-        """Check how assignments are distributed across miners."""
+        """Check how assignments are distributed across miners and analyze fairness."""
         try:
             async with self.db_pool.acquire() as conn:
                 # Get assignment distribution
@@ -524,14 +602,39 @@ class SimpleFileAssigner:
                 
                 if distribution:
                     stats = distribution[0]
+                    avg_assignments = float(stats['avg_assignments'] or 0)
+                    stddev_assignments = float(stats['stddev_assignments'] or 0)
+                    max_assignments = int(stats['max_assignments'] or 0)
+                    min_assignments = int(stats['min_assignments'] or 0)
+                    
                     logger.info("📊 Assignment Distribution:")
                     logger.info(f"   Total miners with assignments: {stats['total_miners']}")
-                    logger.info(f"   Average assignments per miner: {stats['avg_assignments']:.1f}")
-                    logger.info(f"   Min assignments: {stats['min_assignments']}")
-                    logger.info(f"   Max assignments: {stats['max_assignments']}")
-                    logger.info(f"   Standard deviation: {stats['stddev_assignments']:.1f}")
+                    logger.info(f"   Average assignments per miner: {avg_assignments:.1f}")
+                    logger.info(f"   Min assignments: {min_assignments}")
+                    logger.info(f"   Max assignments: {max_assignments}")
+                    logger.info(f"   Standard deviation: {stddev_assignments:.1f}")
+                    
+                    # Fairness analysis
+                    if stats['total_miners'] > 0:
+                        assignment_range = max_assignments - min_assignments
+                        fairness_ratio = max_assignments / max(avg_assignments, 1)
+                        
+                        logger.info("\n📈 Fairness Analysis:")
+                        logger.info(f"   Assignment range: {assignment_range} (max - min)")
+                        logger.info(f"   Fairness ratio: {fairness_ratio:.2f} (max / avg)")
+                        
+                        # Fairness assessment
+                        if fairness_ratio <= 1.5:
+                            logger.info("   ✅ EXCELLENT fairness - well distributed assignments")
+                        elif fairness_ratio <= 2.0:
+                            logger.info("   ✅ GOOD fairness - reasonable distribution")
+                        elif fairness_ratio <= 3.0:
+                            logger.info("   ⚠️ MODERATE fairness - some concentration detected")
+                        else:
+                            logger.warning("   🚨 POOR fairness - significant assignment concentration!")
+                            logger.warning("   This may indicate 'rich get richer' bias - check selection logic")
                 
-                # Show top and bottom miners
+                # Show top and bottom miners with storage info
                 top_miners = await conn.fetch("""
                     WITH miner_assignments AS (
                         SELECT node_id, COUNT(*) as assignment_count
@@ -547,16 +650,28 @@ class SimpleFileAssigner:
                             SELECT miner5 as node_id FROM file_assignments WHERE miner5 IS NOT NULL
                         ) assignments
                         GROUP BY node_id
+                    ),
+                    miner_storage AS (
+                        SELECT DISTINCT ON (miner_id) 
+                            miner_id, 
+                            (ipfs_storage_max - ipfs_repo_size) / (1024*1024*1024) as available_gb
+                        FROM node_metrics 
+                        ORDER BY miner_id, block_number DESC
                     )
-                    SELECT node_id, assignment_count
-                    FROM miner_assignments
-                    ORDER BY assignment_count DESC
+                    SELECT 
+                        ma.node_id, 
+                        ma.assignment_count,
+                        COALESCE(ms.available_gb, 0) as available_gb
+                    FROM miner_assignments ma
+                    LEFT JOIN miner_storage ms ON ma.node_id = ms.miner_id
+                    ORDER BY ma.assignment_count DESC
                     LIMIT 10
                 """)
                 
-                logger.info("\n📈 Top 10 miners by assignments:")
+                logger.info("\n📈 Top 10 miners by assignments (with storage info):")
                 for i, miner in enumerate(top_miners, 1):
-                    logger.info(f"   {i}. {miner['node_id']}: {miner['assignment_count']} assignments")
+                    available_gb = float(miner['available_gb'] or 0)
+                    logger.info(f"   {i}. {miner['node_id']}: {miner['assignment_count']} assignments, {available_gb:.1f}GB available")
                 
         except Exception as e:
             logger.error(f"❌ Error checking distribution: {e}")
