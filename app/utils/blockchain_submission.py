@@ -78,7 +78,7 @@ def call_update_pin_and_storage_requests(
 ) -> tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Calls the update_pin_and_storage_requests extrinsic on the Substrate node.
-    Submits all data in a single transaction, with batching for large datasets.
+    Submits all data in a single transaction.
 
     Args:
         requests (List[Dict[str, Any]]): List of original storage requests to close
@@ -91,20 +91,12 @@ def call_update_pin_and_storage_requests(
     logger.info(f"  - {len(requests)} original storage requests (to close)")
     logger.info(f"  - {len(miner_profiles)} miner profiles (all reconstructed)")
     
-    # Check if we need to batch large miner profile submissions
-    MAX_PROFILES_PER_BATCH = 200  # Conservative limit to avoid WASM runtime issues
-    
-    if len(miner_profiles) > MAX_PROFILES_PER_BATCH:
-        logger.warning(f"⚠️ Large dataset detected: {len(miner_profiles)} miner profiles")
-        logger.warning(f"   Batching into smaller chunks to avoid runtime limits")
-        return _submit_large_dataset_batched(requests, miner_profiles, MAX_PROFILES_PER_BATCH)
-    
-    # Standard submission for smaller datasets
+    # Submit everything in a single transaction (as it was working before)
     success = _submit_single_batch(requests, miner_profiles)
     if success:
         return True, requests, miner_profiles
     
-    # If it still fails, try without storage requests (profiles only)
+    # If it fails, try without storage requests (profiles only)
     logger.warning("Submission failed, trying with miner profiles only...")
     success = _submit_single_batch([], miner_profiles)
     if success:
@@ -113,74 +105,6 @@ def call_update_pin_and_storage_requests(
     
     logger.error("❌ Failed to submit even miner profiles only")
     return False, [], []
-
-
-def _submit_large_dataset_batched(
-    requests: List[Dict[str, Any]], 
-    miner_profiles: List[Dict[str, Any]],
-    batch_size: int
-) -> tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Submit large datasets in batches to avoid WASM runtime limits.
-    
-    Args:
-        requests: Storage requests to submit
-        miner_profiles: Miner profiles to batch
-        batch_size: Maximum profiles per batch
-        
-    Returns:
-        tuple: (success: bool, submitted_requests: List, submitted_profiles: List)
-    """
-    submitted_requests = []
-    submitted_profiles = []
-    
-    # Submit storage requests first (typically smaller dataset)
-    if requests:
-        logger.info(f"📦 Submitting {len(requests)} storage requests first...")
-        success = _submit_single_batch(requests, [])
-        if success:
-            submitted_requests = requests
-            logger.info("✅ Storage requests submitted successfully")
-        else:
-            logger.warning("⚠️ Storage requests submission failed, continuing with profiles...")
-    
-    # Batch miner profiles
-    total_batches = (len(miner_profiles) + batch_size - 1) // batch_size
-    logger.info(f"📊 Submitting {len(miner_profiles)} miner profiles in {total_batches} batches of {batch_size}")
-    
-    for batch_num in range(total_batches):
-        start_idx = batch_num * batch_size
-        end_idx = min(start_idx + batch_size, len(miner_profiles))
-        batch_profiles = miner_profiles[start_idx:end_idx]
-        
-        logger.info(f"📦 Submitting batch {batch_num + 1}/{total_batches}: profiles {start_idx + 1}-{end_idx}")
-        
-        success = _submit_single_batch([], batch_profiles)
-        if success:
-            submitted_profiles.extend(batch_profiles)
-            logger.info(f"✅ Batch {batch_num + 1}/{total_batches} submitted successfully")
-        else:
-            logger.error(f"❌ Batch {batch_num + 1}/{total_batches} failed")
-            # Continue with remaining batches
-    
-    # Check overall success
-    total_submitted = len(submitted_profiles)
-    total_requested = len(miner_profiles)
-    success_rate = (total_submitted / total_requested) * 100 if total_requested > 0 else 0
-    
-    logger.info(f"📊 Batched submission results:")
-    logger.info(f"   Storage requests: {len(submitted_requests)}/{len(requests)} submitted")
-    logger.info(f"   Miner profiles: {total_submitted}/{total_requested} submitted ({success_rate:.1f}%)")
-    
-    # Consider it successful if we got most of the data through
-    overall_success = success_rate >= 80  # 80% success threshold
-    
-    if overall_success:
-        logger.info("✅ Batched submission completed successfully")
-    else:
-        logger.error("❌ Batched submission failed - insufficient success rate")
-    
-    return overall_success, submitted_requests, submitted_profiles
 
 
 def _submit_single_batch(
@@ -263,35 +187,50 @@ def _submit_single_batch(
 
         logger.info(f"Formatted {len(formatted_requests)} original storage requests (for closing)")
 
-        # Format miner profiles to match MinerProfileItem structure with validation
+        # Format miner profiles to match MinerProfileItem structure with enhanced validation
         formatted_miner_profiles = []
         for i, profile in enumerate(miner_profiles):
             try:
-                # Validate required fields
+                # Validate required fields exist and are not None
                 if not profile.get("miner_node_id"):
-                    logger.warning(f"Skipping miner profile {i}: missing miner_node_id")
+                    logger.warning(f"Skipping miner profile {i}: missing or empty miner_node_id")
                     continue
                 
                 if not profile.get("cid"):
-                    logger.warning(f"Skipping miner profile {i}: missing cid")
+                    logger.warning(f"Skipping miner profile {i}: missing or empty cid")
                     continue
                 
-                # Validate numeric fields
+                # Validate and sanitize numeric fields
                 files_count = profile.get("files_count", 0)
                 files_size = profile.get("files_size", 0)
                 
-                if not isinstance(files_count, (int, float)) or files_count < 0:
-                    logger.warning(f"Skipping miner profile {i}: invalid files_count {files_count}")
+                # Check for valid numeric types and handle potential NaN/infinity
+                if not isinstance(files_count, (int, float)) or files_count < 0 or not str(files_count).replace('.', '').isdigit():
+                    logger.warning(f"Skipping miner profile {i}: invalid files_count {files_count} (type: {type(files_count)})")
                     continue
                 
-                if not isinstance(files_size, (int, float)) or files_size < 0:
-                    logger.warning(f"Skipping miner profile {i}: invalid files_size {files_size}")
+                if not isinstance(files_size, (int, float)) or files_size < 0 or not str(files_size).replace('.', '').isdigit():
+                    logger.warning(f"Skipping miner profile {i}: invalid files_size {files_size} (type: {type(files_size)})")
+                    continue
+                
+                # Convert to safe integers
+                try:
+                    files_count = int(float(files_count))
+                    files_size = int(float(files_size))
+                except (ValueError, OverflowError):
+                    logger.warning(f"Skipping miner profile {i}: cannot convert to integer - files_count={files_count}, files_size={files_size}")
+                    continue
+                
+                # Validate string fields and sanitize
+                miner_node_id = str(profile["miner_node_id"]).strip()
+                cid = str(profile["cid"]).strip()
+                
+                # Check for empty strings after stripping
+                if not miner_node_id or not cid:
+                    logger.warning(f"Skipping miner profile {i}: empty miner_node_id or cid after sanitization")
                     continue
                 
                 # Validate string lengths to prevent bounded vector overflow
-                miner_node_id = str(profile["miner_node_id"])
-                cid = str(profile["cid"])
-                
                 if len(miner_node_id) > 256:
                     logger.warning(f"Truncating miner_node_id from {len(miner_node_id)} to 256 chars")
                     miner_node_id = miner_node_id[:256]
@@ -300,16 +239,25 @@ def _submit_single_batch(
                     logger.warning(f"Truncating cid from {len(cid)} to 256 chars")
                     cid = cid[:256]
                 
+                # Validate reasonable bounds (prevent obviously wrong values)
+                if files_count > 1000000:  # 1M files seems unreasonable
+                    logger.warning(f"Suspiciously high files_count {files_count} for miner {miner_node_id[:20]}..., capping at 1000000")
+                    files_count = 1000000
+                
+                if files_size > 1000000000000:  # 1TB seems like a reasonable upper bound
+                    logger.warning(f"Suspiciously high files_size {files_size} for miner {miner_node_id[:20]}..., capping at 1TB")
+                    files_size = 1000000000000
+                
                 formatted_profile = {
                     "miner_node_id": string_to_bounded_vec(miner_node_id),
                     "cid": string_to_bounded_vec(cid),
-                    "files_count": int(files_count),
-                    "files_size": int(files_size)
+                    "files_count": files_count,
+                    "files_size": files_size
                 }
                 formatted_miner_profiles.append(formatted_profile)
                 
-                # Log sample profiles for debugging
-                if i < 3:  # Log first 3 profiles
+                # Log sample profiles for debugging (first 3)
+                if i < 3:
                     logger.debug(f"Formatted miner profile {i}: node_id={miner_node_id[:20]}..., "
                                f"files_count={files_count}, files_size={files_size}")
                 
@@ -318,12 +266,13 @@ def _submit_single_batch(
                 logger.error(f"Profile data: {profile}")
                 continue
 
-        logger.info(f"Formatted {len(formatted_miner_profiles)} miner profile(s) (from {len(miner_profiles)} total)")
+        logger.info(f"Formatted {len(formatted_miner_profiles)} valid miner profiles (from {len(miner_profiles)} total)")
         
-        # Additional validation: Check if we have too many profiles (potential runtime limit)
-        if len(formatted_miner_profiles) > 1000:
-            logger.warning(f"⚠️ Large number of miner profiles ({len(formatted_miner_profiles)})")
-            logger.warning(f"   This might cause runtime issues - consider batching")
+        if len(formatted_miner_profiles) == 0:
+            logger.error("🚨 CRITICAL: No valid miner profiles after formatting!")
+            logger.error("   This suggests data corruption in miner profile generation")
+            logger.error("   Check the file assignment and profile reconstruction logic")
+            return False
         
         # Validate we have some data to submit
         if len(formatted_requests) == 0 and len(formatted_miner_profiles) == 0:
@@ -444,7 +393,6 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
 async def collect_miner_profiles_for_submission(db_pool) -> List[Dict[str, Any]]:
     """
     Collect miner profiles that need to be submitted to the blockchain.
-    Uses simple, reliable logic to rebuild profiles from file assignments.
     
     Args:
         db_pool: Database connection pool
@@ -454,85 +402,31 @@ async def collect_miner_profiles_for_submission(db_pool) -> List[Dict[str, Any]]
     """
     try:
         async with db_pool.acquire() as conn:
-            # SIMPLE APPROACH: Rebuild miner profiles directly from file assignments
-            # This ensures we always have accurate data that matches reality
+            # Get pending miner profiles that are published
+            query = """
+            SELECT 
+                node_id as miner_node_id,
+                cid,
+                files_count,
+                files_size
+            FROM pending_miner_profile
+            WHERE status = 'published'
+            AND cid IS NOT NULL
+            ORDER BY node_id
+            """
             
-            logger.info("🔧 Building miner profiles from file assignments (simple approach)")
-            
-            # Get all miners with file assignments
-            miner_profiles = await conn.fetch("""
-                WITH miner_file_assignments AS (
-                    -- Get all file assignments for each miner
-                    SELECT 
-                        miner_id,
-                        fa.cid,
-                        f.size
-                    FROM (
-                        -- Union all miner assignments from the 5 columns
-                        SELECT miner1 as miner_id, cid FROM file_assignments WHERE miner1 IS NOT NULL
-                        UNION ALL
-                        SELECT miner2 as miner_id, cid FROM file_assignments WHERE miner2 IS NOT NULL
-                        UNION ALL
-                        SELECT miner3 as miner_id, cid FROM file_assignments WHERE miner3 IS NOT NULL
-                        UNION ALL
-                        SELECT miner4 as miner_id, cid FROM file_assignments WHERE miner4 IS NOT NULL
-                        UNION ALL
-                        SELECT miner5 as miner_id, cid FROM file_assignments WHERE miner5 IS NOT NULL
-                    ) assignments
-                    JOIN file_assignments fa ON assignments.cid = fa.cid
-                    JOIN files f ON fa.cid = f.cid
-                    WHERE f.size IS NOT NULL
-                ),
-                miner_aggregates AS (
-                    -- Aggregate file counts and sizes per miner
-                    SELECT 
-                        miner_id,
-                        COUNT(DISTINCT cid) as files_count,
-                        SUM(size) as files_size,
-                        -- Create a simple deterministic profile content
-                        ARRAY_AGG(DISTINCT cid ORDER BY cid) as file_list
-                    FROM miner_file_assignments
-                    GROUP BY miner_id
-                )
-                SELECT 
-                    ma.miner_id as node_id,
-                    ma.files_count,
-                    ma.files_size,
-                    -- Create a simple mock CID based on the miner's files
-                    'Qm' || LEFT(MD5(ma.miner_id || ma.files_count::text || ma.files_size::text), 44) as profile_cid
-                FROM miner_aggregates ma
-                WHERE ma.files_count > 0  -- Only miners with files
-                ORDER BY ma.miner_id
-            """)
+            rows = await conn.fetch(query)
             
             profiles = []
-            for row in miner_profiles:
-                profile = {
-                    "miner_node_id": row['node_id'],
-                    "cid": row['profile_cid'],
+            for row in rows:
+                profiles.append({
+                    "miner_node_id": row['miner_node_id'],
+                    "cid": row['cid'],
                     "files_count": row['files_count'] or 0,
                     "files_size": row['files_size'] or 0
-                }
-                profiles.append(profile)
-                
-                logger.debug(f"Miner profile: {row['node_id']} -> {row['files_count']} files, {row['files_size']} bytes")
+                })
             
-            # Also update the pending_miner_profile table for consistency
-            if profiles:
-                await conn.execute("DELETE FROM pending_miner_profile")  # Clear old data
-                
-                for profile in profiles:
-                    await conn.execute("""
-                        INSERT INTO pending_miner_profile (
-                            node_id, cid, files_count, files_size, status, published_at
-                        )
-                        VALUES ($1, $2, $3, $4, 'published', NOW())
-                    """, profile["miner_node_id"], profile["cid"], 
-                        profile["files_count"], profile["files_size"])
-                
-                logger.info(f"✅ Updated pending_miner_profile table with {len(profiles)} profiles")
-            
-            logger.info(f"Collected {len(profiles)} miner profiles for submission (simple rebuild)")
+            logger.info(f"Collected {len(profiles)} miner profiles for submission")
             return profiles
             
     except Exception as e:
