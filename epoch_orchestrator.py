@@ -391,95 +391,99 @@ class EpochOrchestrator:
         return success
     
     async def reconstruct_profiles(self) -> bool:
-        """Reconstruct user and miner profiles using simple, reliable logic."""
-        logger.info("🔧 Reconstructing profiles (simple approach)")
+        """
+        Reconstruct user and miner profiles from file assignments.
+        Phase 4: Profile reconstruction (blocks 61-75)
+        """
+        logger.info("🔧 Starting profile reconstruction phase")
         
         try:
-            # Import the simple profile rebuild function
-            from app.utils.blockchain_submission import rebuild_user_profiles_simple
+            # Import the reconstruction utilities
+            from app.utils.blockchain_submission import rebuild_user_profiles_simple, collect_miner_profiles_for_submission
             
             # Rebuild user profiles from file assignments
-            user_profiles_rebuilt = await rebuild_user_profiles_simple(self.db_pool)
-            logger.info(f"✅ Rebuilt {user_profiles_rebuilt} user profiles from file assignments")
+            logger.info("👥 Rebuilding user profiles from file assignments...")
+            user_count = await rebuild_user_profiles_simple(self.db_pool)
             
-            # Process user profiles first
-            user_success = self.run_processor(
-                'user_profile_reconstruction_processor.py',
-                'User profile reconstruction'
-            )
-            
-            # Process miner profiles
-            miner_success = self.run_processor(
-                'miner_profile_reconstruction_processor.py', 
-                'Miner profile reconstruction'
-            )
-            
-            # Wait for profile reconstruction queues to empty
-            if user_success or miner_success:
-                await self.wait_for_queues_empty([
-                    'user_profile_reconstruction',
-                    'miner_profile_reconstruction'
-                ], 300)
-            
-            success = user_success and miner_success
-            
-            if success:
-                logger.info("✅ Profile reconstruction completed successfully")
+            if user_count > 0:
+                logger.info(f"✅ Rebuilt {user_count} user profiles")
             else:
-                logger.warning("⚠️ Profile reconstruction had some issues but simple rebuild completed")
-                # Consider it successful if we at least rebuilt user profiles
-                success = user_profiles_rebuilt > 0
+                logger.warning("⚠️ No user profiles to rebuild")
             
-            return success
+            # Collect miner profiles for verification
+            logger.info("⛏️ Collecting miner profiles from file assignments...")
+            miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
             
+            if len(miner_profiles) > 0:
+                logger.info(f"✅ Collected {len(miner_profiles)} miner profiles")
+            else:
+                logger.warning("⚠️ No miner profiles collected")
+            
+            # Verify we have data to submit
+            if user_count > 0 or len(miner_profiles) > 0:
+                logger.info("✅ Profile reconstruction completed successfully")
+                return True
+            else:
+                logger.error("❌ Profile reconstruction failed - no profiles generated")
+                return False
+                
         except Exception as e:
             logger.error(f"❌ Error during profile reconstruction: {e}")
             return False
     
     async def submit_to_blockchain(self) -> bool:
-        """Submit reconstructed profiles and storage requests to the blockchain."""
-        logger.info("📤 Submitting profiles and storage requests to blockchain")
+        """
+        Submit all data to blockchain including health metrics.
+        Phase 5: Blockchain submission (blocks 76-90) - EARLY with more time
+        """
+        logger.info("🚀 Starting blockchain submission phase (EARLY to meet deadline)")
         
         try:
+            # Import submission utilities
             from app.utils.blockchain_submission import (
                 collect_storage_requests_for_submission,
-                collect_miner_profiles_for_submission,
+                collect_miner_profiles_for_submission, 
                 call_update_pin_and_storage_requests,
-                mark_submissions_as_completed
+                mark_submissions_as_completed,
+                submit_health_metrics_to_blockchain
             )
             
-            if not self.db_pool:
-                logger.error("Database pool not initialized")
-                return False
+            # Step 1: Submit health metrics FIRST (if not already done)
+            if self.health_checks_completed and not self.health_metrics_submitted:
+                logger.info("📊 Submitting health metrics to blockchain...")
+                health_success = await submit_health_metrics_to_blockchain(self.db_pool)
+                if health_success:
+                    self.health_metrics_submitted = True
+                    logger.info("✅ Health metrics submitted successfully")
+                else:
+                    logger.warning("⚠️ Health metrics submission failed but continuing")
             
-            # Collect data for submission
-            logger.info("Collecting storage requests and miner profiles for submission...")
+            # Step 2: Collect data for main submission
+            logger.info("📦 Collecting data for blockchain submission...")
             
             storage_requests = await collect_storage_requests_for_submission(self.db_pool)
             miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
-            
-            if not storage_requests and not miner_profiles:
-                logger.info("No data to submit to blockchain")
-                return True
             
             logger.info(f"Prepared for submission:")
             logger.info(f"  - {len(storage_requests)} original storage requests (for closing)")
             logger.info(f"  - {len(miner_profiles)} miner profiles")
             
-            # Submit to blockchain (this function will try different sizes if needed)
-            success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(storage_requests, miner_profiles)
+            if len(storage_requests) == 0 and len(miner_profiles) == 0:
+                logger.warning("⚠️ No data to submit to blockchain")
+                return True  # Not an error, just nothing to do
+            
+            # Step 3: Submit to blockchain
+            success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(
+                storage_requests, miner_profiles
+            )
             
             if success:
-                # Mark only the actually submitted items as completed in database
+                # Mark as completed in database
                 await mark_submissions_as_completed(self.db_pool, submitted_requests, submitted_profiles)
-                
-                logger.info(f"✅ Successfully submitted to blockchain and updated database")
-                logger.info(f"   - Submitted: {len(submitted_requests)}/{len(storage_requests)} original storage requests (for closing)")
-                logger.info(f"   - Submitted: {len(submitted_profiles)}/{len(miner_profiles)} miner profiles")
-                
+                logger.info("✅ Blockchain submission completed successfully")
                 return True
             else:
-                logger.error("❌ Failed to submit to blockchain")
+                logger.error("❌ Blockchain submission failed")
                 return False
                 
         except Exception as e:
@@ -599,181 +603,89 @@ class EpochOrchestrator:
         
         logger.info(f"Current block position in epoch: {block_position}/99")
         
-        # Phase 1: Initialization (blocks 0-10)
-        if block_position <= 10 and not self.initialization_completed:
+        # Phase 1: Initialization (blocks 0-5) - SHORTENED
+        if block_position <= 5 and not self.initialization_completed:
             # Only do basic initialization - NO self-healing yet (needs fresh health data)
             success = await self.epoch_initialization()
             if success:
                 self.initialization_completed = True
-            else:
-                logger.error("Failed to initialize epoch data")
-                return
+                logger.info("✅ Phase 1 complete: Initialization")
+            return
         
-        # Phase 2: Pinning requests (blocks 11-50)
-        elif 11 <= block_position <= 50:
-            if not self.pinning_completed:
-                # Process pinning requests periodically
-                success = await self.process_pinning_requests()
-                if success:
-                    # Also process the files from pinning requests
-                    await self.process_pinning_files()
-                
-                # Don't mark as completed until block 50 to allow periodic processing
-                if block_position >= 45:
-                    self.pinning_completed = True
-        
-        # Phase 3: Health checks FIRST (blocks 51-65)
-        elif 51 <= block_position <= 65:
-            # CATCHUP: Process any late-arriving pinning requests/files from after block 50
-            if block_position == 51 and not getattr(self, 'catchup_processing_completed', False):
-                logger.info("🔄 Catchup processing: handling any files that arrived after pinning phase")
-                
-                # Process any remaining pinning requests
-                logger.info("   → Processing late pinning requests...")
-                await self.process_pinning_requests()
-                
-                # Process any remaining files
-                logger.info("   → Processing late pinning files...")
-                await self.process_pinning_files()
-                
-                self.catchup_processing_completed = True
-                logger.info("✅ Catchup processing completed")
-            
-            # CRITICAL: Health checks MUST complete before assignments
+        # Phase 2: Health Checks (blocks 6-35) - EXTENDED
+        elif 6 <= block_position <= 35:
             if not self.health_checks_completed:
-                logger.info("🏥 Running health checks FIRST (required for accurate assignments)")
                 success = await self.perform_health_checks()
                 if success:
                     self.health_checks_completed = True
-                    logger.info("✅ Health checks completed - miners now have fresh health data")
-                else:
-                    logger.error("❌ Health checks failed - assignments may use stale data")
-            
-            # Submit health metrics to blockchain
-            if self.health_checks_completed and not self.health_metrics_submitted:
-                success = await self.submit_health_metrics()
-                if success:
-                    self.health_metrics_submitted = True
-                    logger.info("✅ Health metrics submitted to blockchain")
-                else:
-                    logger.error("❌ Health metrics submission failed")
+                    logger.info("✅ Phase 2 complete: Health checks")
+                    
+                    # NOW safe to run self-healing with fresh health data
+                    logger.info("🛠️ Running network self-healing with fresh health data...")
+                    await self.network_self_healing_routine()
+            return
         
-        # Phase 4: Self-healing and File assignments (blocks 66-80)
-        elif 66 <= block_position <= 80:
-            # NOW do self-healing with fresh health data
-            if self.health_checks_completed and not getattr(self, 'self_healing_completed', False):
-                logger.info("🛠️ Running network self-healing with fresh health data")
-                healing_success = await self.network_self_healing_routine()
-                self.self_healing_completed = True
-                
-                if healing_success:
-                    logger.info("✅ Network self-healing completed with fresh health data")
-                else:
-                    logger.warning("⚠️ Network self-healing had issues but proceeding")
-            
-            # File assignments using fresh health data
+        # Phase 3: File Assignment (blocks 36-60) - ADJUSTED
+        elif 36 <= block_position <= 60:
             if self.health_checks_completed and not self.assignment_completed:
-                logger.info("📋 Running file assignments with fresh health data")
                 success = await self.assign_files()
                 if success:
                     self.assignment_completed = True
-                    logger.info("✅ File assignments completed using fresh health data")
-                else:
-                    logger.error("❌ File assignments failed")
-            
-            # Run availability maintenance after file assignment
-            if self.assignment_completed and not self.availability_completed:
-                success = await self.run_availability_maintenance()
-                if success:
-                    self.availability_completed = True
-                    logger.info("✅ File availability maintenance completed")
-                else:
-                    logger.warning("⚠️ File availability maintenance failed")
+                    logger.info("✅ Phase 3 complete: File assignments")
+            return
         
-        # Phase 5: Profile reconstruction (blocks 81-95)
-        elif 81 <= block_position <= 95:
-            # CRITICAL: Refetch user profiles before reconstruction to include new files
-            if block_position == 81 and not getattr(self, 'user_profiles_refreshed_for_reconstruction', False):
-                logger.info("🔄 Refetching user profiles before reconstruction to include new files from storage requests")
-                refresh_success = await self.refresh_user_profiles()
-                if refresh_success:
-                    self.user_profiles_refreshed_for_reconstruction = True
-                    logger.info("✅ User profiles refreshed with latest data including new storage request files")
-                else:
-                    logger.warning("⚠️ Failed to refresh user profiles - proceeding with existing data")
-            
-            if not self.profiles_reconstructed:
+        # Phase 4: Profile Reconstruction (blocks 61-75) - NEW SEPARATE PHASE
+        elif 61 <= block_position <= 75:
+            if self.assignment_completed and not self.profiles_completed:
                 success = await self.reconstruct_profiles()
                 if success:
-                    self.profiles_reconstructed = True
-                    logger.info("✅ All profile reconstruction completed")
-                else:
-                    logger.error("❌ Profile reconstruction failed - must complete before block 95!")
-            
-            # Submit to blockchain after reconstruction (must happen before block 95)
-            if self.profiles_reconstructed and not self.blockchain_submitted:
-                if block_position <= 93:  # Leave some buffer time
-                    logger.info("📤 Submitting reconstructed profiles to blockchain...")
-                    submission_success = await self.submit_to_blockchain()
-                    if submission_success:
-                        self.blockchain_submitted = True
-                        logger.info("✅ Blockchain submission completed successfully")
-                    else:
-                        logger.error("❌ Blockchain submission failed - will retry next block")
-                else:
-                    logger.warning("⚠️ Too late in epoch to submit to blockchain safely")
+                    self.profiles_completed = True
+                    self.profiles_reconstructed = True  # Keep legacy variable for compatibility
+                    logger.info("✅ Phase 4 complete: Profile reconstruction")
+            return
         
-        # Phase 6: Finalization (blocks 96-99)
-        elif 96 <= block_position <= 99:
-            logger.info("🏁 Finalization phase - preparing for next epoch")
-            logger.info(f"   Epoch {current_epoch} Summary:")
-            logger.info(f"   ✅ Initialization: {self.initialization_completed}")
-            logger.info(f"   ✅ Pinning: {self.pinning_completed}")
-            logger.info(f"   ✅ Catchup Processing: {getattr(self, 'catchup_processing_completed', False)}")
-            logger.info(f"   ✅ Health Checks: {self.health_checks_completed}")
-            logger.info(f"   ✅ Health Metrics Submitted: {self.health_metrics_submitted}")
-            logger.info(f"   ✅ Self-Healing: {getattr(self, 'self_healing_completed', False)}")
-            logger.info(f"   ✅ Assignment: {self.assignment_completed}")
-            logger.info(f"   ✅ Availability: {self.availability_completed}")
-            logger.info(f"   ✅ User Profiles Refreshed: {getattr(self, 'user_profiles_refreshed_for_reconstruction', False)}")
-            logger.info(f"   ✅ Profile Reconstruction: {self.profiles_reconstructed}")
-            logger.info(f"   ✅ Blockchain Submission: {self.blockchain_submitted}")
-            
-            if not self.health_metrics_submitted and self.health_checks_completed:
-                logger.warning("⚠️ Health checks completed but metrics not submitted to blockchain!")
-            
-            if not self.blockchain_submitted and self.profiles_reconstructed:
-                logger.warning("⚠️ Profile reconstruction completed but blockchain submission failed!")
-                logger.warning("   This may affect validator rewards for this epoch.")
-            
-            # CRITICAL VALIDATION
-            if not self.health_checks_completed:
-                logger.error("🚨 CRITICAL: Health checks never completed - assignments may be unreliable!")
-            
-            if self.assignment_completed and not self.health_checks_completed:
-                logger.error("🚨 CRITICAL: Assignments completed WITHOUT health checks - data may be stale!")
-            
-            if self.health_checks_completed and self.assignment_completed:
-                logger.info("✅ CORRECT ORDER: Health checks → Assignments → Profiles → Blockchain")
+        # Phase 5: Blockchain Submission (blocks 76-90) - EARLY WITH MORE TIME
+        elif 76 <= block_position <= 90:
+            if self.profiles_completed and not self.submission_completed:
+                logger.info("🚀 Starting blockchain submission (EARLY to meet block 95 deadline)")
+                success = await self.submit_to_blockchain()
+                if success:
+                    self.submission_completed = True
+                    self.blockchain_submitted = True  # Keep legacy variable for compatibility
+                    logger.info("✅ Phase 5 complete: Blockchain submission")
+                else:
+                    logger.error("❌ Blockchain submission failed - will retry next block")
+            return
+        
+        # Phase 6: Cleanup and Final Tasks (blocks 91-99)
+        elif 91 <= block_position <= 99:
+            if not self.cleanup_completed:
+                # Only run cleanup once
+                await self.epoch_cleanup()
+                self.cleanup_completed = True
+                logger.info("✅ Phase 6 complete: Cleanup")
+            return
+        
+        else:
+            logger.warning(f"⚠️ Unexpected block position: {block_position}")
     
     async def reset_epoch_state(self):
-        """Reset state for new epoch."""
-        logger.info("🔄 Resetting epoch state for new epoch")
-        
+        """Reset epoch state for new epoch."""
         self.initialization_completed = False
-        self.self_healing_completed = False  # Reset self-healing state
-        self.pinning_completed = False
-        self.assignment_completed = False
         self.health_checks_completed = False
-        self.health_metrics_submitted = False
-        self.availability_completed = False  # Reset availability state
+        self.assignment_completed = False
+        self.profiles_completed = False  # NEW
+        self.submission_completed = False  # NEW
+        self.cleanup_completed = False  # NEW
+        
+        # Legacy state variables (keeping for compatibility)
+        self.pinning_completed = False
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
-        self.user_profiles_refreshed_for_reconstruction = False  # Reset user profile refresh flag
-        self.catchup_processing_completed = False  # Reset catchup processing flag
+        self.availability_completed = False
+        self.health_metrics_submitted = False
         
-        # Reset startup safety mechanism
-        self.waiting_for_next_epoch = False
+        logger.info("🔄 Epoch state reset for new epoch")
     
     def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
         """
@@ -1072,6 +984,90 @@ class EpochOrchestrator:
                 
         except Exception as e:
             logger.error(f"❌ Error importing emergency manual assignment: {e}")
+            return False
+
+    async def epoch_cleanup(self) -> bool:
+        """
+        Cleanup and finalization tasks.
+        Phase 6: Cleanup and final tasks (blocks 91-99)
+        """
+        logger.info("🧹 Starting epoch cleanup and finalization")
+        
+        try:
+            # Cleanup old data if needed
+            await self.cleanup_epoch_tables()
+            
+            # Provide comprehensive epoch summary
+            logger.info("🏁 EPOCH SUMMARY:")
+            logger.info("=" * 50)
+            logger.info(f"   Epoch {self.current_epoch} Results:")
+            logger.info(f"   ✅ Phase 1 - Initialization: {self.initialization_completed}")
+            logger.info(f"   ✅ Phase 2 - Health Checks: {self.health_checks_completed}")
+            logger.info(f"   ✅ Phase 3 - File Assignment: {self.assignment_completed}")
+            logger.info(f"   ✅ Phase 4 - Profile Reconstruction: {self.profiles_completed}")
+            logger.info(f"   ✅ Phase 5 - Blockchain Submission: {self.submission_completed}")
+            logger.info(f"   📊 Health Metrics Submitted: {self.health_metrics_submitted}")
+            
+            # Check assignment coverage
+            if self.assignment_completed:
+                async with self.db_pool.acquire() as conn:
+                    # Check file assignment coverage
+                    assignment_stats = await conn.fetchrow("""
+                        SELECT 
+                            COUNT(*) as total_files,
+                            COUNT(CASE WHEN miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
+                                       OR miner4 IS NOT NULL OR miner5 IS NOT NULL THEN 1 END) as assigned_files
+                        FROM file_assignments
+                    """)
+                    
+                    if assignment_stats:
+                        total = assignment_stats['total_files']
+                        assigned = assignment_stats['assigned_files']
+                        coverage = (assigned / total * 100) if total > 0 else 0
+                        logger.info(f"   📋 File Assignment Coverage: {assigned}/{total} ({coverage:.1f}%)")
+                        
+                        if coverage >= 99:
+                            logger.info("   🎯 EXCELLENT: Near-perfect assignment coverage!")
+                        elif coverage >= 90:
+                            logger.info("   ✅ GOOD: High assignment coverage")
+                        else:
+                            logger.warning(f"   ⚠️ WARNING: Low assignment coverage ({coverage:.1f}%)")
+            
+            # Critical validations
+            critical_issues = []
+            
+            if not self.health_checks_completed:
+                critical_issues.append("Health checks never completed")
+            
+            if self.assignment_completed and not self.health_checks_completed:
+                critical_issues.append("Assignments completed WITHOUT health checks")
+            
+            if self.profiles_completed and not self.assignment_completed:
+                critical_issues.append("Profiles reconstructed WITHOUT assignments")
+            
+            if self.submission_completed and not self.profiles_completed:
+                critical_issues.append("Blockchain submission WITHOUT profile reconstruction")
+            
+            if critical_issues:
+                logger.error("🚨 CRITICAL ISSUES DETECTED:")
+                for issue in critical_issues:
+                    logger.error(f"   ❌ {issue}")
+            else:
+                logger.info("   ✅ WORKFLOW INTEGRITY: All phases completed in correct order")
+            
+            # Performance metrics
+            logger.info("=" * 50)
+            logger.info("📈 Performance Metrics:")
+            if hasattr(self, 'epoch_start_time'):
+                from datetime import datetime
+                elapsed = (datetime.now() - self.epoch_start_time).total_seconds()
+                logger.info(f"   ⏱️ Total epoch processing time: {elapsed:.1f} seconds")
+            
+            logger.info("✅ Epoch cleanup completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error during epoch cleanup: {e}")
             return False
 
 
