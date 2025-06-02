@@ -323,7 +323,7 @@ class EpochOrchestrator:
         """Assign files to miners using the simple, reliable processor."""
         logger.info("📋 Assigning files to miners (simple approach)")
         
-        # Use the new simple file assignment processor
+        # Try subprocess approach first (cleaner isolation)
         success = self.run_processor(
             'simple_file_assignment_processor.py',
             'Simple file assignment'
@@ -332,8 +332,82 @@ class EpochOrchestrator:
         if success:
             # Wait for file assignment consumer to process
             await self.wait_for_queues_empty(['file_assignment_processing'], 600)
+            logger.info("✅ File assignment completed via subprocess")
+            return True
+        else:
+            # Fallback to direct integration if subprocess fails
+            logger.warning("⚠️ Subprocess file assignment failed, trying direct integration...")
+            direct_success = await self.assign_files_direct()
+            
+            if direct_success:
+                logger.info("✅ File assignment completed via direct integration")
+                return True
+            else:
+                logger.error("❌ Both subprocess and direct file assignment failed")
+                return False
+    
+    async def assign_files_direct(self) -> bool:
+        """
+        Assign files to miners using direct integration (not subprocess).
+        This avoids database pool sharing issues.
+        """
+        logger.info("📋 Assigning files to miners (direct integration)")
         
-        return success
+        try:
+            # Import the processor class
+            from rabbitmq.simple_file_assignment_processor import SimpleFileAssignmentProcessor
+            
+            # Create processor instance that will use our existing db_pool
+            processor = SimpleFileAssignmentProcessor()
+            
+            # Set the database pool directly (avoid re-initialization)
+            processor.db_pool = self.db_pool
+            
+            # Initialize only the non-database parts
+            try:
+                # Initialize Substrate connection
+                from app.utils.config import NODE_URL
+                from substrateinterface import SubstrateInterface
+                node_url = NODE_URL or 'wss://rpc.hippius.network'
+                processor.substrate = SubstrateInterface(url=node_url)
+                logger.info(f"✅ Connected to Substrate at {node_url}")
+                
+                # Initialize RabbitMQ
+                import aio_pika
+                rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://localhost')
+                processor.rabbitmq_connection = await aio_pika.connect_robust(rabbitmq_url)
+                processor.rabbitmq_channel = await processor.rabbitmq_connection.channel()
+                
+                # Declare queue
+                await processor.rabbitmq_channel.declare_queue(
+                    processor.queue_name, 
+                    durable=True
+                )
+                logger.info(f"✅ RabbitMQ connected and queue declared")
+                
+                # Run the file assignment process
+                await processor.process_file_assignments()
+                
+                logger.info("✅ Direct file assignment completed successfully")
+                
+                # Cleanup processor resources (but not database pool)
+                try:
+                    if processor.rabbitmq_connection and not processor.rabbitmq_connection.is_closed:
+                        await processor.rabbitmq_connection.close()
+                    if processor.substrate:
+                        processor.substrate.close()
+                except Exception as e:
+                    logger.warning(f"⚠️ Error during processor cleanup: {e}")
+                
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ Error during direct file assignment: {e}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error importing or setting up direct file assignment: {e}")
+            return False
     
     async def run_availability_maintenance(self) -> bool:
         """Run file availability maintenance to handle empty assignments and failures."""

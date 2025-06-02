@@ -63,15 +63,28 @@ class SimpleFileAssignmentProcessor:
     async def initialize(self):
         """Initialize database and RabbitMQ connections."""
         try:
-            # Initialize database
-            self.db_pool = await get_db_pool()
-            if not self.db_pool:
+            # Initialize database - always call init_db_pool first when running standalone
+            try:
+                self.db_pool = await get_db_pool()
+                if self.db_pool:
+                    logger.info("✅ Using existing database pool")
+                else:
+                    raise Exception("No existing pool")
+            except:
+                # No existing pool, initialize new one
+                logger.info("🔧 Initializing new database pool...")
                 await init_db_pool()
                 self.db_pool = await get_db_pool()
+                
+                if not self.db_pool:
+                    raise Exception("Failed to initialize database pool")
+                
+                logger.info("✅ Database pool initialized successfully")
             
             # Initialize Substrate connection
             node_url = NODE_URL or 'wss://rpc.hippius.network'
             self.substrate = SubstrateInterface(url=node_url)
+            logger.info(f"✅ Connected to Substrate at {node_url}")
             
             # Initialize RabbitMQ
             rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://localhost')
@@ -83,6 +96,7 @@ class SimpleFileAssignmentProcessor:
                 self.queue_name, 
                 durable=True
             )
+            logger.info(f"✅ RabbitMQ connected and queue '{self.queue_name}' declared")
             
             logger.info("✅ Simple file assignment processor initialized")
             return True
@@ -461,27 +475,52 @@ class SimpleFileAssignmentProcessor:
     async def cleanup(self):
         """Clean up resources."""
         try:
-            if self.rabbitmq_connection and not self.rabbitmq_connection.is_closed:
+            if hasattr(self, 'rabbitmq_connection') and self.rabbitmq_connection and not self.rabbitmq_connection.is_closed:
                 await self.rabbitmq_connection.close()
-            if self.substrate:
-                self.substrate.close()
-            logger.info("✅ Simple file assignment processor cleanup complete")
+                logger.info("✅ RabbitMQ connection closed")
         except Exception as e:
-            logger.error(f"❌ Error during cleanup: {e}")
+            logger.warning(f"⚠️ Error closing RabbitMQ connection: {e}")
+        
+        try:
+            if hasattr(self, 'substrate') and self.substrate:
+                self.substrate.close()
+                logger.info("✅ Substrate connection closed")
+        except Exception as e:
+            logger.warning(f"⚠️ Error closing Substrate connection: {e}")
+        
+        try:
+            # Only close database pool if we initialized it ourselves
+            if hasattr(self, 'db_pool') and self.db_pool:
+                # Don't close the pool if it was shared - let the main process handle it
+                logger.info("✅ Database pool cleanup handled by main process")
+        except Exception as e:
+            logger.warning(f"⚠️ Error during database cleanup: {e}")
+        
+        logger.info("✅ Simple file assignment processor cleanup complete")
 
 
 async def main():
     """Main entry point for the processor."""
+    # Ensure environment variables are loaded
+    load_dotenv()
+    
+    # Add additional logging for debugging
+    logger.info(f"🔧 Starting Simple File Assignment Processor")
+    logger.info(f"   Working directory: {os.getcwd()}")
+    logger.info(f"   Python path: {sys.path[0]}")
+    
     processor = SimpleFileAssignmentProcessor()
     
     try:
         # Initialize
+        logger.info("🚀 Initializing processor...")
         success = await processor.initialize()
         if not success:
-            logger.error("Failed to initialize processor")
+            logger.error("❌ Failed to initialize processor")
             return 1
         
         # Process file assignments
+        logger.info("📋 Starting file assignment processing...")
         await processor.process_file_assignments()
         
         logger.info("✅ Simple file assignment processing completed successfully")
@@ -492,7 +531,10 @@ async def main():
         logger.exception("Full traceback:")
         return 1
     finally:
-        await processor.cleanup()
+        try:
+            await processor.cleanup()
+        except Exception as e:
+            logger.error(f"❌ Error during cleanup: {e}")
 
 
 if __name__ == "__main__":
