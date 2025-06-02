@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.0
+Epoch Orchestrator v2.1.1
+
+CRITICAL FIX IN v2.1.1:
+- 🚨 FIXED: Validator startup safety mechanism causing validators to wait entire epoch
+- ✅ Validators becoming active at epoch start (positions 0-10) now process immediately
+- ✅ Enhanced epoch state reset to clear waiting state on role changes
+- ✅ Proper startup_epoch tracking across role transitions
 
 MAJOR IMPROVEMENTS IN v2.1.0:
 - ✅ Fixed critical timing issue: Blockchain submission now happens in blocks 76-90 (before block 95 deadline)
 - ✅ Optimized workflow phases with proper health-checks-first ordering
-- ✅ Enhanced startup safety: Non-validators can start immediately, validators wait if starting mid-epoch
+- ✅ Enhanced startup safety: Non-validators can start immediately, validators wait if mid-epoch startup
 - ✅ Schema fixes: Resolved all updated_at column errors
 - ✅ Comprehensive phase-by-phase monitoring and error reporting
 
@@ -27,7 +33,8 @@ Non-Validator Mode:
 
 Validator Mode:
 - Follows strict phase timing for epoch processing
-- Waits for next epoch if starting after block 10 (startup safety)
+- Waits for next epoch ONLY if starting after block 10 (startup safety)
+- FIXED: Now processes immediately when becoming validator at epoch start
 - Must complete blockchain submission before block 95
 """
 
@@ -62,7 +69,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.0"
+ORCHESTRATOR_VERSION = "2.1.1"
 
 # Setup logging
 logging.basicConfig(
@@ -719,6 +726,11 @@ class EpochOrchestrator:
         self.availability_completed = False
         self.health_metrics_submitted = False
         
+        # CRITICAL FIX: Reset startup safety mechanism for new epoch
+        # This ensures validators can start processing if they become validator at epoch start
+        if hasattr(self, 'waiting_for_next_epoch'):
+            self.waiting_for_next_epoch = False
+        
         logger.info("🔄 Epoch state reset for new epoch")
     
     def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
@@ -735,6 +747,15 @@ class EpochOrchestrator:
         Returns:
             True if validator should wait, False if validator can proceed
         """
+        # CRITICAL FIX: If we're at the start of an epoch (0-10), always allow processing
+        # This handles the case where we become validator at epoch start after being non-validator
+        if block_position <= 10:
+            if self.waiting_for_next_epoch:
+                logger.info(f"🎯 Validator at epoch start (position {block_position}/99) - resuming processing")
+                self.waiting_for_next_epoch = False
+                self.startup_epoch = current_epoch
+            return False
+        
         # If this is the first time we're seeing this epoch (startup)
         if self.startup_epoch is None:
             self.startup_epoch = current_epoch
@@ -754,9 +775,10 @@ class EpochOrchestrator:
         if self.waiting_for_next_epoch and current_epoch > self.startup_epoch:
             logger.info(f"🎯 New epoch {current_epoch} started - validator resuming normal processing")
             self.waiting_for_next_epoch = False
+            self.startup_epoch = current_epoch
             return False
         
-        # Continue waiting if we're still in the startup epoch
+        # Continue waiting if we're still in the startup epoch and started mid-epoch
         return self.waiting_for_next_epoch
     
     async def run(self):
