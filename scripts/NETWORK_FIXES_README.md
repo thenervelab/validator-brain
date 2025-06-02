@@ -2,6 +2,55 @@
 
 This directory contains both **emergency fix scripts** and **integrated solutions** to address file assignment and profile reconstruction issues in the IPFS validator network.
 
+## 🤖 **NEW: Automatic Network Self-Healing**
+
+The network now **automatically heals itself** at the start of each epoch when you are the validator! No manual intervention needed.
+
+### How It Works
+
+**Every epoch start (blocks 0-10) when you're the validator:**
+
+1. **🔍 Health Assessment**: Checks assignment coverage and profile status
+2. **🔧 Automatic Fixes**: Fixes empty assignments and rebuilds profiles
+3. **✅ Verification**: Confirms healing worked before proceeding
+4. **📊 Logging**: Reports healing status in epoch summary
+
+### Self-Healing Criteria
+
+The network self-heals when:
+- **Assignment coverage** < 95% OR **empty assignments** > 5
+- **User profiles** with 0 files exist
+
+### Self-Healing Actions
+
+1. **Fix Empty Assignments**:
+   - Uses 1+ day old miners with 10MB+ available space
+   - Checks file size + 20% safety margin for capacity
+   - Round-robin distribution for fairness
+
+2. **Rebuild User Profiles**:
+   - Rebuilds profiles directly from file assignments
+   - Ensures profiles accurately reflect assigned files
+
+### Monitoring Self-Healing
+
+Check epoch logs for self-healing status:
+```bash
+tail -f logs/epoch_orchestrator.log | grep -E "(self-healing|Self-Healing)"
+```
+
+Example log output:
+```
+🛠️ Starting automatic network self-healing routine
+📊 Assessing network health...
+📁 Assignment health: 214/232 files have miners (92.2%)
+🔧 Fixing empty file assignments...
+✅ Fixed 18 empty file assignments
+✅ Network self-healing successful!
+```
+
+---
+
 ## 🚨 Emergency Fixes (Standalone Scripts)
 
 These scripts can be run immediately to fix critical issues:

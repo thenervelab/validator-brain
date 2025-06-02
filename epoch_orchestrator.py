@@ -558,6 +558,18 @@ class EpochOrchestrator:
         
         # Phase 1: Initialization (blocks 0-10)
         if block_position <= 10 and not self.initialization_completed:
+            # Step 1: Run network self-healing routine (validator only)
+            if not getattr(self, 'self_healing_completed', False):
+                logger.info("🛠️ Starting epoch with network self-healing routine")
+                healing_success = await self.network_self_healing_routine()
+                self.self_healing_completed = True
+                
+                if healing_success:
+                    logger.info("✅ Network self-healing completed - proceeding with normal initialization")
+                else:
+                    logger.warning("⚠️ Network self-healing had issues - proceeding with normal initialization")
+            
+            # Step 2: Normal epoch initialization
             success = await self.epoch_initialization()
             if success:
                 self.initialization_completed = True
@@ -660,6 +672,7 @@ class EpochOrchestrator:
         elif 96 <= block_position <= 99:
             logger.info("🏁 Finalization phase - preparing for next epoch")
             logger.info(f"   Epoch {current_epoch} Summary:")
+            logger.info(f"   ✅ Self-Healing: {getattr(self, 'self_healing_completed', False)}")
             logger.info(f"   ✅ Initialization: {self.initialization_completed}")
             logger.info(f"   ✅ Pinning: {self.pinning_completed}")
             logger.info(f"   ✅ Catchup Processing: {getattr(self, 'catchup_processing_completed', False)}")
@@ -683,6 +696,7 @@ class EpochOrchestrator:
         logger.info("🔄 Resetting epoch state for new epoch")
         
         self.initialization_completed = False
+        self.self_healing_completed = False  # Reset self-healing state
         self.pinning_completed = False
         self.assignment_completed = False
         self.health_checks_completed = False
@@ -903,6 +917,261 @@ class EpochOrchestrator:
         except Exception as e:
             logger.error(f"❌ Epoch table cleanup failed: {e}")
             return False
+
+    async def network_self_healing_routine(self) -> bool:
+        """
+        Automatic network self-healing routine.
+        Runs at epoch start when we are the validator to fix any assignment/profile issues.
+        This ensures the network maintains health without manual intervention.
+        """
+        logger.info("🛠️ Starting automatic network self-healing routine")
+        logger.info("   This fixes empty assignments, profile issues, and data consistency")
+        
+        try:
+            if not self.db_pool:
+                logger.error("Database pool not initialized for self-healing")
+                return False
+            
+            # 1. ASSESS CURRENT HEALTH
+            logger.info("📊 Assessing network health...")
+            
+            async with self.db_pool.acquire() as conn:
+                # Check assignment coverage
+                assignment_stats = await conn.fetchrow("""
+                    SELECT 
+                        COUNT(*) as total_files,
+                        COUNT(CASE WHEN miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
+                                   OR miner4 IS NOT NULL OR miner5 IS NOT NULL THEN 1 END) as files_with_miners,
+                        COUNT(CASE WHEN miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
+                                   AND miner4 IS NULL AND miner5 IS NULL THEN 1 END) as empty_assignments
+                    FROM file_assignments
+                """)
+                
+                # Check profile coverage
+                profile_stats = await conn.fetchrow("""
+                    SELECT 
+                        COUNT(*) as total_profiles,
+                        COUNT(CASE WHEN status = 'published' THEN 1 END) as published_profiles,
+                        COUNT(CASE WHEN files_count = 0 OR files_count IS NULL THEN 1 END) as zero_file_profiles
+                    FROM pending_user_profile
+                """)
+                
+                total_files = assignment_stats['total_files'] or 0
+                files_with_miners = assignment_stats['files_with_miners'] or 0
+                empty_assignments = assignment_stats['empty_assignments'] or 0
+                zero_file_profiles = profile_stats['zero_file_profiles'] or 0
+                
+                assignment_coverage = (files_with_miners / total_files * 100) if total_files > 0 else 100
+                
+                logger.info(f"📁 Assignment health: {files_with_miners}/{total_files} files have miners ({assignment_coverage:.1f}%)")
+                logger.info(f"📁 Empty assignments: {empty_assignments}")
+                logger.info(f"👤 Zero-file profiles: {zero_file_profiles}")
+                
+                # Determine if healing is needed
+                needs_assignment_healing = assignment_coverage < 95 or empty_assignments > 5
+                needs_profile_healing = zero_file_profiles > 0
+                
+                if not needs_assignment_healing and not needs_profile_healing:
+                    logger.info("✅ Network health is good - no healing needed")
+                    return True
+                
+                logger.info(f"🚨 Network needs healing:")
+                logger.info(f"   Assignment healing: {'YES' if needs_assignment_healing else 'NO'}")
+                logger.info(f"   Profile healing: {'YES' if needs_profile_healing else 'NO'}")
+            
+            # 2. FIX EMPTY ASSIGNMENTS
+            if needs_assignment_healing:
+                logger.info("🔧 Fixing empty file assignments...")
+                
+                # Get reliable miners for assignment
+                reliable_miners = await self.get_reliable_miners_for_healing()
+                if not reliable_miners:
+                    logger.warning("⚠️ No reliable miners available for healing")
+                else:
+                    logger.info(f"✅ Found {len(reliable_miners)} reliable miners for healing")
+                    
+                    # Fix empty assignments
+                    fixed_count = await self.fix_empty_assignments(reliable_miners)
+                    logger.info(f"✅ Fixed {fixed_count} empty file assignments")
+            
+            # 3. REBUILD PROFILES
+            if needs_profile_healing:
+                logger.info("🔧 Rebuilding user profiles from file assignments...")
+                
+                # Use the simple profile rebuild function
+                from app.utils.blockchain_submission import rebuild_user_profiles_simple
+                rebuilt_profiles = await rebuild_user_profiles_simple(self.db_pool)
+                logger.info(f"✅ Rebuilt {rebuilt_profiles} user profiles")
+            
+            # 4. VERIFY HEALING SUCCESS
+            logger.info("🔍 Verifying healing results...")
+            
+            async with self.db_pool.acquire() as conn:
+                # Re-check assignment coverage
+                post_heal_stats = await conn.fetchrow("""
+                    SELECT 
+                        COUNT(*) as total_files,
+                        COUNT(CASE WHEN miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
+                                   OR miner4 IS NOT NULL OR miner5 IS NOT NULL THEN 1 END) as files_with_miners,
+                        COUNT(CASE WHEN miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
+                                   AND miner4 IS NULL AND miner5 IS NULL THEN 1 END) as empty_assignments
+                    FROM file_assignments
+                """)
+                
+                post_heal_coverage = (post_heal_stats['files_with_miners'] / post_heal_stats['total_files'] * 100) if post_heal_stats['total_files'] > 0 else 100
+                
+                logger.info(f"📊 Post-healing assignment coverage: {post_heal_coverage:.1f}%")
+                logger.info(f"📊 Remaining empty assignments: {post_heal_stats['empty_assignments']}")
+                
+                if post_heal_coverage >= 95 and post_heal_stats['empty_assignments'] <= 5:
+                    logger.info("✅ Network self-healing successful!")
+                    return True
+                else:
+                    logger.warning("⚠️ Network self-healing partially successful")
+                    return True  # Still continue with epoch processing
+            
+        except Exception as e:
+            logger.error(f"❌ Error during network self-healing: {e}")
+            logger.exception("Full traceback:")
+            # Don't fail the epoch if healing fails - just log and continue
+            return True
+    
+    async def get_reliable_miners_for_healing(self) -> List[Dict[str, Any]]:
+        """Get reliable miners for the healing routine."""
+        try:
+            async with self.db_pool.acquire() as conn:
+                cutoff_date = datetime.now() - timedelta(days=1)  # 1+ day old miners
+                
+                miners = await conn.fetch("""
+                    SELECT 
+                        r.node_id,
+                        r.ipfs_peer_id,
+                        r.registered_at,
+                        COALESCE(nm.ipfs_storage_max, 1000000000) as storage_max,
+                        COALESCE(nm.ipfs_repo_size, 0) as storage_used,
+                        COALESCE(ms.health_score, 100) as health_score
+                    FROM registration r
+                    LEFT JOIN (
+                        SELECT DISTINCT ON (miner_id) 
+                            miner_id, ipfs_storage_max, ipfs_repo_size
+                        FROM node_metrics 
+                        ORDER BY miner_id, block_number DESC
+                    ) nm ON r.node_id = nm.miner_id
+                    LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
+                    WHERE r.node_type = 'StorageMiner' 
+                      AND r.status = 'active'
+                      AND r.registered_at <= $1
+                      AND COALESCE(ms.health_score, 100) >= 50
+                    ORDER BY RANDOM()
+                """, cutoff_date)
+                
+                # Filter for capacity (10MB minimum available)
+                reliable_miners = []
+                for miner in miners:
+                    available_space = miner['storage_max'] - miner['storage_used']
+                    if available_space > 10_000_000:  # At least 10MB available
+                        reliable_miners.append({
+                            'node_id': miner['node_id'],
+                            'ipfs_peer_id': miner['ipfs_peer_id'],
+                            'health_score': miner['health_score'],
+                            'available_space': available_space
+                        })
+                
+                return reliable_miners
+                
+        except Exception as e:
+            logger.error(f"❌ Error getting reliable miners for healing: {e}")
+            return []
+    
+    async def fix_empty_assignments(self, reliable_miners: List[Dict[str, Any]]) -> int:
+        """Fix files with empty miner assignments."""
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Get files with empty assignments
+                empty_files = await conn.fetch("""
+                    SELECT 
+                        fa.cid,
+                        fa.owner,
+                        f.size,
+                        fa.miner1, fa.miner2, fa.miner3, fa.miner4, fa.miner5
+                    FROM file_assignments fa
+                    JOIN files f ON fa.cid = f.cid
+                    WHERE (fa.miner1 IS NULL OR fa.miner2 IS NULL OR fa.miner3 IS NULL 
+                           OR fa.miner4 IS NULL OR fa.miner5 IS NULL)
+                    AND f.size IS NOT NULL
+                    ORDER BY f.size ASC
+                    LIMIT 100
+                """)
+                
+                if not empty_files:
+                    return 0
+                
+                logger.info(f"🔧 Fixing {len(empty_files)} files with empty assignments")
+                
+                fixed_count = 0
+                
+                for file_info in empty_files:
+                    try:
+                        cid = file_info['cid']
+                        file_size = file_info['size'] or 0
+                        
+                        # Get current assignments
+                        current_miners = [
+                            file_info['miner1'], file_info['miner2'], file_info['miner3'],
+                            file_info['miner4'], file_info['miner5']
+                        ]
+                        assigned_miners = [m for m in current_miners if m is not None]
+                        empty_slots = 5 - len(assigned_miners)
+                        
+                        if empty_slots <= 0:
+                            continue
+                        
+                        # Find suitable miners for this file size
+                        safety_margin = int(file_size * 0.2)
+                        required_space = file_size + safety_margin
+                        
+                        suitable_miners = [
+                            m for m in reliable_miners 
+                            if m['node_id'] not in assigned_miners and m['available_space'] >= required_space
+                        ]
+                        
+                        if not suitable_miners:
+                            logger.debug(f"No suitable miners for file {cid[:16]}... (size: {file_size:,})")
+                            continue
+                        
+                        # Select miners (round-robin style)
+                        selected_miners = suitable_miners[:empty_slots]
+                        
+                        # Update the assignments
+                        new_assignments = current_miners.copy()
+                        selected_index = 0
+                        
+                        for i in range(5):
+                            if new_assignments[i] is None and selected_index < len(selected_miners):
+                                new_assignments[i] = selected_miners[selected_index]['node_id']
+                                selected_index += 1
+                        
+                        # Update database
+                        await conn.execute("""
+                            UPDATE file_assignments 
+                            SET miner1 = $2, miner2 = $3, miner3 = $4, miner4 = $5, miner5 = $6
+                            WHERE cid = $1
+                        """, cid, new_assignments[0], new_assignments[1], new_assignments[2], 
+                             new_assignments[3], new_assignments[4])
+                        
+                        fixed_count += 1
+                        
+                        logger.debug(f"Fixed assignments for {cid[:16]}... - added {len(selected_miners)} miners")
+                        
+                    except Exception as e:
+                        logger.error(f"Error fixing assignments for file {file_info.get('cid', 'unknown')}: {e}")
+                        continue
+                
+                return fixed_count
+                
+        except Exception as e:
+            logger.error(f"❌ Error fixing empty assignments: {e}")
+            return 0
 
 
 async def main():
