@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.4
+Epoch Orchestrator v2.1.5
+
+CRITICAL FIX IN v2.1.5:
+- 🚨 FIXED: UnboundLocalError crash with block_position variable referenced before assignment
+- 🚨 FIXED: Corrupted validator_workflow method that prevented phase processing
+- ✅ Restored proper validator phase workflow (Initialization → Health → Assignment → Profiles → Submission → Cleanup)
+- ✅ ENHANCED: Immediate blockchain submission after profile reconstruction (blocks 61-75)
+- ✅ Phase 5 now serves as backup retry if Phase 4 submission fails
+- ✅ Predictable submission timing - profiles submitted immediately when ready
 
 CRITICAL FIX IN v2.1.4:
 - 🚨 FIXED: AttributeError for missing state variables (profiles_completed, submission_completed)
@@ -87,7 +95,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.4"
+ORCHESTRATOR_VERSION = "2.1.5"
 
 # Setup logging
 logging.basicConfig(
@@ -777,19 +785,35 @@ class EpochOrchestrator:
                     self.profiles_completed = True
                     self.profiles_reconstructed = True  # Keep legacy variable for compatibility
                     logger.info("✅ Phase 4 complete: Profile reconstruction")
+                    
+                    # IMMEDIATE BLOCKCHAIN SUBMISSION after profile reconstruction
+                    logger.info("🚀 Starting IMMEDIATE blockchain submission after profile reconstruction")
+                    logger.info(f"⏰ Submitting at EXACT timing: Block {current_block} (position {block_position}/99)")
+                    
+                    submission_success = await self.submit_to_blockchain()
+                    if submission_success:
+                        self.submission_completed = True
+                        self.blockchain_submitted = True
+                        logger.info("✅ IMMEDIATE blockchain submission completed successfully")
+                        logger.info(f"📈 ✨ PERFECT TIMING: Submitted at block {current_block} (position {block_position}/99)")
+                        logger.info(f"🎯 Submission completed in Phase 4 - well before block 95 deadline!")
+                    else:
+                        logger.error("❌ IMMEDIATE blockchain submission failed - will retry in Phase 5")
             return
         
-        # Phase 5: Blockchain Submission (blocks 76-90) - EARLY WITH MORE TIME
+        # Phase 5: Blockchain Submission Retry (blocks 76-90) - RETRY if Phase 4 failed
         elif 76 <= block_position <= 90:
             if self.profiles_completed and not self.submission_completed:
-                logger.info("🚀 Starting blockchain submission (EARLY to meet block 95 deadline)")
+                logger.info("🔄 RETRY blockchain submission (Phase 4 submission failed)")
                 success = await self.submit_to_blockchain()
                 if success:
                     self.submission_completed = True
                     self.blockchain_submitted = True  # Keep legacy variable for compatibility
-                    logger.info("✅ Phase 5 complete: Blockchain submission")
+                    logger.info("✅ Phase 5 complete: Blockchain submission RETRY successful")
                 else:
-                    logger.error("❌ Blockchain submission failed - will retry next block")
+                    logger.error("❌ Blockchain submission RETRY failed - will continue retrying")
+            elif self.submission_completed:
+                logger.info("ℹ️ Phase 5: Blockchain submission already completed in Phase 4")
             return
         
         # Phase 6: Cleanup and Final Tasks (blocks 91-99)
@@ -962,6 +986,9 @@ class EpochOrchestrator:
                     self.current_epoch = current_epoch
                     self.current_block = current_block
                     
+                    # Calculate block position early for logging
+                    block_position = get_epoch_block_position(current_block)
+                    
                     # Track role transitions for debugging
                     previous_is_validator = getattr(self, 'is_validator', None)
                     self.is_validator = is_validator
@@ -986,8 +1013,6 @@ class EpochOrchestrator:
                     
                     self.epoch_start_block = epoch_start
                     last_epoch = current_epoch
-                    
-                    block_position = get_epoch_block_position(current_block)
                     
                     logger.info(f"📊 Epoch {current_epoch}, Block {current_block} (position {block_position}/99)")
                     logger.info(f"🎭 Role: {'VALIDATOR' if is_validator else 'NON-VALIDATOR'}")
