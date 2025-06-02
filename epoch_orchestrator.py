@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.7
+Epoch Orchestrator v2.1.9
+
+CRITICAL FIX IN v2.1.9:
+- 🚨 FIXED: Missing network_self_healing_processor.py causing processor failures
+- ✅ ENHANCED: Flexible phase timing for connection recovery scenarios
+- ✅ RECOVERY MODE: Phases run based on dependencies, not just block timing
+- ✅ Connection resilience: Assignment/reconstruction phases run even after late recovery
+- ✅ Prevents missed profile submissions due to connection disruptions
+- ✅ Extended phase windows for better fault tolerance
+
+CRITICAL CLEANUP IN v2.1.8:
+- 🧹 CLEANED: Removed all standalone script dependencies and fallbacks
+- ✅ Pure RabbitMQ-based processor architecture (no more standalone scripts)
+- ✅ Removed network_self_healing_direct fallback to emergency_manual_assignment
+- ✅ Streamlined self-healing to use only RabbitMQ processor system
+- ✅ Cleaner, more maintainable code without script mixing
+- ✅ Production-ready scalable architecture only
 
 CRITICAL FIX IN v2.1.7:
 - 🚨 FIXED: Integrated proper RabbitMQ-based file assignment system
@@ -104,7 +120,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.7"
+ORCHESTRATOR_VERSION = "2.1.9"
 
 # Setup logging
 logging.basicConfig(
@@ -842,7 +858,7 @@ class EpochOrchestrator:
             logger.info(f"   {remaining_blocks} blocks remaining in current epoch")
     
     async def validator_workflow(self):
-        """Execute validator workflow."""
+        """Execute validator workflow with flexible timing for connection recovery."""
         logger.info("👑 Executing VALIDATOR workflow")
         
         # Use the current epoch and block from the main loop
@@ -852,78 +868,112 @@ class EpochOrchestrator:
         
         logger.info(f"Current block position in epoch: {block_position}/99")
         
-        # Phase 1: Initialization (blocks 0-5) - SHORTENED
-        if block_position <= 5 and not self.initialization_completed:
-            # Only do basic initialization - NO self-healing yet (needs fresh health data)
+        # FLEXIBLE PHASE LOGIC: Prioritize completion over strict timing
+        # This ensures phases run even after connection recovery
+        
+        # Phase 1: Initialization (blocks 0-15) - EXTENDED window
+        if block_position <= 15 and not self.initialization_completed:
             success = await self.epoch_initialization()
             if success:
                 self.initialization_completed = True
                 logger.info("✅ Phase 1 complete: Initialization")
             return
         
-        # Phase 2: Health Checks (blocks 6-35) - EXTENDED
-        elif 6 <= block_position <= 35:
-            if not self.health_checks_completed:
-                success = await self.perform_health_checks()
-                if success:
-                    self.health_checks_completed = True
-                    logger.info("✅ Phase 2 complete: Health checks")
-                    
-                    # NOW safe to run self-healing with fresh health data
-                    logger.info("🛠️ Running network self-healing with fresh health data...")
-                    await self.network_self_healing_routine()
+        # Phase 2: Health Checks (blocks 6-40) - EXTENDED window  
+        elif block_position <= 40 and not self.health_checks_completed:
+            success = await self.perform_health_checks()
+            if success:
+                self.health_checks_completed = True
+                logger.info("✅ Phase 2 complete: Health checks")
+                
+                # Run self-healing with fresh health data
+                logger.info("🛠️ Running network self-healing with fresh health data...")
+                await self.network_self_healing_routine()
             return
         
-        # Phase 3: File Assignment (blocks 36-60) - ADJUSTED
-        elif 36 <= block_position <= 60:
-            if self.health_checks_completed and not self.assignment_completed:
-                success = await self.assign_files()
-                if success:
-                    self.assignment_completed = True
-                    logger.info("✅ Phase 3 complete: File assignments")
+        # RECOVERY LOGIC: If we have health checks but missing later phases
+        # Run them regardless of block position (connection recovery scenario)
+        elif self.health_checks_completed and not self.assignment_completed and block_position < 90:
+            logger.info(f"🔄 RECOVERY MODE: Running file assignment at block {block_position}/99")
+            logger.info("   Health checks completed but assignment missing - likely connection recovery")
+            success = await self.assign_files()
+            if success:
+                self.assignment_completed = True
+                logger.info("✅ RECOVERY: File assignment completed")
             return
-        
-        # Phase 4: Profile Reconstruction (blocks 61-75) - NEW SEPARATE PHASE
-        elif 61 <= block_position <= 75:
-            if self.assignment_completed and not self.profiles_completed:
-                success = await self.reconstruct_profiles()
-                if success:
-                    self.profiles_completed = True
-                    self.profiles_reconstructed = True  # Keep legacy variable for compatibility
-                    logger.info("✅ Phase 4 complete: Profile reconstruction")
-                    
-                    # IMMEDIATE BLOCKCHAIN SUBMISSION after profile reconstruction
-                    logger.info("🚀 Starting IMMEDIATE blockchain submission after profile reconstruction")
-                    logger.info(f"⏰ Submitting at EXACT timing: Block {current_block} (position {block_position}/99)")
-                    
-                    submission_success = await self.submit_to_blockchain()
-                    if submission_success:
-                        self.submission_completed = True
-                        self.blockchain_submitted = True
-                        logger.info("✅ IMMEDIATE blockchain submission completed successfully")
-                        logger.info(f"📈 ✨ PERFECT TIMING: Submitted at block {current_block} (position {block_position}/99)")
-                        logger.info(f"🎯 Submission completed in Phase 4 - well before block 95 deadline!")
-                    else:
-                        logger.error("❌ IMMEDIATE blockchain submission failed - will retry in Phase 5")
-            return
-        
-        # Phase 5: Blockchain Submission Retry (blocks 76-90) - RETRY if Phase 4 failed
-        elif 76 <= block_position <= 90:
-            if self.profiles_completed and not self.submission_completed:
-                logger.info("🔄 RETRY blockchain submission (Phase 4 submission failed)")
-                success = await self.submit_to_blockchain()
-                if success:
+            
+        # RECOVERY LOGIC: If we have assignments but missing profile reconstruction  
+        elif self.assignment_completed and not self.profiles_completed and block_position < 90:
+            logger.info(f"🔄 RECOVERY MODE: Running profile reconstruction at block {block_position}/99")
+            logger.info("   Assignment completed but profiles missing - likely connection recovery")
+            success = await self.reconstruct_profiles()
+            if success:
+                self.profiles_completed = True
+                self.profiles_reconstructed = True  # Keep legacy variable for compatibility
+                logger.info("✅ RECOVERY: Profile reconstruction completed")
+                
+                # IMMEDIATE BLOCKCHAIN SUBMISSION after profile reconstruction
+                logger.info("🚀 Starting IMMEDIATE blockchain submission after profile reconstruction")
+                logger.info(f"⏰ Submitting at RECOVERY timing: Block {current_block} (position {block_position}/99)")
+                
+                submission_success = await self.submit_to_blockchain()
+                if submission_success:
                     self.submission_completed = True
-                    self.blockchain_submitted = True  # Keep legacy variable for compatibility
-                    logger.info("✅ Phase 5 complete: Blockchain submission RETRY successful")
+                    self.blockchain_submitted = True
+                    logger.info("✅ RECOVERY: Immediate blockchain submission completed successfully")
+                    logger.info(f"📈 ✨ RECOVERY SUCCESS: Submitted at block {current_block} (position {block_position}/99)")
                 else:
-                    logger.error("❌ Blockchain submission RETRY failed - will continue retrying")
-            elif self.submission_completed:
-                logger.info("ℹ️ Phase 5: Blockchain submission already completed in Phase 4")
+                    logger.error("❌ RECOVERY: Immediate blockchain submission failed - will retry")
             return
         
-        # Phase 6: Cleanup and Final Tasks (blocks 91-99)
-        elif 91 <= block_position <= 99:
+        # NORMAL TIMING: Phase 3: File Assignment (blocks 36-60)
+        elif 36 <= block_position <= 60 and self.health_checks_completed and not self.assignment_completed:
+            success = await self.assign_files()
+            if success:
+                self.assignment_completed = True
+                logger.info("✅ Phase 3 complete: File assignments")
+            return
+        
+        # NORMAL TIMING: Phase 4: Profile Reconstruction (blocks 61-75)
+        elif 61 <= block_position <= 75 and self.assignment_completed and not self.profiles_completed:
+            success = await self.reconstruct_profiles()
+            if success:
+                self.profiles_completed = True
+                self.profiles_reconstructed = True  # Keep legacy variable for compatibility
+                logger.info("✅ Phase 4 complete: Profile reconstruction")
+                
+                # IMMEDIATE BLOCKCHAIN SUBMISSION after profile reconstruction
+                logger.info("🚀 Starting IMMEDIATE blockchain submission after profile reconstruction")
+                logger.info(f"⏰ Submitting at EXACT timing: Block {current_block} (position {block_position}/99)")
+                
+                submission_success = await self.submit_to_blockchain()
+                if submission_success:
+                    self.submission_completed = True
+                    self.blockchain_submitted = True
+                    logger.info("✅ IMMEDIATE blockchain submission completed successfully")
+                    logger.info(f"📈 ✨ PERFECT TIMING: Submitted at block {current_block} (position {block_position}/99)")
+                    logger.info(f"🎯 Submission completed in Phase 4 - well before block 95 deadline!")
+                else:
+                    logger.error("❌ IMMEDIATE blockchain submission failed - will retry in Phase 5")
+            return
+        
+        # Phase 5: Blockchain Submission Retry (blocks 76-89) - RETRY if Phase 4 failed
+        elif 76 <= block_position <= 89 and self.profiles_completed and not self.submission_completed:
+            logger.info("🔄 RETRY blockchain submission (Phase 4 submission failed)")
+            success = await self.submit_to_blockchain()
+            if success:
+                self.submission_completed = True
+                self.blockchain_submitted = True  # Keep legacy variable for compatibility
+                logger.info("✅ Phase 5 complete: Blockchain submission RETRY successful")
+            else:
+                logger.error("❌ Blockchain submission RETRY failed - will continue retrying")
+            return
+        elif 76 <= block_position <= 89 and self.submission_completed:
+            logger.info("ℹ️ Phase 5: Blockchain submission already completed")
+            return
+        
+        # Phase 6: Cleanup and Final Tasks (blocks 90-99)
+        elif 90 <= block_position <= 99:
             if not self.cleanup_completed:
                 # Only run cleanup once
                 await self.epoch_cleanup()
@@ -931,8 +981,16 @@ class EpochOrchestrator:
                 logger.info("✅ Phase 6 complete: Cleanup")
             return
         
+        # Handle edge cases
         else:
-            logger.warning(f"⚠️ Unexpected block position: {block_position}")
+            if block_position < 36 and self.health_checks_completed:
+                logger.info(f"⏳ Waiting for assignment phase (current: {block_position}/99, starts at 36)")
+            elif block_position < 61 and self.assignment_completed:
+                logger.info(f"⏳ Waiting for profile reconstruction phase (current: {block_position}/99, starts at 61)")
+            else:
+                logger.warning(f"⚠️ Unexpected workflow state at position {block_position}/99")
+                logger.warning(f"   Health: {self.health_checks_completed}, Assignment: {self.assignment_completed}, Profiles: {self.profiles_completed}")
+            return
     
     async def reset_epoch_state(self):
         """Reset epoch state for new epoch."""
@@ -1261,6 +1319,7 @@ class EpochOrchestrator:
         """
         Run network self-healing to fix broken file assignments.
         CRITICAL: This should run AFTER health checks to use fresh health data.
+        Uses only the RabbitMQ-based processor system.
         """
         logger.info("🛠️ Starting network self-healing routine")
         
@@ -1285,7 +1344,7 @@ class EpochOrchestrator:
                 logger.info(f"✅ Found {health_data_count} miners with recent health data for self-healing")
         
         try:
-            # Use subprocess approach (cleaner isolation)
+            # Use RabbitMQ-based network self-healing processor
             success = self.run_processor(
                 'network_self_healing_processor.py',
                 'Network self-healing'
@@ -1294,46 +1353,15 @@ class EpochOrchestrator:
             if success:
                 # Wait for self-healing consumer to process (shorter timeout for healing)
                 await self.wait_for_queues_empty(['network_self_healing'], 300)
-                logger.info("✅ Network self-healing completed via subprocess")
+                logger.info("✅ Network self-healing completed via RabbitMQ processor")
                 return True
             else:
-                logger.warning("⚠️ Subprocess self-healing failed, trying direct approach...")
-                return await self.network_self_healing_direct()
-                
-        except Exception as e:
-            logger.error(f"❌ Error during network self-healing: {e}")
-            return False
-
-    async def network_self_healing_direct(self) -> bool:
-        """
-        Direct network self-healing when subprocess approach fails.
-        Uses the emergency manual assignment script as a fallback.
-        """
-        logger.info("🔧 Running network self-healing via direct approach")
-        
-        try:
-            # Use the emergency manual assignment logic directly
-            from scripts.emergency_manual_assignment import manual_assignment_fix
-            
-            # Set up database context for the emergency script
-            original_db_pool = None
-            try:
-                # Store original connection info
-                from app.db.connection import get_db_pool
-                original_db_pool = await get_db_pool()
-                
-                # Import the emergency script's main function
-                await manual_assignment_fix()
-                
-                logger.info("✅ Network self-healing completed via direct emergency assignment")
-                return True
-                
-            except Exception as e:
-                logger.error(f"❌ Direct network self-healing failed: {e}")
+                logger.error("❌ Network self-healing processor failed")
+                logger.error("   All self-healing attempts failed - manual intervention may be required")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Error importing emergency manual assignment: {e}")
+            logger.error(f"❌ Error during network self-healing: {e}")
             return False
 
     async def epoch_cleanup(self) -> bool:
