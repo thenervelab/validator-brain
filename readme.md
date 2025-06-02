@@ -375,6 +375,31 @@ python scripts/fix_empty_assignment_simple.py bafkreifrm5azdkeoyxg5om7eeqfidabra
 python scripts/fix_empty_assignment_simple.py
 ```
 
+**🆕 New File Pipeline Diagnostics & Fixes:**
+When new files from storage requests don't get miners assigned:
+```bash
+# Diagnose specific file through entire pipeline
+python scripts/diagnose_new_file.py bafkreifdekt47g5i5bfcbjojdwk6k53ybmjrxjeime3reolpixegh6zsh4
+
+# Check overall system health
+python scripts/diagnose_new_file.py --health
+
+# Fix entire new file processing pipeline
+python scripts/fix_new_file_pipeline.py --full
+
+# Check pipeline health
+python scripts/fix_new_file_pipeline.py --health
+
+# Diagnose and fix specific file
+python scripts/fix_new_file_pipeline.py bafkreifdekt47g5i5bfcbjojdwk6k53ybmjrxjeime3reolpixegh6zsh4
+```
+
+**Pipeline Fix Sequence:**
+1. **Pinning requests** → `pending_assignment_file` (pinning_file_processor)
+2. **Pending files** → `file_assignments` (file_assignment_processor) 
+3. **Empty assignments** → Fixed assignments (availability_manager)
+4. **Check final state** → Report improvements
+
 ### 9. Node Metrics
 
 Fetches and stores IPFS node metrics from the blockchain:
@@ -512,14 +537,15 @@ kubectl apply -f k8s/epoch-orchestrator.yaml
 **Epoch Structure (100 blocks per epoch, starting at blocks ending in 38):**
 - **Block 0-10**: Initialization (registration, node metrics, user profiles)
 - **Block 11-50**: Pinning requests processing (validator only)
-- **Block 51-80**: File assignment and health checks
+- **Block 51-80**: **🆕 Catchup processing**, File assignment and health checks
 - **Block 81-95**: **🆕 Refresh user profiles**, Profile reconstruction, **submit to blockchain**
 - **Block 96-99**: Finalization and preparation for next epoch
 
 **🆕 CRITICAL DATA SYNCHRONIZATION FIX:**
+- **Block 51**: Catchup processing for any storage requests that arrived after block 50
 - **Block 81**: Automatically refetches user profiles before reconstruction to include ALL new files from storage requests
 - **Non-Validators**: Refresh user profiles every 20 blocks to stay current with network changes
-- **Why This Matters**: Ensures reconstructed profiles include files added during the epoch, preventing data loss
+- **Why This Matters**: Ensures NO files are lost due to timing gaps and reconstructed profiles include files added during the epoch, preventing data loss
 
 **Note**: Epochs start at blocks ending in 38 (e.g., 771538, 771638, 771738, etc.), not at blocks 0, 100, 200, etc.
 
