@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.1
+Epoch Orchestrator v2.1.2
+
+CRITICAL FIX IN v2.1.2:
+- 🚨 FIXED: Connection lag causing validators to miss early epoch detection window
+- ✅ Enhanced role transition detection to handle substrate connection delays
+- ✅ Validators can now process even when detected after block 10 due to connection lag
+- ✅ Added previous_epoch tracking to distinguish role transitions from true mid-epoch startup
 
 CRITICAL FIX IN v2.1.1:
 - 🚨 FIXED: Validator startup safety mechanism causing validators to wait entire epoch
@@ -34,7 +40,7 @@ Non-Validator Mode:
 Validator Mode:
 - Follows strict phase timing for epoch processing
 - Waits for next epoch ONLY if starting after block 10 (startup safety)
-- FIXED: Now processes immediately when becoming validator at epoch start
+- FIXED: Now handles connection lag and role transitions properly
 - Must complete blockchain submission before block 95
 """
 
@@ -69,7 +75,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.1"
+ORCHESTRATOR_VERSION = "2.1.2"
 
 # Setup logging
 logging.basicConfig(
@@ -105,6 +111,7 @@ class EpochOrchestrator:
         
         # Safety mechanism for mid-epoch startup
         self.startup_epoch = None
+        self.previous_epoch = None  # Track previous epoch for role transition detection
         self.waiting_for_next_epoch = False
         
         # Connection management
@@ -748,7 +755,6 @@ class EpochOrchestrator:
             True if validator should wait, False if validator can proceed
         """
         # CRITICAL FIX: If we're at the start of an epoch (0-10), always allow processing
-        # This handles the case where we become validator at epoch start after being non-validator
         if block_position <= 10:
             if self.waiting_for_next_epoch:
                 logger.info(f"🎯 Validator at epoch start (position {block_position}/99) - resuming processing")
@@ -756,11 +762,23 @@ class EpochOrchestrator:
                 self.startup_epoch = current_epoch
             return False
         
-        # If this is the first time we're seeing this epoch (startup)
+        # ENHANCED FIX: If we became validator in this epoch (role transition), allow processing
+        # This handles connection lag where we miss the early detection window
+        if (hasattr(self, 'previous_epoch') and 
+            self.previous_epoch is not None and 
+            current_epoch > self.previous_epoch and
+            self.waiting_for_next_epoch):
+            logger.info(f"🎯 Role transition to validator in epoch {current_epoch} at position {block_position}/99")
+            logger.info(f"   Allowing processing despite late detection (connection lag or role transition)")
+            self.waiting_for_next_epoch = False
+            self.startup_epoch = current_epoch
+            return False
+        
+        # If this is the first time we're seeing this epoch (true startup)
         if self.startup_epoch is None:
             self.startup_epoch = current_epoch
             
-            # If we're starting after block 10, wait for next epoch
+            # If we're starting after block 10, wait for next epoch (true mid-epoch startup)
             if block_position > 10:
                 logger.warning(f"🚨 Validator started mid-epoch at block position {block_position}/99")
                 logger.warning(f"   Validator waiting for next epoch to avoid processing incomplete data")
@@ -819,6 +837,10 @@ class EpochOrchestrator:
                     # Check if we've moved to a new epoch
                     if last_epoch is not None and current_epoch != last_epoch:
                         logger.info(f"🔄 New epoch detected: {last_epoch} -> {current_epoch}")
+                        
+                        # Track previous epoch for role transition detection
+                        self.previous_epoch = last_epoch
+                        
                         await self.reset_epoch_state()
                         
                         # Update startup epoch tracking for new epoch
@@ -828,7 +850,19 @@ class EpochOrchestrator:
                     # Update state
                     self.current_epoch = current_epoch
                     self.current_block = current_block
+                    
+                    # Track role transitions for debugging
+                    previous_is_validator = getattr(self, 'is_validator', None)
                     self.is_validator = is_validator
+                    
+                    # Log role transitions
+                    if previous_is_validator is not None and previous_is_validator != is_validator:
+                        role_from = "VALIDATOR" if previous_is_validator else "NON-VALIDATOR"
+                        role_to = "VALIDATOR" if is_validator else "NON-VALIDATOR"
+                        logger.info(f"🔄 Role transition detected: {role_from} → {role_to} in epoch {current_epoch}")
+                        if is_validator:
+                            logger.info(f"   Became validator at block position {block_position}/99")
+                    
                     self.epoch_start_block = epoch_start
                     last_epoch = current_epoch
                     
