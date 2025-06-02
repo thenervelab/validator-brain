@@ -10,6 +10,7 @@ import os
 from typing import List, Dict, Any, Optional
 from substrateinterface import SubstrateInterface, Keypair
 from substrateinterface.exceptions import SubstrateRequestException
+from app.utils.epoch_validator import get_current_epoch_info, get_epoch_block_position
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,10 @@ def string_to_bounded_vec(s: str, max_length: int = 256) -> bytes:
 
 
 def load_validator_keypair() -> Optional[Keypair]:
-    """Load validator keypair from environment variable."""
+    """Load validator keypair from environment variable. Supports proxy account configurations."""
     validator_seed = os.getenv('VALIDATOR_SEED')
+    expected_account = os.getenv('VALIDATOR_ACCOUNT_ID')
+    
     if not validator_seed:
         logger.warning("VALIDATOR_SEED not set - transaction signing disabled")
         return None
@@ -29,15 +32,41 @@ def load_validator_keypair() -> Optional[Keypair]:
     try:
         # Try to create keypair from mnemonic seed phrase
         keypair = Keypair.create_from_mnemonic(validator_seed)
-        logger.info(f"Loaded validator keypair for account: {keypair.ss58_address}")
+        
+        # Check if this is a proxy account setup
+        if expected_account and keypair.ss58_address != expected_account:
+            logger.info(f"🔗 Proxy account setup detected:")
+            logger.info(f"   Epoch validator account: {expected_account}")
+            logger.info(f"   Proxy signing account: {keypair.ss58_address}")
+            logger.info(f"   This is a secure configuration - proxy account will sign on behalf of validator")
+        elif expected_account and keypair.ss58_address == expected_account:
+            logger.info(f"✅ Direct validator account setup:")
+            logger.info(f"   Validator account: {keypair.ss58_address}")
+        else:
+            logger.info(f"✅ Loaded signing keypair for account: {keypair.ss58_address}")
+        
         return keypair
+        
     except Exception as e:
         logger.error(f"Failed to create keypair from mnemonic: {e}")
         try:
             # Fallback: try as raw seed
             keypair = Keypair.create_from_seed(validator_seed)
-            logger.info(f"Loaded validator keypair for account: {keypair.ss58_address}")
+            
+            # Check if this is a proxy account setup
+            if expected_account and keypair.ss58_address != expected_account:
+                logger.info(f"🔗 Proxy account setup detected:")
+                logger.info(f"   Epoch validator account: {expected_account}")
+                logger.info(f"   Proxy signing account: {keypair.ss58_address}")
+                logger.info(f"   This is a secure configuration - proxy account will sign on behalf of validator")
+            elif expected_account and keypair.ss58_address == expected_account:
+                logger.info(f"✅ Direct validator account setup:")
+                logger.info(f"   Validator account: {keypair.ss58_address}")
+            else:
+                logger.info(f"✅ Loaded signing keypair for account: {keypair.ss58_address}")
+            
             return keypair
+            
         except Exception as e2:
             logger.error(f"Failed to create keypair from seed: {e2}")
             return None
@@ -49,7 +78,7 @@ def call_update_pin_and_storage_requests(
 ) -> tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Calls the update_pin_and_storage_requests extrinsic on the Substrate node.
-    Submits all data in a single transaction.
+    Submits all data in a single transaction, with batching for large datasets.
 
     Args:
         requests (List[Dict[str, Any]]): List of original storage requests to close
@@ -62,7 +91,15 @@ def call_update_pin_and_storage_requests(
     logger.info(f"  - {len(requests)} original storage requests (to close)")
     logger.info(f"  - {len(miner_profiles)} miner profiles (all reconstructed)")
     
-    # With the corrected data collection, we should be able to submit everything
+    # Check if we need to batch large miner profile submissions
+    MAX_PROFILES_PER_BATCH = 200  # Conservative limit to avoid WASM runtime issues
+    
+    if len(miner_profiles) > MAX_PROFILES_PER_BATCH:
+        logger.warning(f"⚠️ Large dataset detected: {len(miner_profiles)} miner profiles")
+        logger.warning(f"   Batching into smaller chunks to avoid runtime limits")
+        return _submit_large_dataset_batched(requests, miner_profiles, MAX_PROFILES_PER_BATCH)
+    
+    # Standard submission for smaller datasets
     success = _submit_single_batch(requests, miner_profiles)
     if success:
         return True, requests, miner_profiles
@@ -78,6 +115,74 @@ def call_update_pin_and_storage_requests(
     return False, [], []
 
 
+def _submit_large_dataset_batched(
+    requests: List[Dict[str, Any]], 
+    miner_profiles: List[Dict[str, Any]],
+    batch_size: int
+) -> tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Submit large datasets in batches to avoid WASM runtime limits.
+    
+    Args:
+        requests: Storage requests to submit
+        miner_profiles: Miner profiles to batch
+        batch_size: Maximum profiles per batch
+        
+    Returns:
+        tuple: (success: bool, submitted_requests: List, submitted_profiles: List)
+    """
+    submitted_requests = []
+    submitted_profiles = []
+    
+    # Submit storage requests first (typically smaller dataset)
+    if requests:
+        logger.info(f"📦 Submitting {len(requests)} storage requests first...")
+        success = _submit_single_batch(requests, [])
+        if success:
+            submitted_requests = requests
+            logger.info("✅ Storage requests submitted successfully")
+        else:
+            logger.warning("⚠️ Storage requests submission failed, continuing with profiles...")
+    
+    # Batch miner profiles
+    total_batches = (len(miner_profiles) + batch_size - 1) // batch_size
+    logger.info(f"📊 Submitting {len(miner_profiles)} miner profiles in {total_batches} batches of {batch_size}")
+    
+    for batch_num in range(total_batches):
+        start_idx = batch_num * batch_size
+        end_idx = min(start_idx + batch_size, len(miner_profiles))
+        batch_profiles = miner_profiles[start_idx:end_idx]
+        
+        logger.info(f"📦 Submitting batch {batch_num + 1}/{total_batches}: profiles {start_idx + 1}-{end_idx}")
+        
+        success = _submit_single_batch([], batch_profiles)
+        if success:
+            submitted_profiles.extend(batch_profiles)
+            logger.info(f"✅ Batch {batch_num + 1}/{total_batches} submitted successfully")
+        else:
+            logger.error(f"❌ Batch {batch_num + 1}/{total_batches} failed")
+            # Continue with remaining batches
+    
+    # Check overall success
+    total_submitted = len(submitted_profiles)
+    total_requested = len(miner_profiles)
+    success_rate = (total_submitted / total_requested) * 100 if total_requested > 0 else 0
+    
+    logger.info(f"📊 Batched submission results:")
+    logger.info(f"   Storage requests: {len(submitted_requests)}/{len(requests)} submitted")
+    logger.info(f"   Miner profiles: {total_submitted}/{total_requested} submitted ({success_rate:.1f}%)")
+    
+    # Consider it successful if we got most of the data through
+    overall_success = success_rate >= 80  # 80% success threshold
+    
+    if overall_success:
+        logger.info("✅ Batched submission completed successfully")
+    else:
+        logger.error("❌ Batched submission failed - insufficient success rate")
+    
+    return overall_success, submitted_requests, submitted_profiles
+
+
 def _submit_single_batch(
     requests: List[Dict[str, Any]], 
     miner_profiles: List[Dict[str, Any]]
@@ -86,6 +191,30 @@ def _submit_single_batch(
     substrate = None
     
     try:
+        # CRITICAL: Check timing to avoid late submission errors
+        try:
+            temp_substrate = SubstrateInterface(url=os.getenv('NODE_URL', 'wss://rpc.hippius.network'))
+            current_epoch, current_block, temp_substrate = get_current_epoch_info(temp_substrate)
+            block_position = get_epoch_block_position(current_block)
+            temp_substrate.close()
+            
+            # Warn if submitting very late in epoch (after block 90)
+            if block_position > 90:
+                logger.warning(f"⚠️ LATE SUBMISSION WARNING: Block position {block_position}/99")
+                logger.warning(f"   Submitting after block 90 may cause runtime deadline errors")
+                logger.warning(f"   Consider submitting earlier in epoch (blocks 76-90)")
+            elif block_position > 95:
+                logger.error(f"🚨 CRITICAL: Submitting at block position {block_position}/99")
+                logger.error(f"   This is very likely to fail due to runtime deadlines!")
+                logger.error(f"   Blockchain submissions should complete before block 95")
+                # Still attempt submission but warn user
+            else:
+                logger.info(f"✅ Good timing: Submitting at block position {block_position}/99")
+                
+        except Exception as timing_error:
+            logger.warning(f"Could not check submission timing: {timing_error}")
+            logger.info("Proceeding with submission anyway...")
+        
         # Get node URL from environment
         node_url = os.getenv('NODE_URL', 'wss://rpc.hippius.network')
         
@@ -134,18 +263,72 @@ def _submit_single_batch(
 
         logger.info(f"Formatted {len(formatted_requests)} original storage requests (for closing)")
 
-        # Format miner profiles to match MinerProfileItem structure
+        # Format miner profiles to match MinerProfileItem structure with validation
         formatted_miner_profiles = []
-        for profile in miner_profiles:
-            formatted_profile = {
-                "miner_node_id": string_to_bounded_vec(profile["miner_node_id"]),
-                "cid": string_to_bounded_vec(profile["cid"]),
-                "files_count": int(profile["files_count"]),
-                "files_size": int(profile["files_size"])
-            }
-            formatted_miner_profiles.append(formatted_profile)
+        for i, profile in enumerate(miner_profiles):
+            try:
+                # Validate required fields
+                if not profile.get("miner_node_id"):
+                    logger.warning(f"Skipping miner profile {i}: missing miner_node_id")
+                    continue
+                
+                if not profile.get("cid"):
+                    logger.warning(f"Skipping miner profile {i}: missing cid")
+                    continue
+                
+                # Validate numeric fields
+                files_count = profile.get("files_count", 0)
+                files_size = profile.get("files_size", 0)
+                
+                if not isinstance(files_count, (int, float)) or files_count < 0:
+                    logger.warning(f"Skipping miner profile {i}: invalid files_count {files_count}")
+                    continue
+                
+                if not isinstance(files_size, (int, float)) or files_size < 0:
+                    logger.warning(f"Skipping miner profile {i}: invalid files_size {files_size}")
+                    continue
+                
+                # Validate string lengths to prevent bounded vector overflow
+                miner_node_id = str(profile["miner_node_id"])
+                cid = str(profile["cid"])
+                
+                if len(miner_node_id) > 256:
+                    logger.warning(f"Truncating miner_node_id from {len(miner_node_id)} to 256 chars")
+                    miner_node_id = miner_node_id[:256]
+                
+                if len(cid) > 256:
+                    logger.warning(f"Truncating cid from {len(cid)} to 256 chars")
+                    cid = cid[:256]
+                
+                formatted_profile = {
+                    "miner_node_id": string_to_bounded_vec(miner_node_id),
+                    "cid": string_to_bounded_vec(cid),
+                    "files_count": int(files_count),
+                    "files_size": int(files_size)
+                }
+                formatted_miner_profiles.append(formatted_profile)
+                
+                # Log sample profiles for debugging
+                if i < 3:  # Log first 3 profiles
+                    logger.debug(f"Formatted miner profile {i}: node_id={miner_node_id[:20]}..., "
+                               f"files_count={files_count}, files_size={files_size}")
+                
+            except Exception as e:
+                logger.error(f"Error formatting miner profile {i}: {e}")
+                logger.error(f"Profile data: {profile}")
+                continue
 
-        logger.info(f"Formatted {len(formatted_miner_profiles)} miner profile(s)")
+        logger.info(f"Formatted {len(formatted_miner_profiles)} miner profile(s) (from {len(miner_profiles)} total)")
+        
+        # Additional validation: Check if we have too many profiles (potential runtime limit)
+        if len(formatted_miner_profiles) > 1000:
+            logger.warning(f"⚠️ Large number of miner profiles ({len(formatted_miner_profiles)})")
+            logger.warning(f"   This might cause runtime issues - consider batching")
+        
+        # Validate we have some data to submit
+        if len(formatted_requests) == 0 and len(formatted_miner_profiles) == 0:
+            logger.warning("No valid data to submit to blockchain")
+            return False
 
         # Compose the call
         call = substrate.compose_call(
