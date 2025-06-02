@@ -92,7 +92,22 @@ class SimpleFileAssigner:
         """Get reliable miners that are 1+ days old with capacity and fresh health data."""
         try:
             async with self.db_pool.acquire() as conn:
-                cutoff_date = datetime.now() - timedelta(days=self.min_miner_age_days)
+                # Calculate cutoff block number (1 day = ~14,400 blocks at 6 seconds per block)
+                blocks_per_day = 14400  # 24 * 60 * 60 / 6 seconds per block
+                cutoff_blocks = self.min_miner_age_days * blocks_per_day
+                
+                # Get current block number to calculate cutoff
+                try:
+                    from app.utils.epoch_validator import connect_substrate
+                    substrate = connect_substrate()
+                    current_block = substrate.get_block_number()
+                    cutoff_block = current_block - cutoff_blocks
+                    substrate.close()
+                    logger.debug(f"Current block: {current_block}, cutoff block: {cutoff_block} (miners must be registered before block {cutoff_block})")
+                except Exception as e:
+                    logger.warning(f"Could not get current block number: {e}, using fallback")
+                    # Fallback: use a reasonable cutoff block (assume we're around block 800000)
+                    cutoff_block = 800000 - cutoff_blocks
                 
                 # Enhanced query that prefers miners with recent health data
                 miners = await conn.fetch("""
@@ -131,11 +146,11 @@ class SimpleFileAssigner:
                     WHERE r.node_type = 'StorageMiner' 
                       AND r.status = 'active'
                       AND r.registered_at <= $1
-                      AND COALESCE(ms.health_score, 100) >= 50
+                      AND COALESCE(ms.health_score, 100) >= $2
                     ORDER BY 
                         health_freshness_score DESC,  -- Prefer fresh health data
                         RANDOM()  -- Random order for better distribution
-                """, cutoff_date)
+                """, cutoff_block, 50)
                 
                 # Filter for capacity (keep it simple - just check they have some space)
                 reliable_miners = []
@@ -146,13 +161,20 @@ class SimpleFileAssigner:
                 for miner in miners:
                     available_space = miner['storage_max'] - miner['storage_used']
                     if available_space > 100000:  # At least 100KB available (very low bar)
+                        # Calculate age in blocks instead of days
+                        try:
+                            age_blocks = current_block - miner['registered_at']
+                            age_days = age_blocks / blocks_per_day
+                        except:
+                            age_days = 999  # Fallback for very old miners
+                        
                         reliable_miners.append({
                             'node_id': miner['node_id'],
                             'health_score': miner['health_score'],
                             'health_freshness_score': miner['health_freshness_score'],
                             'files_pinned': miner['files_pinned'],
                             'available_space': available_space,
-                            'age_days': (datetime.now() - miner['registered_at']).days,
+                            'age_days': age_days,
                             'health_updated': miner['health_updated']
                         })
                         
