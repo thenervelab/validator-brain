@@ -889,6 +889,16 @@ class EpochOrchestrator:
                 # Run self-healing with fresh health data
                 logger.info("🛠️ Running network self-healing with fresh health data...")
                 await self.network_self_healing_routine()
+                
+                # FALLBACK: Also run availability maintenance if self-healing fails
+                if not self.availability_completed:
+                    logger.info("🛠️ VALIDATOR: Running availability maintenance as backup...")
+                    maintenance_success = await self.run_availability_maintenance()
+                    if maintenance_success:
+                        self.availability_completed = True
+                        logger.info("✅ VALIDATOR: Availability maintenance completed as backup")
+                    else:
+                        logger.warning("⚠️ VALIDATOR: Availability maintenance failed")
             return
         
         # RECOVERY LOGIC: If we have health checks but missing later phases

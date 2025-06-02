@@ -336,8 +336,15 @@ def _submit_single_batch(
         
         # Get the extrinsic hash before submission
         extrinsic_hash = extrinsic.extrinsic_hash
-        logger.info(f"🔗 TRANSACTION HASH: {extrinsic_hash}")
-        logger.info(f"🚀 Submitting transaction {extrinsic_hash} to blockchain...")
+        
+        # Convert binary hash to hex string for logging
+        if isinstance(extrinsic_hash, bytes):
+            extrinsic_hash_hex = "0x" + extrinsic_hash.hex()
+        else:
+            extrinsic_hash_hex = str(extrinsic_hash)
+        
+        logger.info(f"🔗 TRANSACTION HASH: {extrinsic_hash_hex}")
+        logger.info(f"🚀 Submitting transaction {extrinsic_hash_hex} to blockchain...")
 
         # Submit the extrinsic and wait for finalization
         receipt = substrate.submit_extrinsic(
@@ -347,9 +354,12 @@ def _submit_single_batch(
         )
 
         if receipt.is_success:
+            # Convert block hash to hex string for logging
+            block_hash_hex = "0x" + receipt.block_hash.hex() if isinstance(receipt.block_hash, bytes) else str(receipt.block_hash)
+            
             logger.info(f"✅ ✨ TRANSACTION SUCCESSFUL! ✨")
-            logger.info(f"🔗 Transaction Hash: {extrinsic_hash}")
-            logger.info(f"📦 Block Hash: {receipt.block_hash}")
+            logger.info(f"🔗 Transaction Hash: {extrinsic_hash_hex}")
+            logger.info(f"📦 Block Hash: {block_hash_hex}")
             logger.info(f"📊 Submitted Data:")
             logger.info(f"   - {len(formatted_requests)} original storage requests (for closing)")
             logger.info(f"   - {len(formatted_miner_profiles)} miner profiles")
@@ -357,7 +367,7 @@ def _submit_single_batch(
             return True
         else:
             logger.error(f"❌ TRANSACTION FAILED!")
-            logger.error(f"🔗 Transaction Hash: {extrinsic_hash}")
+            logger.error(f"🔗 Transaction Hash: {extrinsic_hash_hex}")
             logger.error(f"❌ Error: {receipt.error_message}")
             logger.error(f"📋 Failed transaction details:")
             logger.error(f"   - Storage requests: {len(formatted_requests)}")
