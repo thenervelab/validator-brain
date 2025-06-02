@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-Epoch Orchestrator v2.1.2
+Epoch Orchestrator v2.1.3
+
+CRITICAL FIX IN v2.1.3:
+- 🚨 FIXED: Validator state confusion during connection failures (broken pipe errors)
+- ✅ Enhanced connection resilience with validator state persistence across disconnections
+- ✅ More aggressive connection retry logic for validators (5 attempts vs 3 for non-validators)
+- ✅ Connection recovery detection prevents unnecessary "waiting for next epoch"
+- ✅ Validator state cache maintains processing continuity during network disruptions
 
 CRITICAL FIX IN v2.1.2:
 - 🚨 FIXED: Connection lag causing validators to miss early epoch detection window
@@ -39,8 +46,8 @@ Non-Validator Mode:
 
 Validator Mode:
 - Follows strict phase timing for epoch processing
-- Waits for next epoch ONLY if starting after block 10 (startup safety)
-- FIXED: Now handles connection lag and role transitions properly
+- Enhanced connection resilience prevents state loss during network issues
+- FIXED: Maintains validator state across connection failures
 - Must complete blockchain submission before block 95
 """
 
@@ -75,7 +82,7 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Orchestrator version
-ORCHESTRATOR_VERSION = "2.1.2"
+ORCHESTRATOR_VERSION = "2.1.3"
 
 # Setup logging
 logging.basicConfig(
@@ -108,6 +115,14 @@ class EpochOrchestrator:
         self.availability_completed = False  # Track availability maintenance
         self.profiles_reconstructed = False
         self.blockchain_submitted = False
+        
+        # Enhanced state persistence across connection failures
+        self.validator_state_cache = {
+            'last_known_epoch': None,
+            'last_known_validator_status': False,
+            'last_successful_connection': None,
+            'validator_epoch_start': None,  # Track when we became validator
+        }
         
         # Safety mechanism for mid-epoch startup
         self.startup_epoch = None
@@ -181,15 +196,57 @@ class EpochOrchestrator:
         return time_since_failure >= backoff_delay
     
     def record_connection_success(self):
-        """Record successful connection, reset failure count."""
+        """Record successful connection, reset failure count and update state cache."""
         self.connection_failures = 0
         self.last_failure_time = 0
+        
+        # Update state cache with successful connection
+        self.validator_state_cache['last_successful_connection'] = time.time()
     
     def record_connection_failure(self):
         """Record connection failure, increment failure count."""
         self.connection_failures += 1
         self.last_failure_time = time.time()
         logger.warning(f"Connection failure #{self.connection_failures}, next attempt in {self.get_backoff_delay()}s")
+        
+        # Log state cache for debugging connection issues
+        if self.validator_state_cache['last_known_validator_status']:
+            logger.info(f"📋 Validator state cache: Was validator in epoch {self.validator_state_cache['last_known_epoch']}")
+    
+    def update_validator_state_cache(self, epoch: int, is_validator: bool):
+        """Update the validator state cache with current information."""
+        # Track when we become validator
+        if is_validator and not self.validator_state_cache['last_known_validator_status']:
+            self.validator_state_cache['validator_epoch_start'] = epoch
+            logger.info(f"📝 Cached: Became validator in epoch {epoch}")
+        
+        self.validator_state_cache['last_known_epoch'] = epoch
+        self.validator_state_cache['last_known_validator_status'] = is_validator
+    
+    def is_validator_state_transition_recovery(self, current_epoch: int, is_validator: bool, block_position: int) -> bool:
+        """
+        Determine if this is a recovery from connection failure where we were already validator.
+        
+        Returns:
+            True if this is a connection recovery scenario (not true mid-epoch startup)
+        """
+        cache = self.validator_state_cache
+        
+        # If we have no cached state, this could be true startup
+        if cache['last_known_epoch'] is None:
+            return False
+        
+        # If we were validator in the same epoch before connection failure
+        if (cache['last_known_validator_status'] and 
+            cache['last_known_epoch'] == current_epoch and
+            is_validator and
+            cache['validator_epoch_start'] == current_epoch):
+            
+            logger.info(f"🔄 Connection recovery detected: Was validator in epoch {current_epoch} before connection failure")
+            logger.info(f"   Validator since epoch start, connection failed at block ~{block_position}")
+            return True
+        
+        return False
     
     def run_processor(self, processor_name: str, description: str) -> bool:
         """
@@ -762,6 +819,13 @@ class EpochOrchestrator:
                 self.startup_epoch = current_epoch
             return False
         
+        # ENHANCED FIX: Check if this is a connection recovery scenario
+        if self.is_validator_state_transition_recovery(current_epoch, True, block_position):
+            logger.info(f"🔗 Connection recovery: Resuming validator processing without waiting")
+            self.waiting_for_next_epoch = False
+            self.startup_epoch = current_epoch
+            return False
+        
         # ENHANCED FIX: If we became validator in this epoch (role transition), allow processing
         # This handles connection lag where we miss the early detection window
         if (hasattr(self, 'previous_epoch') and 
@@ -820,10 +884,27 @@ class EpochOrchestrator:
                         await asyncio.sleep(min(backoff_delay, self.block_check_interval))
                         continue
                     
-                    # Ensure we have a substrate connection
+                    # Ensure we have a substrate connection with enhanced retry logic
                     if self.substrate is None:
                         logger.info("🔗 Creating new substrate connection...")
-                        self.substrate = connect_substrate()
+                        
+                        # More aggressive retry for validators to minimize downtime
+                        max_connection_attempts = 5 if self.validator_state_cache['last_known_validator_status'] else 3
+                        
+                        for attempt in range(max_connection_attempts):
+                            try:
+                                self.substrate = connect_substrate()
+                                logger.info(f"✅ Substrate connection established (attempt {attempt + 1}/{max_connection_attempts})")
+                                break
+                            except Exception as e:
+                                if attempt < max_connection_attempts - 1:
+                                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                                    logger.warning(f"⚠️ Connection attempt {attempt + 1} failed: {e}")
+                                    logger.info(f"   Retrying in {wait_time}s...")
+                                    await asyncio.sleep(wait_time)
+                                else:
+                                    logger.error(f"❌ All {max_connection_attempts} connection attempts failed")
+                                    raise
                     
                     # Get current epoch and validator status with updated substrate connection
                     current_epoch, current_block, self.substrate = get_current_epoch_info(self.substrate)
@@ -855,6 +936,9 @@ class EpochOrchestrator:
                     previous_is_validator = getattr(self, 'is_validator', None)
                     self.is_validator = is_validator
                     
+                    # Update validator state cache for connection resilience
+                    self.update_validator_state_cache(current_epoch, is_validator)
+                    
                     # Log role transitions
                     if previous_is_validator is not None and previous_is_validator != is_validator:
                         role_from = "VALIDATOR" if previous_is_validator else "NON-VALIDATOR"
@@ -862,6 +946,13 @@ class EpochOrchestrator:
                         logger.info(f"🔄 Role transition detected: {role_from} → {role_to} in epoch {current_epoch}")
                         if is_validator:
                             logger.info(f"   Became validator at block position {block_position}/99")
+                    
+                    # Log connection recovery scenarios
+                    if (self.connection_failures > 0 and 
+                        self.validator_state_cache['last_known_validator_status'] == is_validator and
+                        is_validator):
+                        logger.info(f"🔗 Connection recovered: Maintaining validator role in epoch {current_epoch}")
+                        logger.info(f"   Validator state preserved across {self.connection_failures} connection failure(s)")
                     
                     self.epoch_start_block = epoch_start
                     last_epoch = current_epoch
