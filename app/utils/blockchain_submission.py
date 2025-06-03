@@ -290,7 +290,7 @@ def _submit_single_batch(
                     "files_size": files_size
                 }
                 formatted_miner_profiles.append(formatted_profile)
-                
+
                 # Log sample profiles for debugging (first 3)
                 if i < 3:
                     logger.debug(f"Formatted miner profile {i}: node_id={miner_node_id[:20]}..., "
@@ -391,12 +391,9 @@ def _submit_single_batch(
 async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any]]:
     """
     Collect storage requests that need to be submitted to the blockchain for closing.
-    These are the original pinning requests from the chain that need to be marked as fulfilled.
     
-    NOTE: The user_profile_cid now includes ALL files for the user, including NEW files
-    from storage requests. Files are assigned to miners during the main file assignment
-    process (blocks 51-80) or via fallback assignment during profile reconstruction
-    (blocks 81-95) to ensure no files are lost.
+    CRITICAL FIX: ALWAYS submit user profiles to keep chain updated, even if no storage requests.
+    Creates storage requests with empty hashes for users without pinning requests.
     
     Args:
         db_pool: Database connection pool
@@ -406,21 +403,19 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
     """
     try:
         async with db_pool.acquire() as conn:
-            # Get the original pinning requests that need to be closed
-            # paired with the user profile CIDs that have been published
+            # Get ALL user profiles that are published (not just those with pinning requests)
             query = """
             SELECT DISTINCT
-                pr.owner as storage_request_owner,
-                pr.request_hash as storage_request_file_hash,
+                pup.owner as storage_request_owner,
+                COALESCE(pr.request_hash, '') as storage_request_file_hash,  -- Empty string if no request
                 pup.files_size as file_size,
-                pup.cid as user_profile_cid  -- NEW reconstructed profile CID (not original)
-            FROM pinning_requests pr
-            JOIN pending_user_profile pup ON pup.owner = pr.owner
-            WHERE pup.status = 'published'  -- Only profiles that have been reconstructed and published
+                pup.cid as user_profile_cid
+            FROM pending_user_profile pup
+            LEFT JOIN pinning_requests pr ON pup.owner = pr.owner  -- LEFT JOIN to include all users
+            WHERE pup.status = 'published'
             AND pup.cid IS NOT NULL
             AND pup.files_size IS NOT NULL
-            AND pr.request_hash IS NOT NULL
-            ORDER BY pr.owner, pr.request_hash
+            ORDER BY pup.owner
             """
             
             rows = await conn.fetch(query)
@@ -429,23 +424,20 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
             for row in rows:
                 request = {
                     "storage_request_owner": row['storage_request_owner'],
-                    "storage_request_file_hash": row['storage_request_file_hash'],  # Original request hash from chain
-                    "file_size": row['file_size'] or 0,  # Total user profile size
-                    "user_profile_cid": row['user_profile_cid']  # Reconstructed user profile CID
+                    "storage_request_file_hash": row['storage_request_file_hash'] or '',  # Empty if no request
+                    "file_size": row['file_size'] or 0,
+                    "user_profile_cid": row['user_profile_cid']
                 }
                 requests.append(request)
             
-                # Log each request for verification
-                logger.debug(f"Storage request: {row['storage_request_owner']} -> "
-                           f"original_hash: {row['storage_request_file_hash'][:16]}... -> "
-                           f"new_profile_cid: {row['user_profile_cid']}")
+            logger.info(f"Collected {len(requests)} user profiles for blockchain submission")
             
-            logger.info(f"Collected {len(requests)} original storage requests for closing on blockchain")
-            if requests:
-                # Log a sample to verify we're using new profile CIDs
-                sample = requests[0]
-                logger.info(f"Sample request: owner={sample['storage_request_owner']}, "
-                          f"new_profile_cid={sample['user_profile_cid'][:16]}...")
+            # Count how many have actual storage requests vs. profile-only updates
+            actual_requests = sum(1 for r in requests if r['storage_request_file_hash'])
+            profile_only = len(requests) - actual_requests
+            
+            logger.info(f"  - {actual_requests} users with storage requests (closing requests)")
+            logger.info(f"  - {profile_only} users with profile-only updates (keeping chain current)")
             
             return requests
             

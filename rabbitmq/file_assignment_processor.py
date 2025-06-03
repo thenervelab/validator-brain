@@ -59,7 +59,7 @@ class FileAssignmentProcessor:
         self.replicas_per_file = int(os.getenv('REPLICAS_PER_FILE', '5'))
         self.max_files_per_batch = int(os.getenv('MAX_FILES_PER_BATCH', '100'))
         self.max_reassignments_per_batch = int(os.getenv('MAX_REASSIGNMENTS_PER_BATCH', '50'))
-        self.min_miner_health_score = float(os.getenv('MIN_MINER_HEALTH_SCORE', '70.0'))
+        self.min_miner_health_score = float(os.getenv('MIN_MINER_HEALTH_SCORE', '20.0'))
         self.new_miner_boost_days = int(os.getenv('NEW_MINER_BOOST_DAYS', '30'))
         self.new_miner_boost_factor = float(os.getenv('NEW_MINER_BOOST_FACTOR', '1.5'))
         
@@ -69,7 +69,7 @@ class FileAssignmentProcessor:
         
         # Pin check failure detection configuration
         self.pin_check_failure_threshold = float(os.getenv('PIN_CHECK_FAILURE_THRESHOLD', '50.0'))  # 50% success rate
-        self.recent_epochs_window = int(os.getenv('RECENT_EPOCHS_WINDOW', '3'))  # Look back 3 epochs
+        self.recent_epochs_window = int(os.getenv('RECENT_EPOCHS_WINDOW', '1'))  # Look back 3 epochs
         self.max_failing_replacements_per_batch = int(os.getenv('MAX_FAILING_REPLACEMENTS_PER_BATCH', '50'))  # Per batch
         
         # Track assignments within current batch for load balancing
@@ -503,36 +503,57 @@ class FileAssignmentProcessor:
         if not pending_files:
             logger.info("No pending files found for assignment")
             return 0, 0
-        
+
         logger.info(f"Found {len(pending_files)} files pending assignment")
         
+        # CRITICAL: Get minimum required miners from environment
+        min_required_miners = int(os.getenv('MIN_REQUIRED_MINERS', '5'))
+        logger.info(f"🎯 Minimum required miners per file: {min_required_miners}")
+
         successful_assignments = 0
         failed_assignments = 0
-        
+
         for file_info in pending_files:
             try:
                 cid = file_info['cid']
                 file_size = file_info['file_size_bytes'] or 0
                 owner = file_info['owner']
                 filename = file_info.get('filename', '')
-                
+
                 logger.info(f"Assigning new file {filename} ({cid[:16]}...) - Size: {file_size:,} bytes")
-                
+
                 # Select miners for this file
                 selected_miners = self.select_miners_for_file(available_miners, file_size)
-                
-                if not selected_miners:
-                    logger.error(f"No suitable miners found for file {cid}")
+
+                # CRITICAL VALIDATION: Check if we have enough miners
+                if len(selected_miners) < min_required_miners:
+                    logger.error(f"❌ INSUFFICIENT MINERS for file {cid}: Found {len(selected_miners)}, need {min_required_miners}")
+                    logger.error(f"   File: {filename} ({file_size:,} bytes)")
+                    logger.error(f"   Available miners: {len(available_miners)}")
+                    
+                    # Mark as failed in pending_assignment_file
+                    try:
+                        async with self.db_pool.acquire() as conn:
+                            await conn.execute("""
+                                UPDATE pending_assignment_file
+                                SET status = 'failed', 
+                                    error_message = $1,
+                                    processed_at = CURRENT_TIMESTAMP
+                                WHERE id = $2
+                            """, f"Insufficient available miners: {len(selected_miners)}/{min_required_miners} required", file_info['id'])
+                    except Exception as e:
+                        logger.error(f"Error marking pending file as failed: {e}")
+                    
                     failed_assignments += 1
                     continue
-                
+
                 if len(selected_miners) < self.replicas_per_file:
-                    logger.warning(f"Only assigned {len(selected_miners)} replicas for file {cid}, "
-                                 f"target was {self.replicas_per_file}")
-                
+                    logger.warning(f"⚠️ Only assigned {len(selected_miners)} replicas for file {cid}, "
+                                 f"target was {self.replicas_per_file} (minimum {min_required_miners} satisfied)")
+
                 # Update miner usage for future assignments in this batch
                 self.update_miner_usage(available_miners, selected_miners, file_size)
-                
+
                 # Prepare assignment data
                 assignment_data = {
                     'type': 'new_assignment',
@@ -545,19 +566,20 @@ class FileAssignmentProcessor:
                     'pending_file_id': file_info['id'],
                     'timestamp': datetime.utcnow().isoformat()
                 }
-                
+
                 # Queue for processing
                 await self.queue_assignment_task(assignment_data)
                 successful_assignments += 1
-                
-                logger.info(f"Successfully assigned file {cid[:16]}... to {len(selected_miners)} miners: "
+
+                logger.info(f"✅ Successfully queued assignment for file {cid[:16]}... to {len(selected_miners)} miners: "
                            f"{', '.join(selected_miners[:3])}{'...' if len(selected_miners) > 3 else ''}")
-                
+
             except Exception as e:
-                logger.error(f"Error processing file {file_info.get('cid', 'unknown')}: {e}")
+                logger.error(f"❌ Error processing file {file_info.get('cid', 'unknown')}: {e}")
                 failed_assignments += 1
                 continue
-        
+
+        logger.info(f"📊 Assignment Summary: {successful_assignments} successful, {failed_assignments} failed (insufficient miners)")
         return successful_assignments, failed_assignments
     
     async def process_reassignments(self, available_miners: List[Dict[str, Any]], current_epoch: int) -> tuple[int, int]:

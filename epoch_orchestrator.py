@@ -942,6 +942,16 @@ class EpochOrchestrator:
             if success:
                 self.assignment_completed = True
                 logger.info("✅ Phase 3 complete: File assignments")
+                
+                # CRITICAL: Run availability maintenance after assignment to fix any NULL assignments
+                if not self.availability_completed:
+                    logger.info("🛠️ Running availability maintenance after assignment to fix any remaining NULL assignments...")
+                    maintenance_success = await self.run_availability_maintenance()
+                    if maintenance_success:
+                        self.availability_completed = True
+                        logger.info("✅ Availability maintenance completed after assignment")
+                    else:
+                        logger.warning("⚠️ Availability maintenance failed after assignment")
             return
         
         # NORMAL TIMING: Phase 4: Profile Reconstruction (blocks 61-75)

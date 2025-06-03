@@ -66,27 +66,51 @@ class FileAssignmentConsumer:
     
     async def process_new_assignment(self, assignment_data: Dict[str, Any]) -> bool:
         """
-        Process a new file assignment task.
+        Process a new file assignment.
         
-        Args:
-            assignment_data: Assignment data from the queue
-            
-        Returns:
-            True if processed successfully, False otherwise
+        CRITICAL FIX: Reject assignments with insufficient miners and don't save NULL assignments.
+        Only save complete assignments with at least minimum required miners.
         """
-        cid = assignment_data.get('cid')
-        owner = assignment_data.get('owner')
-        filename = assignment_data.get('filename', '')
-        file_size_bytes = assignment_data.get('file_size_bytes', 0)
-        assigned_miners = assignment_data.get('assigned_miners', [])
-        epoch = assignment_data.get('epoch', 0)
-        pending_file_id = assignment_data.get('pending_file_id')
+        try:
+            cid = assignment_data['cid']
+            owner = assignment_data['owner']
+            filename = assignment_data.get('filename', '')
+            file_size_bytes = assignment_data.get('file_size_bytes', 0)
+            assigned_miners = assignment_data.get('assigned_miners', [])
+            pending_file_id = assignment_data.get('pending_file_id')
+            
+            # Filter out None values from assigned miners
+            valid_miners = [m for m in assigned_miners if m is not None and m.strip()]
+            
+            # CRITICAL VALIDATION: Require minimum miners
+            min_required_miners = int(os.getenv('MIN_REQUIRED_MINERS', '3'))  # Default 3, can be configured
+            
+            if len(valid_miners) < min_required_miners:
+                logger.error(f"❌ REJECTED assignment for file {cid}: Only {len(valid_miners)} valid miners, need minimum {min_required_miners}")
+                logger.error(f"   File: {filename} ({file_size_bytes:,} bytes)")
+                logger.error(f"   Valid miners: {valid_miners}")
+                
+                # Mark pending file as failed with specific error
+                if pending_file_id:
+                    try:
+                        async with self.db_pool.acquire() as conn:
+                            await conn.execute("""
+                                UPDATE pending_assignment_file
+                                SET status = 'failed', 
+                                    error_message = $1,
+                                    processed_at = CURRENT_TIMESTAMP
+                                WHERE id = $2
+                            """, f"Insufficient miners: {len(valid_miners)}/{min_required_miners} required", pending_file_id)
+                    except Exception as e:
+                        logger.error(f"Error marking pending file as failed: {e}")
+                
+                return False
+            
+            logger.info(f"✅ Processing assignment for file {cid}: {len(valid_miners)} valid miners (≥{min_required_miners} required)")
         
-        if not cid or not owner or not assigned_miners:
-            logger.error(f"Invalid assignment data: missing cid, owner, or assigned_miners. Data: {assignment_data}")
+        except Exception as e:
+            logger.error(f"Error validating assignment for file {cid}: {e}")
             return False
-        
-        logger.info(f"Processing new assignment for file {filename} ({cid[:16]}...) to {len(assigned_miners)} miners")
         
         try:
             async with self.db_pool.acquire() as conn:
@@ -100,10 +124,10 @@ class FileAssignmentConsumer:
                             size = EXCLUDED.size
                     """, cid, filename, file_size_bytes)
                     
-                    # 2. Prepare miner assignments (pad to 5 miners)
-                    miners_padded = (assigned_miners + [None] * 5)[:5]
+                    # 2. Prepare miner assignments (pad ONLY valid miners to 5 slots)
+                    miners_padded = (valid_miners + [None] * 5)[:5]
                     
-                    # 3. Insert/update file assignments
+                    # 3. Insert/update file assignments (only with valid miners)
                     await conn.execute("""
                         INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -127,20 +151,19 @@ class FileAssignmentConsumer:
                         """, pending_file_id)
                     
                     # 5. Update miner stats for assigned miners
-                    for miner_id in assigned_miners:
-                        if miner_id:  # Skip None values
-                            await conn.execute("""
-                                INSERT INTO miner_stats (
-                                    node_id, total_files_pinned, total_files_size_bytes, updated_at
-                                )
-                                VALUES ($1, 1, $2, NOW())
-                                ON CONFLICT (node_id) DO UPDATE SET
-                                    total_files_pinned = miner_stats.total_files_pinned + 1,
-                                    total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
-                                    updated_at = NOW()
-                            """, miner_id, file_size_bytes)
+                    for miner_id in valid_miners:
+                        await conn.execute("""
+                            INSERT INTO miner_stats (
+                                node_id, total_files_pinned, total_files_size_bytes, updated_at
+                            )
+                            VALUES ($1, 1, $2, NOW())
+                            ON CONFLICT (node_id) DO UPDATE SET
+                                total_files_pinned = miner_stats.total_files_pinned + 1,
+                                total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
+                                updated_at = NOW()
+                        """, miner_id, file_size_bytes)
                     
-                    logger.info(f"Successfully assigned file {cid[:16]}... to miners: {', '.join(assigned_miners)}")
+                    logger.info(f"✅ Successfully assigned file {cid[:16]}... to {len(valid_miners)} miners: {', '.join(valid_miners)}")
                     return True
                     
         except Exception as e:

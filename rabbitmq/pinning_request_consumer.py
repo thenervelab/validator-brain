@@ -167,67 +167,69 @@ class PinningRequestConsumer:
                     request_data.get('last_charged_at', 0)
                 )
                 
-                # If we have a valid file CID, ensure it gets an assignment entry
+                # If we have a valid file CID, handle assignment properly
                 if file_cid:
-                    # Always create/update file_assignments entry for the file
-                    # This ensures new files can be picked up by the assignment phase
-                    
-                    if miner_ids:
-                        # Case 1: Storage request has pre-assigned miners (use them)
-                        miners_padded = (miner_ids + [None] * 5)[:5]
-                        logger.info(f"Creating assignment with {len(miner_ids)} pre-assigned miners")
-                    else:
-                        # Case 2: New storage request with no miners (create empty assignment for assignment phase)
-                        miners_padded = [None, None, None, None, None]
-                        logger.info(f"Creating empty assignment entry for new file - will be assigned in assignment phase")
-                    
-                    await conn.execute("""
-                        INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        ON CONFLICT (cid) DO UPDATE SET
-                            owner = EXCLUDED.owner,
-                            miner1 = EXCLUDED.miner1,
-                            miner2 = EXCLUDED.miner2,
-                            miner3 = EXCLUDED.miner3,
-                            miner4 = EXCLUDED.miner4,
-                            miner5 = EXCLUDED.miner5,
-                            updated_at = CURRENT_TIMESTAMP
-                    """, file_cid, owner, miners_padded[0], miners_padded[1], 
-                        miners_padded[2], miners_padded[3], miners_padded[4])
-                    
-                    # Also ensure the file exists in the files table
+                    # Always ensure the file exists in the files table
                     file_name = request_data.get('file_name', '') or f"file_{file_cid[:8]}"
                     await conn.execute("""
                         INSERT INTO files (cid, name, owner)
                         VALUES ($1, $2, $3)
                         ON CONFLICT (cid) DO UPDATE SET
-                            name = COALESCE(NULLIF(files.name, ''), EXCLUDED.name),
-                            updated_at = CURRENT_TIMESTAMP
+                            name = EXCLUDED.name,
+                            owner = EXCLUDED.owner
                     """, file_cid, file_name, owner)
                     
-                    logger.info(f"Ensured file {file_cid[:16]}... exists in files table")
-                else:
-                    logger.warning(f"No valid file CID extracted from request {request_hash[:16] if request_hash else 'unknown'}...")
-                
-                # Record that we've processed this request
-                await conn.execute("""
-                    INSERT INTO processed_pinning_requests (request_hash, miner_count)
-                    VALUES ($1, $2)
-                    ON CONFLICT (request_hash) DO UPDATE SET
-                        processed_at = CURRENT_TIMESTAMP,
-                        miner_count = EXCLUDED.miner_count
-                """, request_hash, miner_count)
-                
-                logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}...")
-                if file_cid:
+                    if miner_ids and len(miner_ids) >= 3:  # Have sufficient pre-assigned miners
+                        # Case 1: Storage request has sufficient pre-assigned miners (use them)
+                        miners_padded = (miner_ids + [None] * 5)[:5]
+                        logger.info(f"✅ Creating assignment with {len(miner_ids)} pre-assigned miners")
+                        
+                        await conn.execute("""
+                            INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            ON CONFLICT (cid) DO UPDATE SET
+                                owner = EXCLUDED.owner,
+                                miner1 = EXCLUDED.miner1,
+                                miner2 = EXCLUDED.miner2,
+                                miner3 = EXCLUDED.miner3,
+                                miner4 = EXCLUDED.miner4,
+                                miner5 = EXCLUDED.miner5,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, file_cid, owner, miners_padded[0], miners_padded[1], 
+                            miners_padded[2], miners_padded[3], miners_padded[4])
+                    else:
+                        # Case 2: Insufficient or no miners - queue for assignment phase  
+                        logger.info(f"📋 Queuing file for assignment phase (has {len(miner_ids)} miners, need ≥3)")
+                        
+                        # Add to pending_assignment_file for proper assignment
+                        await conn.execute("""
+                            INSERT INTO pending_assignment_file (cid, owner, filename, status)
+                            VALUES ($1, $2, $3, 'pending')
+                            ON CONFLICT (cid) DO UPDATE SET
+                                owner = EXCLUDED.owner,
+                                filename = EXCLUDED.filename,
+                                status = 'pending'
+                        """, file_cid, owner, file_name)
+                        
+                        # DO NOT create file_assignments entry with NULL miners
+                        logger.info(f"✅ File queued for assignment phase - will get proper miners during assignment")
+                    
+                    # Record that we've processed this request
+                    await conn.execute("""
+                        INSERT INTO processed_pinning_requests (request_hash, miner_count)
+                        VALUES ($1, $2)
+                        ON CONFLICT (request_hash) DO UPDATE SET
+                            processed_at = CURRENT_TIMESTAMP,
+                            miner_count = EXCLUDED.miner_count
+                    """, request_hash, miner_count)
+                    
+                    logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}...")
                     if miner_ids:
                         logger.info(f"   📋 Created assignment with {miner_count} pre-assigned miners")
                     else:
                         logger.info(f"   📝 Created empty assignment entry - miners will be assigned in assignment phase")
                     logger.info(f"   📁 File: {file_cid[:16]}... added to assignment queue")
-                else:
-                    logger.info(f"   ⚠️ No file CID found - only recorded pinning request")
-                return True
+                    return True
                 
         except Exception as e:
             logger.error(f"Error processing pinning request for {owner} (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")
