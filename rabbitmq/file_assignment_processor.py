@@ -223,20 +223,25 @@ class FileAssignmentProcessor:
     
     def calculate_miner_score(self, miner: Dict[str, Any]) -> float:
         """
-        Calculate a score for miner selection based on capacity, health, registration date, and current load.
-        
-        Higher score = better candidate for assignment
+        Calculate a score for miner selection based on multiple factors.
+        Higher score = better candidate for file assignment.
         """
-        # Basic capacity scoring with improved logic
-        storage_capacity = miner['storage_capacity_bytes']
+        # Convert database decimal values to float to avoid decimal/float division errors
+        storage_capacity = float(miner['storage_capacity_bytes'])
+        used_storage_bytes = float(miner['used_storage_bytes'])
+        total_files_size_bytes = float(miner['total_files_size_bytes'])
+        total_files_pinned = float(miner['total_files_pinned'])
+        health_score_value = float(miner['health_score'])
         
         # Use actual IPFS repo size as primary indicator of usage
-        ipfs_repo_size = miner['used_storage_bytes']  # from node_metrics.ipfs_repo_size
-        calculated_size = miner['total_files_size_bytes']  # from our miner_stats
+        ipfs_repo_size = used_storage_bytes  # from node_metrics.ipfs_repo_size
+        calculated_size = total_files_size_bytes  # from our miner_stats
         
         # Use the higher value as a safety measure, but prefer actual IPFS data
         if ipfs_repo_size > 0:
+            # IPFS repo size is available and non-zero, use it as primary
             used_storage = ipfs_repo_size
+            # But ensure it's at least as much as our calculated size
             if calculated_size > ipfs_repo_size:
                 used_storage = calculated_size
         else:
@@ -251,16 +256,16 @@ class FileAssignmentProcessor:
         storage_score = available_storage / storage_capacity
         
         # File count score (0-1): prefer miners with fewer files
-        file_count = miner['total_files_pinned']
+        file_count = total_files_pinned
         # Normalize file count (assume 1000 files as "full")
         file_count_normalized = min(1.0, file_count / 1000.0)
         file_score = 1.0 - file_count_normalized
         
         # Health score (0-1)
-        health_score = min(1.0, miner['health_score'] / 100.0)
+        health_score = min(1.0, health_score_value / 100.0)
         
         # New miner boost: give preference to recently registered miners
-        days_since_registration = miner.get('days_since_registration', 365)
+        days_since_registration = float(miner.get('days_since_registration', 365))
         if days_since_registration <= self.new_miner_boost_days:
             # Linear boost from max factor to 1.0 over the boost period
             new_miner_boost = self.new_miner_boost_factor - (
