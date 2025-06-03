@@ -126,11 +126,93 @@ CREATE TABLE IF NOT EXISTS miner_stats (
     FOREIGN KEY (node_id) REFERENCES registration(node_id) ON DELETE CASCADE
 );
 
+-- System events table: tracks important system events like rebalancing
+CREATE TABLE IF NOT EXISTS system_events (
+    id SERIAL PRIMARY KEY,
+    event_type VARCHAR(100) NOT NULL,
+    event_data JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Files table: stores file metadata
+CREATE TABLE IF NOT EXISTS files (
+    cid VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(500),
+    size BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- File assignments table: tracks which miners are assigned to which files
+CREATE TABLE IF NOT EXISTS file_assignments (
+    cid VARCHAR(255) PRIMARY KEY,
+    owner VARCHAR(100) NOT NULL,
+    miner1 VARCHAR(100),
+    miner2 VARCHAR(100),
+    miner3 VARCHAR(100),
+    miner4 VARCHAR(100),
+    miner5 VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (cid) REFERENCES files(cid) ON DELETE CASCADE,
+    FOREIGN KEY (miner1) REFERENCES registration(node_id) ON DELETE SET NULL,
+    FOREIGN KEY (miner2) REFERENCES registration(node_id) ON DELETE SET NULL,
+    FOREIGN KEY (miner3) REFERENCES registration(node_id) ON DELETE SET NULL,
+    FOREIGN KEY (miner4) REFERENCES registration(node_id) ON DELETE SET NULL,
+    FOREIGN KEY (miner5) REFERENCES registration(node_id) ON DELETE SET NULL
+);
+
+-- Pending assignment file table: temporary storage for files awaiting assignment
+CREATE TABLE IF NOT EXISTS pending_assignment_file (
+    id SERIAL PRIMARY KEY,
+    cid VARCHAR(255) NOT NULL,
+    owner VARCHAR(100) NOT NULL,
+    filename VARCHAR(500),
+    file_size_bytes BIGINT,
+    status VARCHAR(50) DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(cid, owner)
+);
+
+-- Pinning requests table: tracks pinning requests
+CREATE TABLE IF NOT EXISTS pinning_requests (
+    id SERIAL PRIMARY KEY,
+    request_hash VARCHAR(255),
+    owner VARCHAR(100) NOT NULL,
+    file_hash VARCHAR(255),
+    file_name VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Epoch submissions table: tracks blockchain submissions per epoch
+CREATE TABLE IF NOT EXISTS epoch_submissions (
+    epoch BIGINT PRIMARY KEY,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    miner_count INTEGER NOT NULL DEFAULT 0,
+    success BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 -- Create indexes for frequent query patterns
 CREATE INDEX idx_miner_epoch_health_epoch ON miner_epoch_health(epoch);
 CREATE INDEX idx_miner_profile_miner ON miner_profile(miner_node_id);
 CREATE INDEX idx_storage_requests_status ON storage_requests(status);
 CREATE INDEX idx_registration_node_type ON registration(node_type);
+
+-- Create index for system events
+CREATE INDEX idx_system_events_type_time ON system_events(event_type, created_at);
+CREATE INDEX idx_system_events_created_at ON system_events(created_at);
+
+-- Create indexes for new tables
+CREATE INDEX idx_files_cid ON files(cid);
+CREATE INDEX idx_files_size ON files(size);
+CREATE INDEX idx_file_assignments_owner ON file_assignments(owner);
+CREATE INDEX idx_file_assignments_miners ON file_assignments(miner1, miner2, miner3, miner4, miner5);
+CREATE INDEX idx_pending_assignment_file_status ON pending_assignment_file(status);
+CREATE INDEX idx_pending_assignment_file_owner ON pending_assignment_file(owner);
+CREATE INDEX idx_pinning_requests_owner ON pinning_requests(owner);
+CREATE INDEX idx_pinning_requests_file_hash ON pinning_requests(file_hash);
+CREATE INDEX idx_epoch_submissions_epoch ON epoch_submissions(epoch);
 
 -- Functions to update timestamps automatically
 CREATE OR REPLACE FUNCTION update_timestamp()
@@ -164,6 +246,19 @@ FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 CREATE TRIGGER update_current_epoch_validator_timestamp
 BEFORE UPDATE ON current_epoch_validator
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+-- Create triggers for new tables
+CREATE TRIGGER update_files_timestamp
+BEFORE UPDATE ON files
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_file_assignments_timestamp
+BEFORE UPDATE ON file_assignments
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_pending_assignment_file_timestamp
+BEFORE UPDATE ON pending_assignment_file
 FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 -- Create view for online miners with good health
@@ -218,6 +313,9 @@ DROP TRIGGER IF EXISTS update_user_profile_timestamp ON user_profile;
 DROP TRIGGER IF EXISTS update_miner_profile_timestamp ON miner_profile;
 DROP TRIGGER IF EXISTS update_miner_stats_timestamp ON miner_stats;
 DROP TRIGGER IF EXISTS update_registration_timestamp ON registration;
+DROP TRIGGER IF EXISTS update_files_timestamp ON files;
+DROP TRIGGER IF EXISTS update_file_assignments_timestamp ON file_assignments;
+DROP TRIGGER IF EXISTS update_pending_assignment_file_timestamp ON pending_assignment_file;
 
 -- Drop functions
 DROP FUNCTION IF EXISTS update_timestamp();
@@ -229,6 +327,12 @@ DROP INDEX IF EXISTS idx_miner_profile_miner;
 DROP INDEX IF EXISTS idx_miner_epoch_health_epoch;
 
 -- Drop tables in reverse order to avoid foreign key constraints
+DROP TABLE IF EXISTS epoch_submissions;
+DROP TABLE IF EXISTS pinning_requests;
+DROP TABLE IF EXISTS pending_assignment_file;
+DROP TABLE IF EXISTS file_assignments;
+DROP TABLE IF EXISTS files;
+DROP TABLE IF EXISTS system_events;
 DROP TABLE IF EXISTS miner_stats;
 DROP TABLE IF EXISTS storage_requests;
 DROP TABLE IF EXISTS user_profile;

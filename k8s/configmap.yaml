@@ -47,7 +47,7 @@ data:
   PIN_FAILURE_THRESHOLD: "2"         # Remove after 2 pin failures
   IPFS_TIMEOUT_SECONDS: "60"         # Timeout for ping operations (increased)
   IPFS_DHT_TIMEOUT_SECONDS: "120"    # Timeout for DHT provider lookups (increased)
-  EPOCH_MAX_FILES_PER_MINER: "50"    # Max files to check per miner in epoch health checks
+  EPOCH_MAX_FILES_PER_MINER: "10"    # Max files to check per miner in epoch health checks
   
   # File Assignment Configuration
   REPLICAS_PER_FILE: "5"             # Number of replicas per file

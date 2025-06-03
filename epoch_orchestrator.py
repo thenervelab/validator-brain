@@ -738,45 +738,95 @@ class EpochOrchestrator:
                     WHERE fa.miner1 IS NOT NULL 
                       AND NOT EXISTS (
                           SELECT 1 FROM miner_epoch_health meh 
+                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
                           WHERE meh.node_id = fa.miner1 
-                            AND meh.health_score >= 70.0
-                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                            AND (
+                                -- Check health score from miner_stats if available
+                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
+                                -- OR check recent activity in miner_epoch_health
+                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
+                                 CASE 
+                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
+                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
+                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
+                                 END >= 70.0)
+                            )
                       )
                     UNION
                     SELECT DISTINCT fa.miner2 as miner_id, 'miner2' as position FROM file_assignments fa
                     WHERE fa.miner2 IS NOT NULL 
                       AND NOT EXISTS (
                           SELECT 1 FROM miner_epoch_health meh 
+                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
                           WHERE meh.node_id = fa.miner2 
-                            AND meh.health_score >= 70.0
-                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                            AND (
+                                -- Check health score from miner_stats if available
+                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
+                                -- OR check recent activity in miner_epoch_health
+                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
+                                 CASE 
+                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
+                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
+                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
+                                 END >= 70.0)
+                            )
                       )
                     UNION
                     SELECT DISTINCT fa.miner3 as miner_id, 'miner3' as position FROM file_assignments fa
                     WHERE fa.miner3 IS NOT NULL 
                       AND NOT EXISTS (
                           SELECT 1 FROM miner_epoch_health meh 
+                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
                           WHERE meh.node_id = fa.miner3 
-                            AND meh.health_score >= 70.0
-                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                            AND (
+                                -- Check health score from miner_stats if available
+                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
+                                -- OR check recent activity in miner_epoch_health
+                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
+                                 CASE 
+                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
+                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
+                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
+                                 END >= 70.0)
+                            )
                       )
                     UNION
                     SELECT DISTINCT fa.miner4 as miner_id, 'miner4' as position FROM file_assignments fa
                     WHERE fa.miner4 IS NOT NULL 
                       AND NOT EXISTS (
                           SELECT 1 FROM miner_epoch_health meh 
+                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
                           WHERE meh.node_id = fa.miner4 
-                            AND meh.health_score >= 70.0
-                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                            AND (
+                                -- Check health score from miner_stats if available
+                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
+                                -- OR check recent activity in miner_epoch_health
+                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
+                                 CASE 
+                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
+                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
+                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
+                                 END >= 70.0)
+                            )
                       )
                     UNION
                     SELECT DISTINCT fa.miner5 as miner_id, 'miner5' as position FROM file_assignments fa
                     WHERE fa.miner5 IS NOT NULL 
                       AND NOT EXISTS (
                           SELECT 1 FROM miner_epoch_health meh 
+                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
                           WHERE meh.node_id = fa.miner5 
-                            AND meh.health_score >= 70.0
-                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                            AND (
+                                -- Check health score from miner_stats if available
+                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
+                                -- OR check recent activity in miner_epoch_health
+                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
+                                 CASE 
+                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
+                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
+                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
+                                 END >= 70.0)
+                            )
                       )
                 """)
                 
