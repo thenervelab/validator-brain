@@ -414,34 +414,124 @@ class EpochOrchestrator:
         return success
     
     async def process_pinning_requests(self) -> bool:
-        """Process pinning requests (validator only)."""
-        logger.info("📌 Processing pinning requests")
+        """Process pinning requests (validator only) - ENHANCED: Process ALL requests."""
+        logger.info("📌 Processing pinning requests (ENHANCED: Process ALL)")
         
-        success = self.run_processor(
-            'pinning_request_processor.py',
-            'Pinning requests processing'
-        )
+        # Run pinning request processor multiple times until all requests are processed
+        total_rounds = 0
+        max_rounds = 5  # Safety limit to prevent infinite loops
         
-        if success:
-            # Wait for pinning request consumer to process
-            await self.wait_for_queues_empty(['pinning_request'], 300)
+        while total_rounds < max_rounds:
+            total_rounds += 1
+            logger.info(f"📌 Pinning requests processing - Round {total_rounds}")
+            
+            # Check if there are still unprocessed requests
+            async with self.db_pool.acquire() as conn:
+                unprocessed_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM pinning_requests pr
+                    WHERE pr.file_hash IS NOT NULL 
+                    AND pr.file_hash != ''
+                    AND NOT EXISTS (
+                        SELECT 1 FROM pending_assignment_file paf 
+                        WHERE paf.owner = pr.owner 
+                        AND paf.cid = pr.file_hash
+                    )
+                """)
+                
+                logger.info(f"📊 Round {total_rounds}: {unprocessed_count} unprocessed pinning requests")
+                
+                if unprocessed_count == 0:
+                    logger.info("✅ ALL pinning requests processed successfully!")
+                    break
+            
+            success = self.run_processor(
+                'pinning_request_processor.py',
+                f'Pinning requests processing (Round {total_rounds})'
+            )
+            
+            if success:
+                # Wait for pinning request consumer to process
+                await self.wait_for_queues_empty(['pinning_request'], 300)
+                logger.info(f"✅ Pinning requests round {total_rounds} completed")
+            else:
+                logger.error(f"❌ Pinning requests round {total_rounds} failed")
+                return False
         
-        return success
+        if total_rounds >= max_rounds:
+            logger.warning(f"⚠️ Reached maximum rounds ({max_rounds}) for pinning requests processing")
+        
+        return True
     
     async def process_pinning_files(self) -> bool:
-        """Process individual pinning files."""
-        logger.info("📁 Processing pinning files")
+        """Process individual pinning files - ENHANCED: Process ALL files."""
+        logger.info("📁 Processing pinning files (ENHANCED: Process ALL)")
         
-        success = self.run_processor(
-            'pinning_file_processor.py',
-            'Pinning files processing'
-        )
+        # Run pinning file processor multiple times until all files are processed
+        total_rounds = 0
+        max_rounds = 10  # More rounds for individual files since there can be many
         
-        if success:
-            # Wait for pinning file consumer to process
-            await self.wait_for_queues_empty(['pinning_file_processing'], 600)
+        while total_rounds < max_rounds:
+            total_rounds += 1
+            logger.info(f"📁 Pinning files processing - Round {total_rounds}")
+            
+            # Check if there are still unprocessed pinning requests with files
+            async with self.db_pool.acquire() as conn:
+                unprocessed_files = await conn.fetchval("""
+                    SELECT COUNT(*) FROM pinning_requests pr
+                    WHERE pr.file_hash IS NOT NULL 
+                    AND pr.file_hash != ''
+                    AND NOT EXISTS (
+                        SELECT 1 FROM pending_assignment_file paf 
+                        WHERE paf.owner = pr.owner 
+                        AND paf.cid = pr.file_hash
+                    )
+                """)
+                
+                # Also check for files in the processing queue
+                pending_assignments = await conn.fetchval("""
+                    SELECT COUNT(*) FROM pending_assignment_file 
+                    WHERE status = 'pending'
+                """)
+                
+                logger.info(f"📊 Round {total_rounds}: {unprocessed_files} unprocessed files, {pending_assignments} pending assignments")
+                
+                if unprocessed_files == 0 and pending_assignments == 0:
+                    logger.info("✅ ALL pinning files processed successfully!")
+                    break
+            
+            success = self.run_processor(
+                'pinning_file_processor.py',
+                f'Pinning files processing (Round {total_rounds})'
+            )
+            
+            if success:
+                # Wait for pinning file consumer to process
+                await self.wait_for_queues_empty(['pinning_file_processing'], 600)
+                logger.info(f"✅ Pinning files round {total_rounds} completed")
+            else:
+                logger.error(f"❌ Pinning files round {total_rounds} failed")
+                return False
         
-        return success
+        if total_rounds >= max_rounds:
+            logger.warning(f"⚠️ Reached maximum rounds ({max_rounds}) for pinning files processing")
+        
+        # Final verification
+        async with self.db_pool.acquire() as conn:
+            processed_files = await conn.fetchval("""
+                SELECT COUNT(*) FROM pending_assignment_file 
+                WHERE status = 'processed' AND file_size_bytes IS NOT NULL
+            """)
+            failed_files = await conn.fetchval("""
+                SELECT COUNT(*) FROM pending_assignment_file 
+                WHERE status = 'failed'
+            """)
+            
+            logger.info(f"📊 FINAL PINNING RESULTS:")
+            logger.info(f"   ✅ Processed files: {processed_files}")
+            logger.info(f"   ❌ Failed files: {failed_files}")
+            logger.info(f"   🎯 Files ready for assignment: {processed_files}")
+        
+        return True
     
     async def assign_files(self) -> bool:
         """
@@ -451,8 +541,9 @@ class EpochOrchestrator:
         in file_assignments table, ensuring all files have complete 5-miner assignments.
         
         ENHANCED: Also performs network rebalancing during validator workflow.
+        ENHANCED: Processes ALL pending files in multiple rounds if needed.
         """
-        logger.info("📋 Starting file assignment phase")
+        logger.info("📋 Starting file assignment phase (ENHANCED: Process ALL files)")
         logger.info("🔧 Enhanced assignment: Fill ANY NULL miner columns in file_assignments")
         
         # Validate that health checks completed
@@ -503,50 +594,131 @@ class EpochOrchestrator:
                 logger.info(f"✅ Verified fresh health data available: {current_health_data} miners with recent health data")
         
         try:
-            # Use the scalable RabbitMQ-based file assignment system
-            logger.info("🚀 Starting RabbitMQ-based file assignment processor...")
-            success = self.run_processor(
-                'file_assignment_processor.py',
-                'File assignment processing'
-            )
+            # ENHANCED: Process assignments in multiple rounds until all files are handled
+            total_rounds = 0
+            max_rounds = 15  # Allow many rounds for large volumes (e.g., 450 files could need multiple rounds)
+            total_assignments_processed = 0
             
-            if success:
-                logger.info("✅ File assignment processor completed successfully")
+            while total_rounds < max_rounds:
+                total_rounds += 1
+                logger.info(f"📋 File assignment processing - Round {total_rounds}")
                 
-                # Wait for file assignment consumer to process all assignment tasks
-                logger.info("⏳ Waiting for file assignment consumer to process assignment tasks...")
-                await self.wait_for_queues_empty(['file_assignment_processing'], 600)  # 10 minute timeout
-                logger.info("✅ File assignment processing completed")
-                
-                # Verify assignments were completed
+                # Check if there are still files needing assignment
                 async with self.db_pool.acquire() as conn:
-                    incomplete_assignments = await conn.fetchval("""
+                    # Check for new files from pinning
+                    pending_new_files = await conn.fetchval("""
+                        SELECT COUNT(*) FROM pending_assignment_file paf
+                        WHERE paf.status = 'processed' 
+                          AND paf.file_size_bytes IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM file_assignments fa 
+                              WHERE fa.cid = paf.cid
+                          )
+                    """)
+                    
+                    # Check for files with NULL miners
+                    files_with_nulls = await conn.fetchval("""
                         SELECT COUNT(*) FROM file_assignments 
                         WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
                           OR miner4 IS NULL OR miner5 IS NULL
                     """)
                     
-                    if incomplete_assignments == 0:
-                        logger.info("🎉 ALL files now have complete 5-miner assignments!")
-                    else:
+                    total_files_needing_work = pending_new_files + files_with_nulls
+                    
+                    logger.info(f"📊 Round {total_rounds}: {pending_new_files} new files, {files_with_nulls} files with NULL miners")
+                    logger.info(f"    Total files needing work: {total_files_needing_work}")
+                    
+                    if total_files_needing_work == 0:
+                        logger.info("✅ ALL files have complete assignments!")
+                        break
+                
+                # Use the scalable RabbitMQ-based file assignment system
+                logger.info(f"🚀 Starting RabbitMQ-based file assignment processor (Round {total_rounds})...")
+                success = self.run_processor(
+                    'file_assignment_processor.py',
+                    f'File assignment processing (Round {total_rounds})'
+                )
+                
+                if success:
+                    logger.info(f"✅ File assignment processor round {total_rounds} completed successfully")
+                    
+                    # Wait for file assignment consumer to process all assignment tasks
+                    logger.info(f"⏳ Waiting for file assignment consumer to process assignment tasks (Round {total_rounds})...")
+                    await self.wait_for_queues_empty(['file_assignment_processing'], 600)  # 10 minute timeout
+                    logger.info(f"✅ File assignment processing round {total_rounds} completed")
+                    
+                    # Count what was processed in this round
+                    async with self.db_pool.acquire() as conn:
+                        current_assignments = await conn.fetchval("""
+                            SELECT COUNT(*) FROM file_assignments 
+                            WHERE miner1 IS NOT NULL AND miner2 IS NOT NULL AND miner3 IS NOT NULL 
+                              AND miner4 IS NOT NULL AND miner5 IS NOT NULL
+                        """)
+                    
+                    assignments_this_round = current_assignments - total_assignments_processed
+                    total_assignments_processed = current_assignments
+                    logger.info(f"📈 Round {total_rounds}: Processed {assignments_this_round} assignments (Total: {total_assignments_processed})")
+                    
+                else:
+                    logger.error(f"❌ File assignment processor round {total_rounds} failed")
+                    return False
+            
+            if total_rounds >= max_rounds:
+                logger.warning(f"⚠️ Reached maximum rounds ({max_rounds}) for file assignment processing")
+                logger.warning("   Some files may still need assignment - check for system issues")
+            
+            # Final verification of assignments
+            async with self.db_pool.acquire() as conn:
+                complete_assignments = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NOT NULL AND miner2 IS NOT NULL AND miner3 IS NOT NULL 
+                      AND miner4 IS NOT NULL AND miner5 IS NOT NULL
+                """)
+                
+                incomplete_assignments = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
+                      OR miner4 IS NULL OR miner5 IS NULL
+                """)
+                
+                pending_new_files = await conn.fetchval("""
+                    SELECT COUNT(*) FROM pending_assignment_file paf
+                    WHERE paf.status = 'processed' 
+                      AND paf.file_size_bytes IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM file_assignments fa 
+                          WHERE fa.cid = paf.cid
+                      )
+                """)
+                
+                logger.info(f"📊 FINAL ASSIGNMENT RESULTS:")
+                logger.info(f"   ✅ Complete assignments: {complete_assignments}")
+                logger.info(f"   ⚠️ Incomplete assignments: {incomplete_assignments}")
+                logger.info(f"   📁 Pending new files: {pending_new_files}")
+                logger.info(f"   🔄 Total rounds processed: {total_rounds}")
+                
+                if incomplete_assignments == 0 and pending_new_files == 0:
+                    logger.info("🎉 ALL files now have complete 5-miner assignments!")
+                else:
+                    if incomplete_assignments > 0:
                         logger.warning(f"⚠️ {incomplete_assignments} files still have incomplete assignments")
                         logger.warning("   Some files may not have enough available miners")
+                    if pending_new_files > 0:
+                        logger.warning(f"⚠️ {pending_new_files} new files still need assignment")
+                        logger.warning("   May need additional processing rounds")
                 
                 # ENHANCED: Run network rebalancing as part of validator workflow
-                logger.info("🔄 Running network rebalancing as part of validator file assignment...")
+                logger.info("🔄 Running targeted network rebalancing (only if offline miners detected)...")
                 rebalancing_success = await self.run_network_rebalancing()
                 
                 if rebalancing_success:
-                    logger.info("✅ Network rebalancing completed successfully")
+                    logger.info("✅ Network rebalancing check completed successfully")
                 else:
                     logger.warning("⚠️ Network rebalancing failed, but continuing (not critical)")
                 
                 logger.info("✅ File assignment completed successfully with RabbitMQ system")
                 logger.info("🎯 Files ready for profile reconstruction")
                 return True
-            else:
-                logger.error("❌ File assignment processor failed")
-                return False
                 
         except Exception as e:
             logger.error(f"❌ Error during file assignment: {e}")
@@ -554,33 +726,124 @@ class EpochOrchestrator:
     
     async def run_network_rebalancing(self) -> bool:
         """
-        Run network rebalancing to ensure fair distribution of files across miners.
-        Integrated into validator workflow during file assignment phase.
+        Run network rebalancing ONLY when there are offline/unhealthy miners.
+        This is targeted rebalancing - only when actually needed, not on every validator cycle.
         """
         try:
-            logger.info("🔄 Starting validator network rebalancing...")
+            # STEP 1: Check if rebalancing is actually needed
+            async with self.db_pool.acquire() as conn:
+                # Check for miners that have gone offline or become unhealthy
+                offline_miners = await conn.fetch("""
+                    SELECT DISTINCT fa.miner1 as miner_id, 'miner1' as position FROM file_assignments fa
+                    WHERE fa.miner1 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner1 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT DISTINCT fa.miner2 as miner_id, 'miner2' as position FROM file_assignments fa
+                    WHERE fa.miner2 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner2 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT DISTINCT fa.miner3 as miner_id, 'miner3' as position FROM file_assignments fa
+                    WHERE fa.miner3 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner3 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT DISTINCT fa.miner4 as miner_id, 'miner4' as position FROM file_assignments fa
+                    WHERE fa.miner4 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner4 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT DISTINCT fa.miner5 as miner_id, 'miner5' as position FROM file_assignments fa
+                    WHERE fa.miner5 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner5 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                """)
+                
+                offline_miner_count = len(offline_miners)
+                
+                # Check for recent rebalancing to avoid too frequent operations
+                recent_rebalancing = await conn.fetchval("""
+                    SELECT COUNT(*) FROM system_events 
+                    WHERE event_type = 'network_rebalancing' 
+                      AND created_at >= NOW() - INTERVAL '6 hours'
+                """)
+                
+                logger.info(f"🔍 Rebalancing assessment:")
+                logger.info(f"   Offline/unhealthy miners: {offline_miner_count}")
+                logger.info(f"   Recent rebalancing (last 6h): {recent_rebalancing}")
+                
+                # DECISION: Only rebalance if there are offline miners AND we haven't rebalanced recently
+                if offline_miner_count == 0:
+                    logger.info("✅ No offline miners detected - skipping rebalancing")
+                    return True  # Success, just nothing to do
+                
+                if recent_rebalancing > 0:
+                    logger.info(f"⏳ Recent rebalancing detected ({recent_rebalancing} in last 6h) - skipping to avoid over-rebalancing")
+                    return True  # Success, just avoiding too frequent rebalancing
+                
+                # Log details about offline miners
+                if offline_miners:
+                    offline_miner_ids = list(set([m['miner_id'] for m in offline_miners]))
+                    logger.warning(f"🚨 Found {len(offline_miner_ids)} offline miners needing rebalancing:")
+                    for miner_id in offline_miner_ids[:5]:  # Show first 5
+                        logger.warning(f"   - {miner_id} (offline/unhealthy)")
+                    
+                    if len(offline_miner_ids) > 5:
+                        logger.warning(f"   ... and {len(offline_miner_ids) - 5} more")
             
-            # Run the network rebalancing processor
+            # STEP 2: Run targeted rebalancing for offline miners
+            logger.info("🔄 Starting TARGETED network rebalancing for offline miners...")
+            
+            # Run the network rebalancing processor (it will handle the targeting)
             success = self.run_processor(
                 'network_rebalancing_processor.py',
-                'Network rebalancing'
+                'Targeted network rebalancing (offline miners)'
             )
             
             if success:
-                logger.info("✅ Network rebalancing processor completed")
+                logger.info("✅ Targeted network rebalancing processor completed")
                 
                 # Wait for rebalancing tasks to be processed by file assignment consumer
-                logger.info("⏳ Waiting for rebalancing tasks to be processed...")
+                logger.info("⏳ Waiting for targeted rebalancing tasks to be processed...")
                 await self.wait_for_queues_empty(['file_assignment_processing'], 300)  # 5 minute timeout
-                logger.info("✅ Network rebalancing tasks processed")
+                logger.info("✅ Targeted network rebalancing tasks processed")
                 
+                # Log rebalancing event for tracking
+                async with self.db_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO system_events (event_type, event_data, created_at)
+                        VALUES ('network_rebalancing', $1, NOW())
+                    """, f'{{"offline_miners": {offline_miner_count}, "trigger": "offline_miners"}}')
+                
+                logger.info(f"📝 Recorded rebalancing event (handled {offline_miner_count} offline miners)")
                 return True
             else:
-                logger.warning("⚠️ Network rebalancing processor failed")
+                logger.warning("⚠️ Targeted network rebalancing processor failed")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Error during network rebalancing: {e}")
+            logger.error(f"❌ Error during targeted network rebalancing: {e}")
             return False
     
     async def run_availability_maintenance(self) -> bool:

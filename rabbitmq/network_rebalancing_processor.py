@@ -297,13 +297,82 @@ class NetworkRebalancingProcessor:
         
         return overloaded_miners, underutilized_miners, stats
     
-    async def get_rebalance_candidates(self, overloaded_miners: List[str]) -> List[RebalanceCandidate]:
-        """Get files that could be moved from overloaded miners."""
-        if not overloaded_miners:
+    async def get_offline_miners_with_files(self) -> List[str]:
+        """
+        Get miners that have files assigned but are currently offline or unhealthy.
+        This is the targeted approach - only rebalance files from miners that are actually offline.
+        """
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT DISTINCT miner_id FROM (
+                    SELECT fa.miner1 as miner_id FROM file_assignments fa
+                    WHERE fa.miner1 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner1 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT fa.miner2 as miner_id FROM file_assignments fa
+                    WHERE fa.miner2 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner2 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT fa.miner3 as miner_id FROM file_assignments fa
+                    WHERE fa.miner3 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner3 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT fa.miner4 as miner_id FROM file_assignments fa
+                    WHERE fa.miner4 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner4 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                    UNION
+                    SELECT fa.miner5 as miner_id FROM file_assignments fa
+                    WHERE fa.miner5 IS NOT NULL 
+                      AND NOT EXISTS (
+                          SELECT 1 FROM miner_epoch_health meh 
+                          WHERE meh.node_id = fa.miner5 
+                            AND meh.health_score >= 70.0
+                            AND meh.last_activity_at >= NOW() - INTERVAL '4 hours'
+                      )
+                ) offline_miners
+            """)
+            
+            offline_miners = [row['miner_id'] for row in rows]
+            
+            if offline_miners:
+                logger.info(f"🚨 Found {len(offline_miners)} offline miners with file assignments:")
+                for miner_id in offline_miners[:5]:  # Show first 5
+                    logger.info(f"   - {miner_id} (offline/unhealthy)")
+                
+                if len(offline_miners) > 5:
+                    logger.info(f"   ... and {len(offline_miners) - 5} more")
+            else:
+                logger.info("✅ No offline miners found with file assignments")
+            
+            return offline_miners
+
+    async def get_files_from_offline_miners(self, offline_miners: List[str]) -> List[RebalanceCandidate]:
+        """Get all files assigned to offline miners for rebalancing."""
+        if not offline_miners:
             return []
         
         # Create placeholders for the query
-        placeholders = ','.join(f'${i+1}' for i in range(len(overloaded_miners)))
+        placeholders = ','.join(f'${i+1}' for i in range(len(offline_miners)))
         
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(f"""
@@ -313,12 +382,13 @@ class NetworkRebalancingProcessor:
                     f.size as size_bytes,
                     fa.owner,
                     fa.miner1, fa.miner2, fa.miner3, fa.miner4, fa.miner5,
-                    -- Calculate priority based on file size and miner load
+                    -- Priority based on file size - larger files get higher priority for faster network recovery
                     CASE 
-                        WHEN f.size > 100000000 THEN 10.0  -- Large files (>100MB) high priority
-                        WHEN f.size > 10000000 THEN 5.0    -- Medium files (>10MB) medium priority  
-                        ELSE 1.0                           -- Small files low priority
-                    END as base_priority
+                        WHEN f.size > 100000000 THEN 10.0  -- Large files (>100MB) - critical for storage balance
+                        WHEN f.size > 10000000 THEN 8.0    -- Medium files (>10MB) - important
+                        WHEN f.size > 1000000 THEN 5.0     -- Small files (>1MB) - normal priority
+                        ELSE 3.0                           -- Tiny files - lower priority but still move
+                    END as priority
                 FROM file_assignments fa
                 JOIN files f ON fa.cid = f.cid
                 WHERE (fa.miner1 IN ({placeholders}) OR fa.miner2 IN ({placeholders}) OR 
@@ -326,9 +396,9 @@ class NetworkRebalancingProcessor:
                        fa.miner5 IN ({placeholders}))
                   AND f.size IS NOT NULL
                   AND f.size > 0
-                ORDER BY base_priority DESC, f.size DESC
+                ORDER BY priority DESC, f.size DESC
                 LIMIT $100
-            """, *overloaded_miners, self.max_files_per_batch * 2)
+            """, *offline_miners, self.max_files_per_batch)
             
             candidates = []
             for row in rows:
@@ -338,24 +408,16 @@ class NetworkRebalancingProcessor:
                 ]
                 current_miners = [m for m in current_miners if m is not None]
                 
-                # Find which overloaded miner has this file
-                overloaded_miner = None
+                # Find which offline miner has this file
+                offline_miner = None
                 for miner in current_miners:
-                    if miner in overloaded_miners:
-                        overloaded_miner = miner
+                    if miner in offline_miners:
+                        offline_miner = miner
                         break
                 
-                if overloaded_miner:
+                if offline_miner:
                     size_mb = row['size_bytes'] / (1024 * 1024)
-                    if size_mb > 100:
-                        reason = f"Large file ({size_mb:.1f}MB) on overloaded miner"
-                        priority = row['base_priority'] * 2.0  # Boost large files
-                    elif size_mb > 10:
-                        reason = f"Medium file ({size_mb:.1f}MB) on overloaded miner"
-                        priority = row['base_priority'] * 1.5
-                    else:
-                        reason = f"File on overloaded miner"
-                        priority = row['base_priority']
+                    reason = f"Offline miner {offline_miner[:12]}... ({size_mb:.1f}MB file)"
                     
                     candidate = RebalanceCandidate(
                         cid=row['cid'],
@@ -363,15 +425,23 @@ class NetworkRebalancingProcessor:
                         size_bytes=row['size_bytes'],
                         owner=row['owner'],
                         current_miners=current_miners,
-                        overloaded_miner=overloaded_miner,
+                        overloaded_miner=offline_miner,  # Using this field for offline miner
                         reason=reason,
-                        priority=priority
+                        priority=row['priority']
                     )
                     candidates.append(candidate)
             
-            # Sort by priority (highest first)
+            # Sort by priority (highest first) - prioritize larger files for faster recovery
             candidates.sort(key=lambda c: c.priority, reverse=True)
-            return candidates[:self.max_files_per_batch]
+            logger.info(f"📁 Found {len(candidates)} files to move from offline miners")
+            
+            if candidates:
+                # Log some examples
+                for candidate in candidates[:3]:
+                    size_mb = candidate.size_bytes / (1024 * 1024)
+                    logger.info(f"   Priority {candidate.priority}: {candidate.filename} ({size_mb:.1f}MB) from {candidate.overloaded_miner[:12]}...")
+            
+            return candidates
     
     def select_target_miners(self, candidate: RebalanceCandidate, miner_loads: List[MinerLoad], 
                            underutilized_miners: List[str]) -> List[str]:
@@ -525,84 +595,121 @@ class NetworkRebalancingProcessor:
             logger.warning(f"Failed to record rebalancing run: {e}")
     
     async def perform_network_rebalancing(self) -> None:
-        """Main rebalancing function."""
+        """
+        TARGETED rebalancing function - only moves files from offline/unhealthy miners.
+        This ensures rebalancing only happens when actually needed, not on every validator cycle.
+        """
         try:
-            # Check if rebalancing should run
-            if not await self.should_run_rebalancing():
-                logger.info(f"⏳ Skipping rebalancing - interval not reached ({self.rebalance_interval_hours}h)")
+            logger.info("🔍 Starting TARGETED network rebalancing (offline miners only)...")
+            
+            # STEP 1: Check for offline miners with files
+            offline_miners = await self.get_offline_miners_with_files()
+            
+            if not offline_miners:
+                logger.info("✅ No offline miners found with file assignments - no rebalancing needed")
                 return
             
-            logger.info("🔄 Starting network rebalancing analysis...")
+            # STEP 2: Check if rebalancing should run (cooldown period)
+            if not await self.should_run_rebalancing():
+                logger.info(f"⏳ Skipping rebalancing - cooldown period not reached ({self.rebalance_interval_hours}h)")
+                logger.info(f"   Found {len(offline_miners)} offline miners but waiting for cooldown")
+                return
+            
+            logger.warning(f"🚨 OFFLINE MINERS DETECTED: {len(offline_miners)} miners need file redistribution")
             
             # Get current epoch
             current_epoch = self.get_current_epoch()
             
-            # Get miner loads
+            # Get all miner loads for target selection
             miner_loads = await self.get_miner_loads()
             if not miner_loads:
-                logger.warning("No miner loads found - skipping rebalancing")
+                logger.error("❌ No miner loads found - cannot perform rebalancing")
                 return
             
-            # Analyze distribution imbalance
-            overloaded_miners, underutilized_miners, stats = self.analyze_distribution_imbalance(miner_loads)
+            # Filter to get healthy miners for targets
+            healthy_miners = [load for load in miner_loads if load.health_score >= self.min_miner_health_score]
             
-            logger.info(f"📊 Network Distribution Analysis:")
-            logger.info(f"   Total miners: {stats['total_miners']}")
-            logger.info(f"   Miners with files: {stats['miners_with_files']}")
-            logger.info(f"   Average files per miner: {stats['avg_files_per_miner']:.1f}")
-            logger.info(f"   Average size per miner: {stats['avg_size_per_miner']/1024/1024:.1f} MB")
-            logger.info(f"   Overloaded miners: {stats['overloaded_count']}")
-            logger.info(f"   Underutilized miners: {stats['underutilized_count']}")
+            logger.info(f"📊 Rebalancing Context:")
+            logger.info(f"   Offline miners with files: {len(offline_miners)}")
+            logger.info(f"   Available healthy miners: {len(healthy_miners)}")
+            logger.info(f"   Target health threshold: {self.min_miner_health_score}")
             
-            if not overloaded_miners:
-                logger.info("✅ Network is well balanced - no rebalancing needed")
-                await self.record_rebalancing_run(stats, 0)
+            if len(healthy_miners) < 5:  # Need at least 5 healthy miners for file assignments
+                logger.error(f"❌ Insufficient healthy miners ({len(healthy_miners)}) for safe rebalancing")
+                logger.error("   Need at least 5 healthy miners to maintain file redundancy")
                 return
             
-            logger.info(f"🎯 Found {len(overloaded_miners)} overloaded miners needing rebalancing")
-            logger.info(f"📈 Available {len(underutilized_miners)} underutilized miners for redistribution")
+            # STEP 3: Get files from offline miners that need redistribution
+            candidates = await self.get_files_from_offline_miners(offline_miners)
             
-            # Get rebalance candidates
-            candidates = await self.get_rebalance_candidates(overloaded_miners)
             if not candidates:
-                logger.info("No suitable files found for rebalancing")
-                await self.record_rebalancing_run(stats, 0)
+                logger.info("📁 No files found on offline miners - rebalancing complete")
+                await self.record_rebalancing_run({
+                    'offline_miners': len(offline_miners),
+                    'healthy_miners': len(healthy_miners),
+                    'files_found': 0
+                }, 0)
                 return
             
-            logger.info(f"🔍 Found {len(candidates)} candidate files for rebalancing")
+            logger.warning(f"📁 Found {len(candidates)} files that need redistribution from offline miners")
             
-            # Plan rebalancing actions
+            # STEP 4: Plan rebalancing actions (target healthy miners)
+            underutilized_miners = [load.miner_id for load in healthy_miners 
+                                  if load.storage_utilization < 0.5 and 
+                                     load.available_storage_bytes > self.min_available_space_mb * 1024 * 1024]
+            
+            logger.info(f"🎯 Target miners for redistribution: {len(underutilized_miners)} underutilized, {len(healthy_miners)} total healthy")
+            
             actions = await self.plan_rebalancing_actions(candidates, miner_loads, underutilized_miners)
             
             if not actions:
-                logger.info("No viable rebalancing actions planned")
-                await self.record_rebalancing_run(stats, 0)
+                logger.warning("⚠️ No viable rebalancing actions planned - may need manual intervention")
+                logger.warning("   Check if healthy miners have sufficient storage capacity")
+                await self.record_rebalancing_run({
+                    'offline_miners': len(offline_miners),
+                    'healthy_miners': len(healthy_miners),
+                    'files_found': len(candidates),
+                    'viable_actions': 0
+                }, 0)
                 return
             
-            logger.info(f"📋 Planned {len(actions)} rebalancing actions:")
+            # STEP 5: Execute rebalancing actions
+            logger.warning(f"🔄 EXECUTING {len(actions)} targeted rebalancing actions for offline miners:")
             
             total_files_moved = 0
             total_size_moved = 0
+            miners_helped = set()
             
             # Queue rebalancing tasks
             for action in actions:
                 size_mb = action.size_bytes / (1024 * 1024)
-                logger.info(f"   📁 {action.filename} ({size_mb:.1f}MB): {action.from_miner[:12]}... → {action.to_miner[:12]}...")
+                logger.warning(f"   📁 {action.filename} ({size_mb:.1f}MB): OFFLINE {action.from_miner[:12]}... → HEALTHY {action.to_miner[:12]}...")
                 
                 await self.queue_rebalancing_task(action, current_epoch)
                 total_files_moved += 1
                 total_size_moved += action.size_bytes
+                miners_helped.add(action.from_miner)
             
-            logger.info(f"🎉 Rebalancing Summary:")
-            logger.info(f"   Files queued for move: {total_files_moved}")
-            logger.info(f"   Total size to move: {total_size_moved/1024/1024:.1f} MB")
-            logger.info(f"   Estimated time: 5-10 minutes for processing")
+            logger.warning(f"🎉 TARGETED Rebalancing Summary:")
+            logger.warning(f"   Files redistributed from offline miners: {total_files_moved}")
+            logger.warning(f"   Total size redistributed: {total_size_moved/1024/1024:.1f} MB")
+            logger.warning(f"   Offline miners assisted: {len(miners_helped)}")
+            logger.warning(f"   Estimated processing time: 5-10 minutes")
+            logger.warning(f"   🎯 This was TARGETED rebalancing - only for offline miners!")
             
-            # Record the rebalancing run
-            await self.record_rebalancing_run(stats, len(actions))
+            # Record the targeted rebalancing run
+            await self.record_rebalancing_run({
+                'type': 'targeted_offline_miners',
+                'offline_miners': len(offline_miners),
+                'healthy_miners': len(healthy_miners),
+                'files_found': len(candidates),
+                'files_moved': total_files_moved,
+                'size_moved_mb': total_size_moved/1024/1024,
+                'miners_helped': len(miners_helped)
+            }, len(actions))
             
         except Exception as e:
-            logger.error(f"Error during network rebalancing: {e}")
+            logger.error(f"❌ Error during TARGETED network rebalancing: {e}")
             raise
     
     async def close(self):

@@ -51,11 +51,15 @@ data:
   
   # File Assignment Configuration
   REPLICAS_PER_FILE: "5"             # Number of replicas per file
-  MAX_FILES_PER_BATCH: "100"         # Files processed per batch
-  MAX_REASSIGNMENTS_PER_BATCH: "50"  # Reassignments processed per batch
+  MAX_FILES_PER_BATCH: "1000"        # Files processed per batch (increased for large pinning volumes)
+  MAX_REASSIGNMENTS_PER_BATCH: "500" # Reassignments processed per batch (increased)
   MIN_MINER_HEALTH_SCORE: "70.0"     # Minimum health score for assignment
   NEW_MINER_BOOST_DAYS: "30"         # Days for new miner boost
   NEW_MINER_BOOST_FACTOR: "1.5"      # Boost factor for new miners
+  
+  # Pinning Configuration (for handling large volumes)
+  PINNING_MAX_FILES_PER_BATCH: "2000" # Max files to process in pinning operations
+  PINNING_RETRY_ATTEMPTS: "3"         # Number of retry attempts for pinning
   
   # Availability Manager Configuration
   MIN_REPLICAS: "3"                  # Minimum replicas per file
