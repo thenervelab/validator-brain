@@ -175,6 +175,8 @@ class FileAssignmentConsumer:
         """
         Process a file reassignment task (filling empty slots).
         
+        ENHANCED: Better handling of completely empty assignments and improved logging.
+        
         Args:
             assignment_data: Reassignment data from the queue
             
@@ -187,12 +189,19 @@ class FileAssignmentConsumer:
         file_size_bytes = assignment_data.get('file_size_bytes', 0)
         current_miners = assignment_data.get('current_miners', [])
         new_miners = assignment_data.get('new_miners', [])
+        null_miner_count = assignment_data.get('null_miner_count', 0)  # From enhanced processor
         
         if not cid or not owner or not new_miners:
             logger.error(f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}")
             return False
         
-        logger.info(f"Processing reassignment for file {filename} ({cid[:16]}...) - adding {len(new_miners)} miners")
+        # Enhanced logging for NULL miner fixes
+        if null_miner_count == 5:
+            logger.info(f"🎯 Processing COMPLETELY EMPTY assignment for file {filename} ({cid[:16]}...) - filling all 5 slots")
+        elif null_miner_count > 0:
+            logger.info(f"📋 Processing PARTIAL reassignment for file {filename} ({cid[:16]}...) - filling {null_miner_count} empty slots")
+        else:
+            logger.info(f"🔄 Processing reassignment for file {filename} ({cid[:16]}...) - adding {len(new_miners)} miners")
         
         try:
             async with self.db_pool.acquire() as conn:
@@ -216,6 +225,10 @@ class FileAssignmentConsumer:
                         current_assignment['miner5']
                     ]
                     
+                    # Debug: Log current state
+                    current_null_count = sum(1 for m in current_list if m is None)
+                    logger.debug(f"Current assignment state: {current_null_count} NULL slots out of 5")
+                    
                     # 3. Fill empty slots with new miners
                     new_miner_index = 0
                     updated_miners = []
@@ -224,10 +237,13 @@ class FileAssignmentConsumer:
                         if current_miner is None and new_miner_index < len(new_miners):
                             # Fill empty slot with new miner
                             updated_miners.append(new_miners[new_miner_index])
+                            logger.debug(f"   Slot {i+1}: NULL → {new_miners[new_miner_index]}")
                             new_miner_index += 1
                         else:
                             # Keep existing miner (or None if no new miners left)
                             updated_miners.append(current_miner)
+                            if current_miner:
+                                logger.debug(f"   Slot {i+1}: Keeping {current_miner}")
                     
                     # 4. Update file assignments with race condition protection
                     result = await conn.execute("""
@@ -258,7 +274,14 @@ class FileAssignmentConsumer:
                                     updated_at = NOW()
                             """, miner_id, file_size_bytes)
                     
-                    logger.info(f"Successfully reassigned file {cid[:16]}... - added miners: {', '.join(new_miners)}")
+                    # Enhanced success logging
+                    final_null_count = sum(1 for m in updated_miners if m is None)
+                    if final_null_count == 0:
+                        logger.info(f"✅ Successfully COMPLETED assignment for file {cid[:16]}... - ALL 5 slots now filled!")
+                    else:
+                        logger.info(f"✅ Successfully reassigned file {cid[:16]}... - {5-final_null_count}/5 slots filled ({final_null_count} still empty)")
+                    
+                    logger.info(f"   Added miners: {', '.join(new_miners)}")
                     return True
                     
         except Exception as e:

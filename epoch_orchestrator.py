@@ -823,6 +823,18 @@ class EpochOrchestrator:
             else:
                 logger.error("❌ Non-validator: Health checks failed")
         
+        # ENHANCED: Run file assignment processing to catch NULL miners (every 15 blocks)
+        if self.health_checks_completed and block_position % 15 == 0:
+            logger.info("📋 Non-validator: Running file assignment processing to fix NULL miners...")
+            assignment_success = await self.assign_files()
+            if assignment_success:
+                logger.info("✅ Non-validator: File assignment processing completed (fixed NULL miners)")
+                
+                # Update assignment completion flag for this cycle
+                self.assignment_completed = True
+            else:
+                logger.warning("⚠️ Non-validator: File assignment processing failed")
+        
         # Run availability maintenance (non-validators can help maintain the network)
         if self.health_checks_completed and not self.availability_completed:
             logger.info("🛠️ Non-validator: Running availability maintenance to help network...")
@@ -848,6 +860,7 @@ class EpochOrchestrator:
             logger.info("📋 Non-validator status summary:")
             logger.info(f"   Initialization: {'✅' if self.initialization_completed else '❌'}")
             logger.info(f"   Health checks: {'✅' if self.health_checks_completed else '❌'}")
+            logger.info(f"   File assignments: {'✅' if self.assignment_completed else '❌'}")
             logger.info(f"   Availability maintenance: {'✅' if self.availability_completed else '❌'}")
             logger.info(f"   Health metrics submitted: {'✅' if self.health_metrics_submitted else '❌'}")
         
@@ -938,20 +951,32 @@ class EpochOrchestrator:
         
         # NORMAL TIMING: Phase 3: File Assignment (blocks 36-60)
         elif 36 <= block_position <= 60 and self.health_checks_completed and not self.assignment_completed:
+            logger.info("🎯 VALIDATOR: Phase 3 - File Assignment (prioritizing NULL miner fixes)")
             success = await self.assign_files()
             if success:
                 self.assignment_completed = True
-                logger.info("✅ Phase 3 complete: File assignments")
-                
-                # CRITICAL: Run availability maintenance after assignment to fix any NULL assignments
-                if not self.availability_completed:
-                    logger.info("🛠️ Running availability maintenance after assignment to fix any remaining NULL assignments...")
-                    maintenance_success = await self.run_availability_maintenance()
-                    if maintenance_success:
-                        self.availability_completed = True
-                        logger.info("✅ Availability maintenance completed after assignment")
+                logger.info("✅ Phase 3 complete: File assignments (NULL miners fixed)")
+            return
+        
+        # ENHANCED: Regular NULL miner checking during Phase 3 (every 5 blocks)
+        elif 36 <= block_position <= 60 and self.assignment_completed and block_position % 5 == 0:
+            logger.info(f"🔍 VALIDATOR: Regular NULL miner check at block {block_position}/99")
+            # Quick check for remaining NULL assignments
+            if self.db_pool:
+                async with self.db_pool.acquire() as conn:
+                    remaining_nulls = await conn.fetchval("""
+                        SELECT COUNT(*) FROM file_assignments 
+                        WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
+                          OR miner4 IS NULL OR miner5 IS NULL
+                    """)
+                    
+                    if remaining_nulls > 0:
+                        logger.warning(f"⚠️ Found {remaining_nulls} files with NULL miners - running additional assignment")
+                        additional_success = await self.assign_files()
+                        if additional_success:
+                            logger.info(f"✅ Additional assignment completed - fixed remaining NULL miners")
                     else:
-                        logger.warning("⚠️ Availability maintenance failed after assignment")
+                        logger.info(f"✅ No NULL miners found - all assignments complete")
             return
         
         # NORMAL TIMING: Phase 4: Profile Reconstruction (blocks 61-75)
