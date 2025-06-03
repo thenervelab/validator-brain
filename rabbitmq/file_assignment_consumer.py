@@ -385,9 +385,127 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
     
+    async def process_rebalancing(self, assignment_data: Dict[str, Any]) -> bool:
+        """
+        Process a file rebalancing task (moving a file from one miner to another).
+        
+        Args:
+            assignment_data: Rebalancing data from the queue
+            
+        Returns:
+            True if processed successfully, False otherwise
+        """
+        cid = assignment_data.get('cid')
+        filename = assignment_data.get('filename', '')
+        file_size_bytes = assignment_data.get('file_size_bytes', 0)
+        from_miner = assignment_data.get('from_miner')
+        to_miner = assignment_data.get('to_miner')
+        reason = assignment_data.get('reason', 'Network rebalancing')
+        
+        if not cid or not from_miner or not to_miner:
+            logger.error(f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}")
+            return False
+        
+        logger.info(f"🔄 Processing rebalancing for file {filename} ({cid[:16]}...) - "
+                   f"moving from {from_miner[:12]}... to {to_miner[:12]}... ({reason})")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    # 1. Get current assignment state (to handle race conditions)
+                    current_assignment = await conn.fetchrow("""
+                        SELECT miner1, miner2, miner3, miner4, miner5, updated_at
+                        FROM file_assignments
+                        WHERE cid = $1
+                        FOR UPDATE
+                    """, cid)
+                    
+                    if not current_assignment:
+                        logger.error(f"File assignment not found for CID {cid}")
+                        return False
+                    
+                    # 2. Build the current miner list
+                    current_list = [
+                        current_assignment['miner1'], current_assignment['miner2'],
+                        current_assignment['miner3'], current_assignment['miner4'],
+                        current_assignment['miner5']
+                    ]
+                    
+                    # 3. Find and replace the from_miner with to_miner
+                    updated_miners = []
+                    found_miner = False
+                    
+                    for current_miner in current_list:
+                        if current_miner == from_miner and not found_miner:
+                            # Replace the first occurrence of from_miner with to_miner
+                            updated_miners.append(to_miner)
+                            found_miner = True
+                            logger.debug(f"   Replaced {from_miner[:12]}... with {to_miner[:12]}...")
+                        else:
+                            # Keep existing miner
+                            updated_miners.append(current_miner)
+                    
+                    # 4. Verify the replacement was made
+                    if not found_miner:
+                        logger.error(f"Miner {from_miner} not found in current assignment for file {cid}")
+                        logger.error(f"Current miners: {current_list}")
+                        return False
+                    
+                    # 5. Verify to_miner is not already assigned (prevent duplicates)
+                    original_to_count = current_list.count(to_miner)
+                    if original_to_count > 0:
+                        logger.warning(f"Target miner {to_miner} is already assigned to file {cid} ({original_to_count} times)")
+                        # Allow it but log the warning
+                    
+                    # 6. Update file assignments
+                    result = await conn.execute("""
+                        UPDATE file_assignments
+                        SET miner1 = $2, miner2 = $3, miner3 = $4, miner4 = $5, miner5 = $6,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE cid = $1
+                        AND updated_at = $7
+                    """, cid, updated_miners[0], updated_miners[1], updated_miners[2], 
+                        updated_miners[3], updated_miners[4], current_assignment['updated_at'])
+                    
+                    # Check if update was successful (no race condition)
+                    if result == "UPDATE 0":
+                        logger.warning(f"Race condition detected for file {cid} - assignment was modified by another process")
+                        return False
+                    
+                    # 7. Update miner stats for the new miner (add)
+                    await conn.execute("""
+                        INSERT INTO miner_stats (
+                            node_id, total_files_pinned, total_files_size_bytes, updated_at
+                        )
+                        VALUES ($1, 1, $2, NOW())
+                        ON CONFLICT (node_id) DO UPDATE SET
+                            total_files_pinned = miner_stats.total_files_pinned + 1,
+                            total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
+                            updated_at = NOW()
+                    """, to_miner, file_size_bytes)
+                    
+                    # 8. Update miner stats for the old miner (subtract)
+                    await conn.execute("""
+                        UPDATE miner_stats
+                        SET total_files_pinned = GREATEST(0, total_files_pinned - 1),
+                            total_files_size_bytes = GREATEST(0, total_files_size_bytes - $2),
+                            updated_at = NOW()
+                        WHERE node_id = $1
+                    """, from_miner, file_size_bytes)
+                    
+                    logger.info(f"✅ Successfully rebalanced file {cid[:16]}... - "
+                               f"moved from {from_miner[:12]}... to {to_miner[:12]}...")
+                    
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error processing rebalancing for file {cid}: {e}")
+            logger.exception("Full traceback:")
+            return False
+    
     async def process_assignment(self, assignment_data: Dict[str, Any]) -> bool:
         """
-        Process a file assignment task (new, reassignment, or failing miner replacement).
+        Process a file assignment task (new, reassignment, failing miner replacement, or rebalancing).
         
         Args:
             assignment_data: Assignment data from the queue
@@ -403,6 +521,8 @@ class FileAssignmentConsumer:
             return await self.process_reassignment(assignment_data)
         elif assignment_type == 'failing_miner_replacement':
             return await self.process_failing_miner_replacement(assignment_data)
+        elif assignment_type == 'rebalancing':
+            return await self.process_rebalancing(assignment_data)
         else:
             logger.error(f"Unknown assignment type: {assignment_type}")
             return False

@@ -449,6 +449,8 @@ class EpochOrchestrator:
         
         Uses the scalable RabbitMQ-based file assignment system to fill ANY NULL miner columns 
         in file_assignments table, ensuring all files have complete 5-miner assignments.
+        
+        ENHANCED: Also performs network rebalancing during validator workflow.
         """
         logger.info("📋 Starting file assignment phase")
         logger.info("🔧 Enhanced assignment: Fill ANY NULL miner columns in file_assignments")
@@ -530,6 +532,15 @@ class EpochOrchestrator:
                         logger.warning(f"⚠️ {incomplete_assignments} files still have incomplete assignments")
                         logger.warning("   Some files may not have enough available miners")
                 
+                # ENHANCED: Run network rebalancing as part of validator workflow
+                logger.info("🔄 Running network rebalancing as part of validator file assignment...")
+                rebalancing_success = await self.run_network_rebalancing()
+                
+                if rebalancing_success:
+                    logger.info("✅ Network rebalancing completed successfully")
+                else:
+                    logger.warning("⚠️ Network rebalancing failed, but continuing (not critical)")
+                
                 logger.info("✅ File assignment completed successfully with RabbitMQ system")
                 logger.info("🎯 Files ready for profile reconstruction")
                 return True
@@ -539,6 +550,37 @@ class EpochOrchestrator:
                 
         except Exception as e:
             logger.error(f"❌ Error during file assignment: {e}")
+            return False
+    
+    async def run_network_rebalancing(self) -> bool:
+        """
+        Run network rebalancing to ensure fair distribution of files across miners.
+        Integrated into validator workflow during file assignment phase.
+        """
+        try:
+            logger.info("🔄 Starting validator network rebalancing...")
+            
+            # Run the network rebalancing processor
+            success = self.run_processor(
+                'network_rebalancing_processor.py',
+                'Network rebalancing'
+            )
+            
+            if success:
+                logger.info("✅ Network rebalancing processor completed")
+                
+                # Wait for rebalancing tasks to be processed by file assignment consumer
+                logger.info("⏳ Waiting for rebalancing tasks to be processed...")
+                await self.wait_for_queues_empty(['file_assignment_processing'], 300)  # 5 minute timeout
+                logger.info("✅ Network rebalancing tasks processed")
+                
+                return True
+            else:
+                logger.warning("⚠️ Network rebalancing processor failed")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error during network rebalancing: {e}")
             return False
     
     async def run_availability_maintenance(self) -> bool:
@@ -898,6 +940,22 @@ class EpochOrchestrator:
             if success:
                 self.health_checks_completed = True
                 logger.info("✅ Phase 2 complete: Health checks")
+                
+                # CRITICAL: Process pinning requests immediately after health checks
+                logger.info("📌 VALIDATOR: Processing pinning requests for new files...")
+                pinning_success = await self.process_pinning_requests()
+                if pinning_success:
+                    logger.info("✅ VALIDATOR: Pinning requests processed successfully")
+                    
+                    # Also process individual pinning files
+                    logger.info("📁 VALIDATOR: Processing individual pinning files...")
+                    pinning_files_success = await self.process_pinning_files()
+                    if pinning_files_success:
+                        logger.info("✅ VALIDATOR: Pinning files processed successfully")
+                    else:
+                        logger.warning("⚠️ VALIDATOR: Pinning files processing failed")
+                else:
+                    logger.warning("⚠️ VALIDATOR: Pinning requests processing failed")
                 
                 # Run self-healing with fresh health data
                 logger.info("🛠️ Running network self-healing with fresh health data...")
