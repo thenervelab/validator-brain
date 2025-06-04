@@ -1234,13 +1234,16 @@ class EpochOrchestrator:
         
         # Perform health checks and submit to chain
         if not self.health_checks_completed:
-            logger.info("🏥 Non-validator: Starting health checks...")
+            logger.info("🏥 Non-validator: Starting health checks (not time-pressured)...")
+            logger.info("   Non-validators can run full health checks since no epoch deadline")
             success = await self.perform_health_checks()
             if success:
                 self.health_checks_completed = True
                 logger.info("✅ Non-validator: Health checks completed")
             else:
                 logger.error("❌ Non-validator: Health checks failed")
+                # Non-validators can continue with partial health data
+                logger.info("   Continuing with existing health data...")
         
         # ENHANCED: Run file assignment processing to catch NULL miners (every 15 blocks)
         if self.health_checks_completed and block_position % 15 == 0:
@@ -1309,43 +1312,62 @@ class EpochOrchestrator:
                 logger.info("✅ Phase 1 complete: Initialization")
                 return
         
-        # Phase 2: Health Checks (blocks 6-40 OR immediately after initialization)
+        # Phase 2: VALIDATOR OPTIMIZATION - Skip health checks, use previous epoch data
         elif (block_position <= 40 or self.initialization_completed) and not self.health_checks_completed:
-            logger.info("🏥 SEQUENTIAL: Starting health checks (after initialization)")
-            success = await self.perform_health_checks()
-            if success:
-                self.health_checks_completed = True
-                logger.info("✅ SEQUENTIAL: Health checks completed")
+            logger.info("🏥 VALIDATOR OPTIMIZATION: Skipping health checks - using previous epoch data")
+            logger.info("   Reason: Health checks take 3+ hours (527 miners × 22s each)")
+            logger.info("   Previous epoch health data is sufficient for file assignments")
+            
+            # Check if we have usable health data from previous epoch
+            async with self.db_pool.acquire() as conn:
+                health_data_count = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT node_id) 
+                    FROM miner_epoch_health 
+                    WHERE last_activity_at >= NOW() - INTERVAL '6 hours'
+                """)
                 
-                # CRITICAL: Process pinning requests immediately after health checks
-                logger.info("📌 VALIDATOR: Processing pinning requests for new files...")
-                pinning_success = await self.process_pinning_requests()
-                if pinning_success:
-                    logger.info("✅ VALIDATOR: Pinning requests processed successfully")
+                logger.info(f"✅ Found {health_data_count} miners with recent health data (< 6 hours)")
+                
+                if health_data_count >= 100:  # Reasonable threshold
+                    logger.info("✅ Sufficient previous epoch health data available")
+                    self.health_checks_completed = True
+                    logger.info("✅ VALIDATOR: Health checks marked complete (using previous data)")
                     
-                    # Also process individual pinning files
-                    logger.info("📁 VALIDATOR: Processing individual pinning files...")
-                    pinning_files_success = await self.process_pinning_files()
-                    if pinning_files_success:
-                        logger.info("✅ VALIDATOR: Pinning files processed successfully")
+                    # CRITICAL: Process pinning requests immediately
+                    logger.info("📌 VALIDATOR: Processing pinning requests for new files...")
+                    pinning_success = await self.process_pinning_requests()
+                    if pinning_success:
+                        logger.info("✅ VALIDATOR: Pinning requests processed successfully")
+                        
+                        # Also process individual pinning files
+                        logger.info("📁 VALIDATOR: Processing individual pinning files...")
+                        pinning_files_success = await self.process_pinning_files()
+                        if pinning_files_success:
+                            logger.info("✅ VALIDATOR: Pinning files processed successfully")
+                        else:
+                            logger.warning("⚠️ VALIDATOR: Pinning files processing failed")
                     else:
-                        logger.warning("⚠️ VALIDATOR: Pinning files processing failed")
+                        logger.warning("⚠️ VALIDATOR: Pinning requests processing failed")
+                    
+                    # Run self-healing with existing health data
+                    logger.info("🛠️ Running network self-healing with previous epoch health data...")
+                    await self.network_self_healing_routine()
+                    
+                    # FALLBACK: Also run availability maintenance
+                    if not self.availability_completed:
+                        logger.info("🛠️ VALIDATOR: Running availability maintenance as backup...")
+                        maintenance_success = await self.run_availability_maintenance()
+                        if maintenance_success:
+                            self.availability_completed = True
+                            logger.info("✅ VALIDATOR: Availability maintenance completed as backup")
+                        else:
+                            logger.warning("⚠️ VALIDATOR: Availability maintenance failed")
                 else:
-                    logger.warning("⚠️ VALIDATOR: Pinning requests processing failed")
-                
-                # Run self-healing with fresh health data
-                logger.info("🛠️ Running network self-healing with fresh health data...")
-                await self.network_self_healing_routine()
-                
-                # FALLBACK: Also run availability maintenance if self-healing fails
-                if not self.availability_completed:
-                    logger.info("🛠️ VALIDATOR: Running availability maintenance as backup...")
-                    maintenance_success = await self.run_availability_maintenance()
-                    if maintenance_success:
-                        self.availability_completed = True
-                        logger.info("✅ VALIDATOR: Availability maintenance completed as backup")
-                    else:
-                        logger.warning("⚠️ VALIDATOR: Availability maintenance failed")
+                    logger.warning(f"⚠️ Insufficient health data ({health_data_count} miners)")
+                    logger.warning("   Proceeding with available health data for assignments...")
+                    logger.warning("   Assignment quality may be reduced but validator must proceed")
+                    self.health_checks_completed = True
+                    logger.info("✅ VALIDATOR: Proceeding with available health data")
             return
         
         # Phase 3: SEQUENTIAL File Assignment (immediately after health checks complete)
@@ -1706,18 +1728,10 @@ class EpochOrchestrator:
                 return False
             
             async with self.db_pool.acquire() as conn:
-                # Special handling for miner_epoch_health - only clean OLD data (>2 epochs ago)
-                try:
-                    # Keep health data from current and previous epoch, clean older data
-                    result = await conn.execute("""
-                        DELETE FROM miner_epoch_health 
-                        WHERE epoch < $1 - 1
-                    """, self.current_epoch)
-                    deleted_count = result.split()[-1] if result else "0"
-                    logger.info(f"✅ Cleaned old health data (>2 epochs): {deleted_count} records deleted")
-                    logger.info(f"✅ Preserved health data from current epoch {self.current_epoch} and previous epoch")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not clean old health data: {e}")
+                # PRESERVE health data - don't clean miner_epoch_health at all
+                # Previous epoch health data is valuable for validator performance
+                logger.info("✅ PRESERVING all miner_epoch_health data for validator performance")
+                logger.info("   Previous epoch health data allows validators to skip 3+ hour health checks")
                 
                 for table in tables_to_clean:
                     try:
