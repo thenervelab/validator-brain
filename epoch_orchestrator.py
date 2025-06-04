@@ -1360,7 +1360,7 @@ class EpochOrchestrator:
             return
         
         # FIXED TIMING: Phase 5: Blockchain Submission (blocks 88-95) - MOVED TO END OF EPOCH
-        elif 76 <= block_position <= 85 and self.profiles_completed and not self.submission_completed:
+        elif 88 <= block_position <= 95 and self.profiles_completed and not self.submission_completed:
             logger.info(f"🚀 Phase 5: Blockchain submission at block {block_position}/99 (END OF EPOCH)")
             logger.info("📊 Submitting at proper end-of-epoch timing as requested")
             success = await self.submit_to_blockchain()
