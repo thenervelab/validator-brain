@@ -450,15 +450,15 @@ class EpochOrchestrator:
                 if unprocessed_count == 0:
                     logger.info("✅ ALL pinning requests processed successfully!")
                     break
-            
-            success = self.run_processor(
-                'pinning_request_processor.py',
+        
+        success = self.run_processor(
+            'pinning_request_processor.py',
                 f'Pinning requests processing (Round {total_rounds})'
-            )
-            
-            if success:
-                # Wait for pinning request consumer to process
-                await self.wait_for_queues_empty(['pinning_request'], 300)
+        )
+        
+        if success:
+            # Wait for pinning request consumer to process
+            await self.wait_for_queues_empty(['pinning_request'], 300)
                 logger.info(f"✅ Pinning requests round {total_rounds} completed")
             else:
                 logger.error(f"❌ Pinning requests round {total_rounds} failed")
@@ -505,15 +505,15 @@ class EpochOrchestrator:
                 if unprocessed_files == 0 and pending_assignments == 0:
                     logger.info("✅ ALL pinning files processed successfully!")
                     break
-            
-            success = self.run_processor(
-                'pinning_file_processor.py',
+        
+        success = self.run_processor(
+            'pinning_file_processor.py',
                 f'Pinning files processing (Round {total_rounds})'
-            )
-            
-            if success:
-                # Wait for pinning file consumer to process
-                await self.wait_for_queues_empty(['pinning_file_processing'], 600)
+        )
+        
+        if success:
+            # Wait for pinning file consumer to process
+            await self.wait_for_queues_empty(['pinning_file_processing'], 600)
                 logger.info(f"✅ Pinning files round {total_rounds} completed")
             else:
                 logger.error(f"❌ Pinning files round {total_rounds} failed")
@@ -641,12 +641,12 @@ class EpochOrchestrator:
                 
                 # Use the scalable RabbitMQ-based file assignment system
                 logger.info(f"🚀 Starting RabbitMQ-based file assignment processor (Round {total_rounds})...")
-                success = self.run_processor(
-                    'file_assignment_processor.py',
+        success = self.run_processor(
+            'file_assignment_processor.py',
                     f'File assignment processing (Round {total_rounds})'
-                )
-                
-                if success:
+        )
+        
+        if success:
                     logger.info(f"✅ File assignment processor round {total_rounds} completed successfully")
                     
                     # Wait for file assignment consumer to process all assignment tasks
@@ -932,10 +932,10 @@ class EpochOrchestrator:
             # Step 1: Reconstruct user profiles using RabbitMQ system
             logger.info("👥 Starting user profile reconstruction...")
             user_reconstruction_success = self.run_processor(
-                'user_profile_reconstruction_processor.py',
-                'User profile reconstruction'
-            )
-            
+            'user_profile_reconstruction_processor.py',
+            'User profile reconstruction'
+        )
+        
             if user_reconstruction_success:
                 logger.info("✅ User profile reconstruction processor completed")
                 
@@ -950,10 +950,10 @@ class EpochOrchestrator:
             # Step 2: Reconstruct miner profiles using RabbitMQ system
             logger.info("⛏️ Starting miner profile reconstruction...")
             miner_reconstruction_success = self.run_processor(
-                'miner_profile_reconstruction_processor.py',
-                'Miner profile reconstruction'
-            )
-            
+            'miner_profile_reconstruction_processor.py',
+            'Miner profile reconstruction'
+        )
+        
             if miner_reconstruction_success:
                 logger.info("✅ Miner profile reconstruction processor completed")
                 
@@ -1020,7 +1020,7 @@ class EpochOrchestrator:
             # Import submission utilities
             from app.utils.blockchain_submission import (
                 collect_storage_requests_for_submission,
-                collect_miner_profiles_for_submission, 
+                collect_miner_profiles_for_submission,
                 call_update_pin_and_storage_requests,
                 mark_submissions_as_completed,
                 submit_health_metrics_to_blockchain
@@ -1256,12 +1256,12 @@ class EpochOrchestrator:
             if success:
                 self.initialization_completed = True
                 logger.info("✅ Phase 1 complete: Initialization")
-            return
+                return
         
         # Phase 2: Health Checks (blocks 6-40) - EXTENDED window  
         elif block_position <= 40 and not self.health_checks_completed:
             success = await self.perform_health_checks()
-            if success:
+                if success:
                 self.health_checks_completed = True
                 logger.info("✅ Phase 2 complete: Health checks")
                 
@@ -1301,9 +1301,9 @@ class EpochOrchestrator:
         elif self.health_checks_completed and not self.assignment_completed and block_position < 85:
             logger.info(f"🔄 RECOVERY MODE: Running file assignment at block {block_position}/99")
             logger.info("   Health checks completed but assignment missing - likely connection recovery")
-            success = await self.assign_files()
-            if success:
-                self.assignment_completed = True
+                success = await self.assign_files()
+                if success:
+                    self.assignment_completed = True
                 logger.info("✅ RECOVERY: File assignment completed")
             return
             
@@ -1312,7 +1312,7 @@ class EpochOrchestrator:
             logger.info(f"🔄 RECOVERY MODE: Running profile reconstruction at block {block_position}/99")
             logger.info("   Assignment completed but profiles missing - likely connection recovery")
             success = await self.reconstruct_profiles()
-            if success:
+                if success:
                 self.profiles_completed = True
                 self.profiles_reconstructed = True  # Keep legacy variable for compatibility
                 logger.info("✅ RECOVERY: Profile reconstruction completed")
@@ -1323,7 +1323,7 @@ class EpochOrchestrator:
         elif 36 <= block_position <= 60 and self.health_checks_completed and not self.assignment_completed:
             logger.info("🎯 VALIDATOR: Phase 3 - File Assignment (prioritizing NULL miner fixes)")
             success = await self.assign_files()
-            if success:
+                if success:
                 self.assignment_completed = True
                 logger.info("✅ Phase 3 complete: File assignments (NULL miners fixed)")
             return
@@ -1345,14 +1345,14 @@ class EpochOrchestrator:
                         additional_success = await self.assign_files()
                         if additional_success:
                             logger.info(f"✅ Additional assignment completed - fixed remaining NULL miners")
-                    else:
+                else:
                         logger.info(f"✅ No NULL miners found - all assignments complete")
             return
         
         # NORMAL TIMING: Phase 4: Profile Reconstruction (blocks 61-85) - EXTENDED to avoid overlap with submission
         elif 61 <= block_position <= 85 and self.assignment_completed and not self.profiles_completed:
-            success = await self.reconstruct_profiles()
-            if success:
+                success = await self.reconstruct_profiles()
+                if success:
                 self.profiles_completed = True
                 self.profiles_reconstructed = True  # Keep legacy variable for compatibility
                 logger.info("✅ Phase 4 complete: Profile reconstruction")
@@ -1369,7 +1369,7 @@ class EpochOrchestrator:
                 self.blockchain_submitted = True  # Keep legacy variable for compatibility
                 logger.info(f"✅ Phase 5 complete: Blockchain submission at block {block_position}/99")
                 logger.info(f"🎯 ✨ PERFECT TIMING: End-of-epoch submission completed!")
-            else:
+                    else:
                 logger.error("❌ Blockchain submission failed - will continue retrying")
             return
         elif 88 <= block_position <= 95 and self.submission_completed:
@@ -1517,7 +1517,7 @@ class EpochOrchestrator:
                         
                         for attempt in range(max_connection_attempts):
                             try:
-                                self.substrate = connect_substrate()
+                        self.substrate = connect_substrate()
                                 logger.info(f"✅ Substrate connection established (attempt {attempt + 1}/{max_connection_attempts})")
                                 break
                             except Exception as e:

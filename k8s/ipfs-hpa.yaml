@@ -8,7 +8,7 @@ spec:
     kind: StatefulSet
     name: ipfs
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 50
   metrics:
   - type: Resource
     resource:
