@@ -8,8 +8,8 @@ spec:
       restartPolicy: Never
       containers:
       - name: processor
-        image: ipfs-service-validator:latest
-        imagePullPolicy: Never
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/user_profile_reconstruction_processor.py"]
         envFrom:
         - configMapRef:

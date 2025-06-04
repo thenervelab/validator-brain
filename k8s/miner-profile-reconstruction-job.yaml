@@ -9,7 +9,7 @@ spec:
       containers:
       - name: processor
         image: registry.starkleytech.com/library/ipfs-service-validator
-        imagePullPolicy: Never
+        imagePullPolicy: Always
         command: ["python", "rabbitmq/miner_profile_reconstruction_processor.py"]
         envFrom:
         - configMapRef:

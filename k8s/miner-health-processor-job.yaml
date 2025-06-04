@@ -12,7 +12,7 @@ spec:
       containers:
       - name: processor
         image: registry.starkleytech.com/library/ipfs-service-validator
-        imagePullPolicy: Never  # Use local image
+        imagePullPolicy: Always  # Use local image
         command: ["python", "rabbitmq/miner_health_processor.py"]
         envFrom:
         - configMapRef:
