@@ -90,7 +90,7 @@ MIN_REPLICAS_PER_FILE=5
 #    ./launch_epoch_orchestrator.sh --check-only
 
 # 6. Or show current status:
-#    ./launch_epoch_orchestrator.sh --status
+#    ./launch_epoch_orchestrator.sh --status 
 
 # NOTE: File availability management runs AUTOMATICALLY during each epoch:
 # - Fixes files with empty miner assignments (no manual intervention needed)

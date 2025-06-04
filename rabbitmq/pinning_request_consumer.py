@@ -181,22 +181,22 @@ class PinningRequestConsumer:
                     
                     if miner_ids and len(miner_ids) >= 3:  # Have sufficient pre-assigned miners
                         # Case 1: Storage request has sufficient pre-assigned miners (use them)
-                        miners_padded = (miner_ids + [None] * 5)[:5]
+                    miners_padded = (miner_ids + [None] * 5)[:5]
                         logger.info(f"✅ Creating assignment with {len(miner_ids)} pre-assigned miners")
-                        
-                        await conn.execute("""
-                            INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7)
-                            ON CONFLICT (cid) DO UPDATE SET
-                                owner = EXCLUDED.owner,
-                                miner1 = EXCLUDED.miner1,
-                                miner2 = EXCLUDED.miner2,
-                                miner3 = EXCLUDED.miner3,
-                                miner4 = EXCLUDED.miner4,
-                                miner5 = EXCLUDED.miner5,
-                                updated_at = CURRENT_TIMESTAMP
-                        """, file_cid, owner, miners_padded[0], miners_padded[1], 
-                            miners_padded[2], miners_padded[3], miners_padded[4])
+                    
+                    await conn.execute("""
+                        INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        ON CONFLICT (cid) DO UPDATE SET
+                            owner = EXCLUDED.owner,
+                            miner1 = EXCLUDED.miner1,
+                            miner2 = EXCLUDED.miner2,
+                            miner3 = EXCLUDED.miner3,
+                            miner4 = EXCLUDED.miner4,
+                            miner5 = EXCLUDED.miner5,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, file_cid, owner, miners_padded[0], miners_padded[1], 
+                        miners_padded[2], miners_padded[3], miners_padded[4])
                     else:
                         # Case 2: Insufficient or no miners - queue for assignment phase  
                         logger.info(f"📋 Queuing file for assignment phase (has {len(miner_ids)} miners, need ≥3)")
