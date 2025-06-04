@@ -172,12 +172,12 @@ class PinningRequestConsumer:
                     # Always ensure the file exists in the files table
                     file_name = request_data.get('file_name', '') or f"file_{file_cid[:8]}"
                     await conn.execute("""
-                        INSERT INTO files (cid, name, owner)
+                        INSERT INTO files (cid, name, size)
                         VALUES ($1, $2, $3)
                         ON CONFLICT (cid) DO UPDATE SET
                             name = EXCLUDED.name,
-                            owner = EXCLUDED.owner
-                    """, file_cid, file_name, owner)
+                            size = EXCLUDED.size
+                    """, file_cid, file_name, 0)  # Default size to 0, will be updated by file processor
                     
                     if miner_ids and len(miner_ids) >= 3:  # Have sufficient pre-assigned miners
                         # Case 1: Storage request has sufficient pre-assigned miners (use them)
@@ -213,23 +213,23 @@ class PinningRequestConsumer:
                         
                         # DO NOT create file_assignments entry with NULL miners
                         logger.info(f"✅ File queued for assignment phase - will get proper miners during assignment")
-                    
-                    # Record that we've processed this request
-                    await conn.execute("""
-                        INSERT INTO processed_pinning_requests (request_hash, miner_count)
-                        VALUES ($1, $2)
-                        ON CONFLICT (request_hash) DO UPDATE SET
-                            processed_at = CURRENT_TIMESTAMP,
-                            miner_count = EXCLUDED.miner_count
-                    """, request_hash, miner_count)
-                    
-                    logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}...")
-                    if miner_ids:
-                        logger.info(f"   📋 Created assignment with {miner_count} pre-assigned miners")
-                    else:
-                        logger.info(f"   📝 Created empty assignment entry - miners will be assigned in assignment phase")
-                    logger.info(f"   📁 File: {file_cid[:16]}... added to assignment queue")
-                    return True
+                
+                # Record that we've processed this request
+                await conn.execute("""
+                    INSERT INTO processed_pinning_requests (request_hash, miner_count)
+                    VALUES ($1, $2)
+                    ON CONFLICT (request_hash) DO UPDATE SET
+                        processed_at = CURRENT_TIMESTAMP,
+                        miner_count = EXCLUDED.miner_count
+                """, request_hash, miner_count)
+                
+                logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}...")
+                if miner_ids:
+                    logger.info(f"   📋 Created assignment with {miner_count} pre-assigned miners")
+                else:
+                    logger.info(f"   📝 Created empty assignment entry - miners will be assigned in assignment phase")
+                logger.info(f"   📁 File: {file_cid[:16]}... added to assignment queue")
+                return True
                 
         except Exception as e:
             logger.error(f"Error processing pinning request for {owner} (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")

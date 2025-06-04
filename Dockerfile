@@ -58,7 +58,6 @@ COPY app/ ./app/
 COPY rabbitmq/ ./rabbitmq/
 COPY substrate_fetcher/ ./substrate_fetcher/
 COPY db/ ./db/
-COPY scripts/ ./scripts/
 COPY *.py ./
 COPY start.sh ./start.sh
 
