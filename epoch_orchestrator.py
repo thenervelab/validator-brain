@@ -714,15 +714,6 @@ class EpochOrchestrator:
                         logger.warning(f"⚠️ {pending_new_files} new files still need assignment")
                         logger.warning("   May need additional processing rounds")
                 
-                # ENHANCED: Run network rebalancing as part of validator workflow
-                # logger.info("🔄 Running targeted network rebalancing (only if offline miners detected)...")
-                # rebalancing_success = await self.run_network_rebalancing()
-                # 
-                # if rebalancing_success:
-                #     logger.info("✅ Network rebalancing check completed successfully")
-                # else:
-                #     logger.warning("⚠️ Network rebalancing failed, but continuing (not critical)")
-                
                 logger.info("ℹ️ Network rebalancing disabled (commented out)")
                 
                 logger.info("✅ File assignment completed successfully with RabbitMQ system")
@@ -1296,34 +1287,50 @@ class EpochOrchestrator:
                         logger.warning("⚠️ VALIDATOR: Availability maintenance failed")
             return
         
-        # RECOVERY LOGIC: If we have health checks but missing later phases
-        # Run them regardless of block position (connection recovery scenario)
-        elif self.health_checks_completed and not self.assignment_completed and block_position < 85:
-            logger.info(f"🔄 RECOVERY MODE: Running file assignment at block {block_position}/99")
-            logger.info("   Health checks completed but assignment missing - likely connection recovery")
+        # SEQUENTIAL FLOW: Start file assignment immediately after health checks complete
+        elif self.health_checks_completed and not self.assignment_completed:
+            logger.info(f"🔄 SEQUENTIAL: Running file assignment at block {block_position}/99")
+            logger.info("   Health checks completed - starting assignment phase")
             success = await self.assign_files()
             if success:
                 self.assignment_completed = True
-                logger.info("✅ RECOVERY: File assignment completed")
+                logger.info("✅ SEQUENTIAL: File assignment completed")
             return
             
-        # RECOVERY LOGIC: If we have assignments but missing profile reconstruction  
-        elif self.assignment_completed and not self.profiles_completed and block_position < 85:
-            logger.info(f"🔄 RECOVERY MODE: Running profile reconstruction at block {block_position}/99")
-            logger.info("   Assignment completed but profiles missing - likely connection recovery")
+        # SEQUENTIAL FLOW: Start profile reconstruction immediately after assignment completes  
+        elif self.assignment_completed and not self.profiles_completed:
+            logger.info(f"🔄 SEQUENTIAL: Running profile reconstruction at block {block_position}/99")
+            logger.info("   Assignment completed - starting profile reconstruction")
             success = await self.reconstruct_profiles()
             if success:
                 self.profiles_completed = True
                 self.profiles_reconstructed = True  # Keep legacy variable for compatibility
-                logger.info("✅ RECOVERY: Profile reconstruction completed")
-                logger.info("⏰ Profiles ready - will submit to blockchain in Phase 5 (blocks 88-95)")
+                logger.info("✅ SEQUENTIAL: Profile reconstruction completed")
+                logger.info("🚀 SECURITY: Will submit to blockchain IMMEDIATELY")
+            return
+        
+        # SECURITY: Submit to blockchain IMMEDIATELY when profiles are ready
+        elif self.profiles_completed and not self.submission_completed:
+            logger.info(f"🚀 SECURITY: Immediate blockchain submission at block {block_position}/99")
+            logger.info("📊 Submitting immediately for security - not waiting for end of epoch")
+            success = await self.submit_to_blockchain()
+            if success:
+                self.submission_completed = True
+                self.blockchain_submitted = True  # Keep legacy variable for compatibility
+                logger.info(f"✅ SECURITY: Blockchain submission completed at block {block_position}/99")
+                logger.info(f"🎯 ✨ IMMEDIATE SUBMISSION: Maximum time for confirmation!")
+            else:
+                logger.error("❌ Blockchain submission failed - will continue retrying")
+            return
+        elif self.submission_completed:
+            logger.info("ℹ️ Blockchain submission already completed - monitoring until epoch end")
             return
         
         # NORMAL TIMING: Phase 3: File Assignment (blocks 36-60)
         elif 36 <= block_position <= 60 and self.health_checks_completed and not self.assignment_completed:
             logger.info("🎯 VALIDATOR: Phase 3 - File Assignment (prioritizing NULL miner fixes)")
             success = await self.assign_files()
-            if success:
+                if success:
                 self.assignment_completed = True
                 logger.info("✅ Phase 3 complete: File assignments (NULL miners fixed)")
             return
@@ -1345,14 +1352,14 @@ class EpochOrchestrator:
                         additional_success = await self.assign_files()
                         if additional_success:
                             logger.info(f"✅ Additional assignment completed - fixed remaining NULL miners")
-                    else:
+                else:
                         logger.info(f"✅ No NULL miners found - all assignments complete")
             return
         
         # NORMAL TIMING: Phase 4: Profile Reconstruction (blocks 61-85) - EXTENDED to avoid overlap with submission
         elif 61 <= block_position <= 85 and self.assignment_completed and not self.profiles_completed:
-            success = await self.reconstruct_profiles()
-            if success:
+                success = await self.reconstruct_profiles()
+                if success:
                 self.profiles_completed = True
                 self.profiles_reconstructed = True  # Keep legacy variable for compatibility
                 logger.info("✅ Phase 4 complete: Profile reconstruction")
@@ -1369,7 +1376,7 @@ class EpochOrchestrator:
                 self.blockchain_submitted = True  # Keep legacy variable for compatibility
                 logger.info(f"✅ Phase 5 complete: Blockchain submission at block {block_position}/99")
                 logger.info(f"🎯 ✨ PERFECT TIMING: End-of-epoch submission completed!")
-            else:
+                    else:
                 logger.error("❌ Blockchain submission failed - will continue retrying")
             return
         elif 88 <= block_position <= 95 and self.submission_completed:
@@ -1517,7 +1524,7 @@ class EpochOrchestrator:
                         
                         for attempt in range(max_connection_attempts):
                             try:
-                                self.substrate = connect_substrate()
+                        self.substrate = connect_substrate()
                                 logger.info(f"✅ Substrate connection established (attempt {attempt + 1}/{max_connection_attempts})")
                                 break
                             except Exception as e:
