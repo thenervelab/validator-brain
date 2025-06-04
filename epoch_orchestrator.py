@@ -335,7 +335,7 @@ class EpochOrchestrator:
     
     async def wait_for_queues_empty(self, queue_names: List[str], timeout: int = 300) -> bool:
         """
-        Wait for specified queues to be empty.
+        Wait for specified queues to be empty by actually checking RabbitMQ.
         
         Args:
             queue_names: List of queue names to check
@@ -347,16 +347,69 @@ class EpochOrchestrator:
         logger.info(f"⏳ Waiting for queues to be empty: {', '.join(queue_names)}")
         
         try:
-            # Simple time-based approach since queue checking module is not available
-            logger.info("Using time-based queue waiting (queue status module not available)")
-            wait_time = min(60, timeout // 5)  # Wait 1 minute or 1/5 of timeout, whichever is smaller
+            import aio_pika
+            import os
+            
+            # Get RabbitMQ connection URL
+            rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://admin:admin@rabbitmq-service:5672/')
+            
+            start_time = asyncio.get_event_loop().time()
+            check_interval = 10  # Check every 10 seconds
+            
+            while (asyncio.get_event_loop().time() - start_time) < timeout:
+                try:
+                    # Connect to RabbitMQ
+                    connection = await aio_pika.connect_robust(rabbitmq_url)
+                    channel = await connection.channel()
+                    
+                    all_empty = True
+                    queue_status = {}
+                    
+                    for queue_name in queue_names:
+                        try:
+                            # Declare queue (doesn't create if exists, just gets info)
+                            queue = await channel.declare_queue(queue_name, durable=True, passive=True)
+                            message_count = queue.declaration_result.message_count
+                            queue_status[queue_name] = message_count
+                            
+                            if message_count > 0:
+                                all_empty = False
+                                
+                        except Exception as e:
+                            # Queue doesn't exist or can't access - treat as empty
+                            logger.debug(f"Queue {queue_name} not accessible (treating as empty): {e}")
+                            queue_status[queue_name] = 0
+                    
+                    await connection.close()
+                    
+                    # Log status
+                    status_str = ", ".join([f"{q}:{count}" for q, count in queue_status.items()])
+                    logger.info(f"📊 Queue status: {status_str}")
+                    
+                    if all_empty:
+                        logger.info("✅ All queues are empty!")
+                        return True
+                    
+                    # Wait before next check
+                    logger.info(f"⏳ Queues not empty, checking again in {check_interval}s...")
+                    await asyncio.sleep(check_interval)
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Error checking queues: {e}")
+                    logger.info(f"Retrying in {check_interval}s...")
+                    await asyncio.sleep(check_interval)
+            
+            # Timeout reached
+            logger.warning(f"⏰ Timeout reached ({timeout}s) - some queues may not be empty")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error setting up queue monitoring: {e}")
+            logger.info("Falling back to time-based waiting...")
+            # Fallback to time-based approach
+            wait_time = min(60, timeout // 5)
             logger.info(f"⏳ Waiting {wait_time}s for queue processing to complete...")
             await asyncio.sleep(wait_time)
-            return True
-        except Exception as e:
-            logger.error(f"Error in queue waiting: {e}")
-            # Fallback to minimal wait
-            await asyncio.sleep(30)  # Wait 30 seconds as minimal fallback
             return True
     
     async def refresh_registration_data(self) -> bool:
