@@ -29,8 +29,8 @@ data:
   NODE_URL: "wss://rpc.hippius.network"
   
   # Validator Configuration (UPDATE THESE WITH YOUR ACTUAL VALUES)
-  VALIDATOR_ACCOUNT_ID: "5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"
-  # VALIDATOR_SEED: "your twelve word seed phrase here for signing transactions"  # Uncomment and set for transaction signing
+  VALIDATOR_ACCOUNT_ID: "YOUR_VALI_SS58"
+  VALIDATOR_SEED: "THIS IS A PROXY SEED MAKE VALIDATOR SAFER"  # Uncomment and set for transaction signing
   
   # Epoch Orchestrator Configuration
   BLOCK_CHECK_INTERVAL: "6"          # Check blockchain every 6 seconds (every block)

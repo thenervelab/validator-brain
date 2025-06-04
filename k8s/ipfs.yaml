@@ -20,6 +20,8 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+        capabilities:
+        add: ["SYS_RESOURCE"]
       initContainers:
       - name: fix-permissions
         image: busybox:1.35
@@ -31,7 +33,7 @@ spec:
           runAsUser: 0
       containers:
       - name: ipfs
-        image: ipfs/kubo:latest
+        image: ipfs/kubo:v0.35.0
         ports:
         - containerPort: 4001
           name: swarm
@@ -45,12 +47,18 @@ spec:
         env:
         - name: IPFS_PROFILE
           value: server
-        - name: IPFS_FD_MAX
+        - name: IPFS_LOGGING
+          value: "error"
+        - name: IPFS_FD_MAX 
           value: "8192"
         - name: LIBP2P_RCMGR
           value: "1"
         - name: IPFS_API
           value: "/ip4/0.0.0.0/tcp/5001"
+        - name: LIBP2P_RCMGR_LOG_LEVEL
+          value: "error"
+        - name: GOLOG_LOG_LEVEL
+          value: "quic-go:error"
         volumeMounts:
         - name: ipfs-data
           mountPath: /data/ipfs
@@ -62,24 +70,30 @@ spec:
             memory: "2Gi"
             cpu: "1000m"
           limits:
-            memory: "4Gi"
+            memory: "6Gi"
             cpu: "2000m"
         livenessProbe:
-          exec:
-            command:
-            - ipfs
-            - id
+          httpGet:
+            path: /api/v0/version
+            port: 5001
+            httpHeaders:
+            - name: Content-Type
+              value: application/x-www-form-urlencoded
           initialDelaySeconds: 60
           periodSeconds: 30
           timeoutSeconds: 10
+          failureThreshold: 3
         readinessProbe:
-          exec:
-            command:
-            - ipfs
-            - id
+          httpGet:
+            path: /api/v0/version
+            port: 5001
+            httpHeaders:
+            - name: Content-Type
+              value: application/x-www-form-urlencoded
           initialDelaySeconds: 30
-          periodSeconds: 10
+          periodSeconds: 15
           timeoutSeconds: 10
+          failureThreshold: 3
   volumeClaimTemplates:
   - metadata:
       name: ipfs-data
@@ -113,7 +127,7 @@ spec:
     targetPort: 8080
     name: gateway
     protocol: TCP
-  type: ClusterIP
+  type: ClusterIP 
   publishNotReadyAddresses: true
 ---
 apiVersion: networking.k8s.io/v1

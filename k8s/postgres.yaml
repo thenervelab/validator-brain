@@ -8,6 +8,7 @@ spec:
   resources:
     requests:
       storage: 20Gi
+  storageClassName: ipfs
 ---
 apiVersion: apps/v1
 kind: Deployment

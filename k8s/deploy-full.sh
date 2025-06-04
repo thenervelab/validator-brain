@@ -23,6 +23,7 @@ VERBOSE=false
 DRY_RUN=false
 NAMESPACE_SET=false
 DEPLOY_IPFS=true
+CUSTOM_IPFS_ENDPOINT=""
 
 # Helper functions
 log() {
@@ -55,18 +56,20 @@ usage() {
     echo "  NAMESPACE     Kubernetes namespace (default: ipfs-validator)"
     echo ""
     echo "Options:"
-    echo "  --no-build    Skip Docker image build"
-    echo "  --no-ipfs     Skip IPFS deployment (use external IPFS)"
-    echo "  --timeout N   Wait timeout in seconds (default: 300)"
-    echo "  --verbose     Enable verbose logging"
-    echo "  --dry-run     Show what would be deployed without applying"
-    echo "  --help        Show this help message"
+    echo "  --no-build          Skip Docker image build"
+    echo "  --no-ipfs           Skip IPFS deployment (use external IPFS)"
+    echo "  --ipfs-endpoint URL Set custom IPFS endpoint (e.g., http://ipfs-service.ipfs.svc.cluster.local:5001)"
+    echo "  --timeout N         Wait timeout in seconds (default: 300)"
+    echo "  --verbose           Enable verbose logging"
+    echo "  --dry-run           Show what would be deployed without applying"
+    echo "  --help              Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0                                    # Deploy to default namespace"
     echo "  $0 my-namespace                       # Deploy to custom namespace"
     echo "  $0 prod-validator --no-build         # Deploy without building image"
     echo "  $0 test-env --no-ipfs --verbose      # Deploy without IPFS, with verbose output"
+    echo "  $0 external --no-ipfs --ipfs-endpoint http://ipfs-service.ipfs.svc.cluster.local:5001  # Use external IPFS"
     echo "  $0 test-env --timeout 600 --verbose  # Deploy with custom timeout and verbose output"
 }
 
@@ -84,6 +87,11 @@ while [[ $# -gt 0 ]]; do
         --no-ipfs)
             DEPLOY_IPFS=false
             shift
+            ;;
+        --ipfs-endpoint)
+            CUSTOM_IPFS_ENDPOINT="$2"
+            DEPLOY_IPFS=false  # Automatically disable local IPFS when using custom endpoint
+            shift 2
             ;;
         --timeout)
             WAIT_TIMEOUT="$2"
@@ -232,6 +240,74 @@ create_namespace() {
     success "Namespace $NAMESPACE ready"
 }
 
+# Function to update ConfigMap with custom IPFS endpoint
+update_configmap_ipfs_endpoint() {
+    if [[ -n "$CUSTOM_IPFS_ENDPOINT" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            info "DRY RUN: Would update ConfigMap with custom IPFS endpoint: $CUSTOM_IPFS_ENDPOINT"
+            return 0
+        fi
+        
+        info "🔧 Updating ConfigMap with custom IPFS endpoint: $CUSTOM_IPFS_ENDPOINT"
+        
+        # Create a temporary configmap file with the custom endpoint
+        local temp_configmap="/tmp/configmap-custom-ipfs.yaml"
+        
+        # Replace the IPFS_NODE_URL in the configmap
+        sed "s|IPFS_NODE_URL: \"http://ipfs-service:5001\"|IPFS_NODE_URL: \"$CUSTOM_IPFS_ENDPOINT\"|g" configmap.yaml > "$temp_configmap"
+        
+        # Apply the updated configmap
+        kubectl apply -f "$temp_configmap" -n "$NAMESPACE"
+        
+        # Clean up
+        rm -f "$temp_configmap"
+        
+        success "ConfigMap updated with custom IPFS endpoint"
+    fi
+}
+
+# Function to create consumers.yaml with conditional IPFS checks
+create_consumers_config() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "$DEPLOY_IPFS" == "false" ]]; then
+            info "DRY RUN: Would create consumers.yaml without IPFS service checks"
+        else
+            info "DRY RUN: Would use consumers.yaml with IPFS service checks"
+        fi
+        return 0
+    fi
+    
+    local temp_consumers="/tmp/consumers-custom.yaml"
+    
+    if [[ "$DEPLOY_IPFS" == "false" ]]; then
+        info "🔧 Creating consumers config without IPFS service dependency checks..."
+        
+        # Remove IPFS service checks from init containers
+        sed \
+            -e 's/ && nc -z ipfs-service 5001//g' \
+            consumers.yaml > "$temp_consumers"
+        
+        success "Consumers config created without IPFS dependency checks"
+    else
+        info "🔧 Using standard consumers config with IPFS service checks..."
+        cp consumers.yaml "$temp_consumers"
+        success "Standard consumers config prepared"
+    fi
+    
+    # Apply the appropriate consumers config
+    info "📦 Applying consumers configuration..."
+    if [[ "$VERBOSE" == "true" ]]; then
+        kubectl apply -f "$temp_consumers" -n "$NAMESPACE"
+    else
+        kubectl apply -f "$temp_consumers" -n "$NAMESPACE" > /dev/null
+    fi
+    
+    # Clean up
+    rm -f "$temp_consumers"
+    
+    success "Consumers configuration applied"
+}
+
 # Main deployment script
 main() {
     echo -e "${PURPLE}🚀 IPFS Service Validator - Full Deployment${NC}"
@@ -241,6 +317,9 @@ main() {
     echo "  Namespace: $NAMESPACE"
     echo "  Build Image: $BUILD_IMAGE"
     echo "  Deploy IPFS: $DEPLOY_IPFS"
+    if [[ -n "$CUSTOM_IPFS_ENDPOINT" ]]; then
+        echo "  Custom IPFS Endpoint: $CUSTOM_IPFS_ENDPOINT"
+    fi
     echo "  Timeout: ${WAIT_TIMEOUT}s"
     echo "  Verbose: $VERBOSE"
     echo "  Dry Run: $DRY_RUN"
@@ -288,6 +367,10 @@ main() {
     
     # 2. Apply ConfigMaps and Migrations
     apply_resource "configmap.yaml" "⚙️  Applying application ConfigMap"
+    
+    # Update ConfigMap with custom IPFS endpoint if provided
+    update_configmap_ipfs_endpoint
+    
     apply_resource "migrations-configmap.yaml" "📋 Applying database migrations ConfigMap"
     
     log "📦 Phase 2: Database Infrastructure" 
@@ -348,8 +431,10 @@ main() {
     log "📦 Phase 4: Processing Infrastructure"
     echo "======================================"
     
-    # 8. Deploy all consumers
-    apply_resource "consumers.yaml" "🔄 Deploying message queue consumers"
+    # Create and apply consumers config (with or without IPFS checks)
+    create_consumers_config
+    
+    # Wait for key consumers to be ready
     wait_for_deployment "user-profile-consumer" "User Profile Consumer"
     wait_for_deployment "miner-profile-reconstruction-consumer" "Miner Profile Consumer"
     wait_for_deployment "file-assignment-consumer" "File Assignment Consumer"
@@ -400,6 +485,8 @@ main() {
         echo "  ✅ RabbitMQ: Message queue for distributed processing"
         if [[ "$DEPLOY_IPFS" == "true" ]]; then
             echo "  ✅ IPFS: Distributed storage with auto-scaling"
+        elif [[ -n "$CUSTOM_IPFS_ENDPOINT" ]]; then
+            echo "  ✅ IPFS: External service at $CUSTOM_IPFS_ENDPOINT"
         else
             echo "  ⏭️  IPFS: Skipped (using external IPFS service)"
         fi
@@ -424,6 +511,12 @@ main() {
         if [[ "$DEPLOY_IPFS" == "true" ]]; then
             echo "  # Scale IPFS if needed:"
             echo "  kubectl scale statefulset ipfs --replicas=3 -n $NAMESPACE"
+        elif [[ -n "$CUSTOM_IPFS_ENDPOINT" ]]; then
+            echo "  # Test custom IPFS endpoint:"
+            echo "  curl $CUSTOM_IPFS_ENDPOINT/api/v0/id"
+            echo ""
+            echo "  # Test from within cluster:"
+            echo "  kubectl run -it --rm test-ipfs --image=curlimages/curl --restart=Never -n $NAMESPACE -- curl $CUSTOM_IPFS_ENDPOINT/api/v0/id"
         else
             echo "  # Note: IPFS was skipped - configure external IPFS service"
         fi
