@@ -1517,7 +1517,7 @@ class EpochOrchestrator:
                         
                         for attempt in range(max_connection_attempts):
                             try:
-                        self.substrate = connect_substrate()
+                                self.substrate = connect_substrate()
                                 logger.info(f"✅ Substrate connection established (attempt {attempt + 1}/{max_connection_attempts})")
                                 break
                             except Exception as e:
