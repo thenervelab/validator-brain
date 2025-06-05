@@ -2,5 +2,5 @@
 
 -- name: clear_epoch_data
 -- Clear temporary tables containing epoch-specific data
-TRUNCATE TABLE miner_epoch_health;
+-- TRUNCATE TABLE miner_epoch_health;
 TRUNCATE TABLE storage_requests;
