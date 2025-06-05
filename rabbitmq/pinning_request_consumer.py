@@ -142,7 +142,7 @@ class PinningRequestConsumer:
     
     async def process_pinning_request(self, request_data: Dict[str, Any]) -> bool:
         """
-        Process a pinning request, handling manifest CIDs.
+        Process a pinning request, strictly enforcing that it points to a manifest CID.
         """
         request_hash = request_data.get('request_hash')
         owner = request_data.get('owner')
@@ -164,55 +164,50 @@ class PinningRequestConsumer:
             file_hash_hex = request_data.get('file_hash', '')
             manifest_cid = hex_to_string(file_hash_hex) if file_hash_hex else ''
             
-            files_processed = 0
+            if not manifest_cid:
+                logger.warning(f"Request {request_hash[:16]}... has no file_hash (manifest CID). Marking as processed and skipping.")
+                async with self.db_pool.acquire() as conn:
+                    await conn.execute("INSERT INTO processed_pinning_requests (request_hash, miner_count) VALUES ($1, 0) ON CONFLICT (request_hash) DO NOTHING", request_hash)
+                return True
+
+            # --- STRICT MANIFEST PROCESSING ---
+            logger.info(f"Fetching manifest content from CID {manifest_cid}...")
+            manifest_content = await fetch_ipfs_content(manifest_cid)
             
-            # --- MANIFEST PROCESSING LOGIC ---
-            if manifest_cid:
-                logger.info(f"Attempting to process {manifest_cid} as a manifest file...")
-                manifest_content = await fetch_ipfs_content(manifest_cid)
-                
-                if manifest_content:
-                    try:
-                        manifest_data = json.loads(manifest_content)
-                        if isinstance(manifest_data, list):
-                            logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Contains {len(manifest_data)} files.")
-                            async with self.db_pool.acquire() as conn:
-                                for file_info in manifest_data:
-                                    # Assuming file_info is a dict with 'cid' and optional 'name'
-                                    if isinstance(file_info, dict):
-                                        file_cid = file_info.get('cid')
-                                        file_name = file_info.get('name')
-                                        await self._assign_file_to_owner(conn, file_cid, owner, file_name)
-                                        files_processed += 1
-                                    else:
-                                        logger.warning(f"Skipping invalid item in manifest: {file_info}")
+            if not manifest_content:
+                logger.error(f"🔴 FAILED to fetch manifest content for CID {manifest_cid}. Request will not be processed.")
+                return False # Returning False will cause a requeue for retry
+
+            try:
+                manifest_data = json.loads(manifest_content)
+                if not isinstance(manifest_data, list):
+                    logger.error(f"🔴 INVALID manifest format for CID {manifest_cid}: content is not a JSON list.")
+                    return False # Not a transient error, but returning False to allow manual inspection if needed
+
+                logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Found {len(manifest_data)} files to assign.")
+                files_processed = 0
+                async with self.db_pool.acquire() as conn:
+                    for file_info in manifest_data:
+                        if isinstance(file_info, dict) and 'cid' in file_info:
+                            await self._assign_file_to_owner(conn, file_info['cid'], owner, file_info.get('filename'))
+                            files_processed += 1
                         else:
-                            # Content is valid JSON but not a list, treat as single file
-                            logger.warning(f"Content for CID {manifest_cid} is not a list. Treating as a single file.")
-                            async with self.db_pool.acquire() as conn:
-                                await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
-                            files_processed = 1
-                            
-                    except json.JSONDecodeError:
-                        # Not a JSON file, treat as a single file CID
-                        logger.warning(f"Content for CID {manifest_cid} is not JSON. Treating as a single file.")
-                        async with self.db_pool.acquire() as conn:
-                            await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
-                        files_processed = 1
-                else:
-                    # Could not fetch content, assume it's a direct file CID
-                    logger.warning(f"Could not fetch content for CID {manifest_cid}. Treating as a single file.")
-                    async with self.db_pool.acquire() as conn:
-                        await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
-                    files_processed = 1
+                            logger.warning(f"Skipping invalid item in manifest list: {file_info}")
+                
+            except json.JSONDecodeError:
+                logger.error(f"🔴 INVALID manifest format for CID {manifest_cid}: content is not valid JSON.")
+                return False
             
             # --- END MANIFEST LOGIC ---
             
-            # Record that we've processed this top-level request
+            # Record that we've successfully processed this request to prevent duplicates
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO processed_pinning_requests (request_hash, miner_count)
-                    VALUES ($1, $2) ON CONFLICT DO NOTHING
+                    VALUES ($1, $2)
+                    ON CONFLICT (request_hash) DO UPDATE SET
+                        processed_at = CURRENT_TIMESTAMP,
+                        miner_count = EXCLUDED.miner_count
                 """, request_hash, files_processed)
             
             logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}..., resulting in {files_processed} file assignments.")
