@@ -136,7 +136,7 @@ class RegistrationProcessor:
             logger.info(f"Fetching registrations at latest block {block_number}")
             
             # Clear the registration table first
-            await self.clear_registration_table()
+            # await self.clear_registration_table() # <<< MODIFIED: Commented out, consumer will handle upsert
             
             registration_count = 0
             

@@ -13,7 +13,7 @@ from app.services.substrate_client import close_substrate_client, init_substrate
 from app.utils.logging import configure_logging, logger
 from substrate_fetcher.health_monitor import HealthCheck
 from substrate_fetcher.monitoring import initialize_monitoring, shutdown_monitoring
-from substrate_fetcher.validator_workflow import start_validator, stop_validator
+from epoch_orchestrator import main as orchestrator_main
 
 load_dotenv()
 
@@ -38,6 +38,7 @@ async def main(validator_account_id: Optional[str] = None):
         return
 
     logger.info(f"Starting IPFS service validator with account: {account_id}")
+    logger.info("🚀 Using NEW Epoch Orchestrator (preserves health data)")
 
     # Initialize services
     await init_substrate_client()
@@ -65,11 +66,12 @@ async def main(validator_account_id: Optional[str] = None):
         loop = asyncio.get_event_loop()
         loop.add_signal_handler(sig, signal_handler)
 
-    # Start the validator
+    # FIXED: Use new orchestrator instead of old validator workflow
     try:
-        await start_validator(account_id)
+        logger.info("🎯 Starting Epoch Orchestrator (NEW SYSTEM)")
+        await orchestrator_main()
     except Exception as e:
-        logger.exception(f"Error running validator: {str(e)}")
+        logger.exception(f"Error running orchestrator: {str(e)}")
         await shutdown(health_check)
 
 
@@ -82,8 +84,7 @@ async def shutdown(health_check):
     """
     logger.info("Shutting down...")
 
-    # Stop the validator
-    await stop_validator()
+    # Note: Orchestrator handles its own shutdown, no separate stop needed
 
     # Shutdown health monitoring
     await health_check.stop()
