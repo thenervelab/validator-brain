@@ -5,7 +5,7 @@ metadata:
   labels:
     app: ipfs
 spec:
-  replicas: 20
+  replicas: 1
   selector:
     matchLabels:
       app: ipfs
@@ -16,7 +16,7 @@ spec:
     spec:
       volumes:
       - name: ipfs-storage
-        emptyDir: {} # Replace with PVC for production
+        emptyDir: {} # Replace with PVC for production (see below)
       containers:
       - name: ipfs
         image: ipfs/kubo:v0.35.0
@@ -47,9 +47,9 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
         - |
-          ipfs config Discovery.MDNS.Enabled false &&
-          ipfs config Swarm.ConnMgr.HighWater 200 &&
-          ipfs config Swarm.ConnMgr.LowWater 50 &&
+          if [ ! -f "$IPFS_PATH/config" ]; then
+            ipfs init --profile server
+          fi &&
           ipfs daemon
         volumeMounts:
         - name: ipfs-storage
@@ -66,30 +66,7 @@ spec:
           runAsGroup: 1000
           capabilities:
             add: ["SYS_RESOURCE"]
-        startupProbe:
-          httpGet:
-            path: /api/v0/version
-            port: 5001
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          failureThreshold: 18
-          timeoutSeconds: 5
-        livenessProbe:
-          httpGet:
-            path: /api/v0/version
-            port: 5001
-          initialDelaySeconds: 30
-          periodSeconds: 15
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /api/v0/version
-            port: 5001
-          initialDelaySeconds: 15
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
+        
 ---
 apiVersion: v1
 kind: Service
