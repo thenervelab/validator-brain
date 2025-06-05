@@ -108,18 +108,34 @@ class EpochHealthProcessor:
             return 0
     
     async def clear_epoch_health_data(self, epoch: int) -> None:
-        """Clear miner_epoch_health table for the new epoch."""
+        """Preserve existing health data and mark as stale for the new epoch."""
         async with self.db_pool.acquire() as conn:
             try:
-                # Clear all data for this epoch (in case of restart)
+                # CONSERVATIVE APPROACH: Preserve health data, just mark as stale
+                # Instead of DELETE, UPDATE existing records to mark them as archived/stale
                 result = await conn.execute("""
-                    DELETE FROM miner_epoch_health WHERE epoch = $1
+                    UPDATE miner_epoch_health 
+                    SET 
+                        is_stale = true,
+                        archived_at = NOW()
+                    WHERE epoch = $1 AND is_stale IS NOT true
                 """, epoch)
                 
-                logger.info(f"Cleared miner_epoch_health table for epoch {epoch}")
+                # Add is_stale column if it doesn't exist (migration-safe)
+                try:
+                    await conn.execute("""
+                        ALTER TABLE miner_epoch_health 
+                        ADD COLUMN IF NOT EXISTS is_stale BOOLEAN DEFAULT false,
+                        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP DEFAULT NULL
+                    """)
+                except Exception as alter_e:
+                    logger.debug(f"Columns may already exist: {alter_e}")
+                
+                logger.info(f"✅ PRESERVED health data for epoch {epoch} - marked as stale instead of deleting")
+                logger.info(f"   This maintains historical health data for trend analysis and debugging")
                 
             except Exception as e:
-                logger.error(f"Error clearing epoch health data: {e}")
+                logger.error(f"Error preserving epoch health data: {e}")
                 raise
     
     async def fetch_all_miners(self) -> List[Dict[str, Any]]:
