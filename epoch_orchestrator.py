@@ -626,7 +626,7 @@ class EpochOrchestrator:
                 AND last_activity_at < NOW() - INTERVAL '1 hour'
             """)
             
-            is_validator_optimization = validator_optimization_check > 50  # Reasonable threshold
+            is_validator_optimization = self.is_validator  # SIMPLE: validators use all data
             
             if is_validator_optimization:
                 logger.info("🚀 VALIDATOR OPTIMIZATION DETECTED: Using ALL preserved health data")
