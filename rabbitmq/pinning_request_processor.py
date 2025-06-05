@@ -34,6 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Use pinning-specific node URL for reliable connection
+PINNING_NODE_URL = os.getenv('PINNING_NODE_URL', NODE_URL)  # Fallback to NODE_URL if not set
 
 class PinningRequestProcessor:
     """Processor for fetching and queuing user storage requests."""
@@ -47,8 +49,8 @@ class PinningRequestProcessor:
         
     def connect_substrate(self):
         """Connect to the substrate chain."""
-        logger.info(f"Connecting to substrate at {NODE_URL}")
-        self.substrate = SubstrateInterface(url=NODE_URL)
+        logger.info(f"Connecting to substrate at {PINNING_NODE_URL}")
+        self.substrate = SubstrateInterface(url=PINNING_NODE_URL)
         logger.info("Connected to substrate")
         
     async def connect_rabbitmq(self):
@@ -138,30 +140,48 @@ class PinningRequestProcessor:
                 for key, value in result:
                     total_entries += 1
                     
-                    # Handle the key which is a tuple of (account, hash)
-                    if hasattr(key, '__iter__') and len(key) >= 2:
-                        account = str(key[0])
-                        request_hash = str(key[1])
-                        
-                        # Check if value exists (not None)
-                        if value is not None:
-                            # The value might be the dict directly or wrapped in a value attribute
-                            if hasattr(value, 'value'):
-                                actual_value = value.value
+                    # Handle scale_info wrapped keys and values
+                    try:
+                        # Extract account and request_hash from key
+                        if hasattr(key, '__iter__') and len(key) >= 2:
+                            # Handle scale_info wrapped account
+                            account = key[0]
+                            if hasattr(account, 'value'):
+                                account = str(account.value)
                             else:
+                                account = str(account)
+                            
+                            # Handle scale_info wrapped request_hash  
+                            request_hash = key[1]
+                            if hasattr(request_hash, 'value'):
+                                request_hash = str(request_hash.value)
+                            else:
+                                request_hash = str(request_hash)
+                            
+                            # Handle scale_info wrapped value
+                            if value is not None:
                                 actual_value = value
+                                if hasattr(value, 'value'):
+                                    actual_value = value.value
                                 
-                            if actual_value is not None:
-                                storage_data.append([
-                                    [account, request_hash],
-                                    actual_value
-                                ])
+                                if actual_value is not None:
+                                    storage_data.append([
+                                        [account, request_hash],
+                                        actual_value
+                                    ])
+                                    logger.debug(f"Added storage request: {account} -> {request_hash[:16]}...")
+                                else:
+                                    null_entries += 1
+                                    logger.debug(f"Found null value for {account} -> {request_hash}")
                             else:
                                 null_entries += 1
                                 logger.debug(f"Found null entry for {account} -> {request_hash}")
                         else:
-                            null_entries += 1
-                            logger.debug(f"Found null entry for {account} -> {request_hash}")
+                            logger.warning(f"Invalid key format: {key}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error parsing entry {key}: {e}")
+                        continue
                 
                 logger.info(f"Found {total_entries} total entries, {null_entries} with null values")
                 logger.info(f"Fetched {len(storage_data)} active storage requests from substrate")
