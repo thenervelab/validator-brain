@@ -16,6 +16,8 @@ import sys
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
+import httpx  # Add httpx for IPFS gateway requests
+
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -57,6 +59,25 @@ def hex_to_string(hex_string: str) -> str:
         return hex_string
 
 
+async def fetch_ipfs_content(cid: str, gateway: str = "https://ipfs.io/ipfs/") -> Optional[bytes]:
+    """Fetch content from an IPFS gateway."""
+    if not cid:
+        return None
+    
+    url = f"{gateway}{cid}"
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, timeout=30.0)
+            response.raise_for_status()  # Raise an exception for bad status codes
+            return response.content
+        except httpx.HTTPStatusError as e:
+            logger.error(f"IPFS gateway returned error for CID {cid}: {e}")
+            return None
+        except httpx.RequestError as e:
+            logger.error(f"Error fetching CID {cid} from IPFS gateway: {e}")
+            return None
+
+
 class PinningRequestConsumer:
     """Consumer for processing pinning requests."""
     
@@ -95,15 +116,33 @@ class PinningRequestConsumer:
             logger.error(f"Failed to connect: {e}")
             raise
     
+    async def _assign_file_to_owner(self, conn, cid: str, owner: str, filename: Optional[str] = None) -> None:
+        """Helper to create a file_assignments entry for a single CID."""
+        if not cid or not owner:
+            return
+            
+        # Ensure the file exists in the files table first
+        file_name_to_use = filename or f"file_{cid[:8]}"
+        await conn.execute("""
+            INSERT INTO files (cid, name, size)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (cid) DO UPDATE SET
+                name = EXCLUDED.name
+        """, cid, file_name_to_use, 0) # Size will be updated later
+        
+        # Create the file_assignments entry with NULL miners
+        await conn.execute("""
+            INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+            VALUES ($1, $2, NULL, NULL, NULL, NULL, NULL)
+            ON CONFLICT (cid) DO UPDATE SET
+                owner = EXCLUDED.owner,
+                updated_at = CURRENT_TIMESTAMP
+        """, cid, owner)
+        logger.info(f"✅ File {cid[:16]}... added to file_assignments for owner {owner[:16]}...")
+    
     async def process_pinning_request(self, request_data: Dict[str, Any]) -> bool:
         """
-        Process a pinning request.
-        
-        Args:
-            request_data: The request data from the queue
-            
-        Returns:
-            True if processed successfully, False otherwise
+        Process a pinning request, handling manifest CIDs.
         """
         request_hash = request_data.get('request_hash')
         owner = request_data.get('owner')
@@ -114,99 +153,70 @@ class PinningRequestConsumer:
         
         logger.info(f"Processing pinning request: {owner} -> {request_hash[:16]}...")
         
-        # Check if this request has already been processed
         async with self.db_pool.acquire() as conn:
-            existing = await conn.fetchrow("""
-                SELECT id, processed_at 
-                FROM processed_pinning_requests 
-                WHERE request_hash = $1
-            """, request_hash)
-            
+            # Check if this request has already been processed to avoid re-work
+            existing = await conn.fetchrow("SELECT id FROM processed_pinning_requests WHERE request_hash = $1", request_hash)
             if existing:
-                logger.info(f"Request {request_hash[:16]}... already processed at {existing['processed_at']}")
+                logger.info(f"Request {request_hash[:16]}... already processed.")
                 return True
         
         try:
-            # Convert file_hash from hex to CID
             file_hash_hex = request_data.get('file_hash', '')
-            file_cid = hex_to_string(file_hash_hex) if file_hash_hex else ''
+            manifest_cid = hex_to_string(file_hash_hex) if file_hash_hex else ''
             
-            # Extract miner IDs - handle None case
-            miner_ids = request_data.get('miner_ids', [])
-            if miner_ids is None:
-                miner_ids = []
-            miner_count = len(miner_ids)
+            files_processed = 0
             
+            # --- MANIFEST PROCESSING LOGIC ---
+            if manifest_cid:
+                logger.info(f"Attempting to process {manifest_cid} as a manifest file...")
+                manifest_content = await fetch_ipfs_content(manifest_cid)
+                
+                if manifest_content:
+                    try:
+                        manifest_data = json.loads(manifest_content)
+                        if isinstance(manifest_data, list):
+                            logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Contains {len(manifest_data)} files.")
+                            async with self.db_pool.acquire() as conn:
+                                for file_info in manifest_data:
+                                    # Assuming file_info is a dict with 'cid' and optional 'name'
+                                    if isinstance(file_info, dict):
+                                        file_cid = file_info.get('cid')
+                                        file_name = file_info.get('name')
+                                        await self._assign_file_to_owner(conn, file_cid, owner, file_name)
+                                        files_processed += 1
+                                    else:
+                                        logger.warning(f"Skipping invalid item in manifest: {file_info}")
+                        else:
+                            # Content is valid JSON but not a list, treat as single file
+                            logger.warning(f"Content for CID {manifest_cid} is not a list. Treating as a single file.")
+                            async with self.db_pool.acquire() as conn:
+                                await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
+                            files_processed = 1
+                            
+                    except json.JSONDecodeError:
+                        # Not a JSON file, treat as a single file CID
+                        logger.warning(f"Content for CID {manifest_cid} is not JSON. Treating as a single file.")
+                        async with self.db_pool.acquire() as conn:
+                            await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
+                        files_processed = 1
+                else:
+                    # Could not fetch content, assume it's a direct file CID
+                    logger.warning(f"Could not fetch content for CID {manifest_cid}. Treating as a single file.")
+                    async with self.db_pool.acquire() as conn:
+                        await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
+                    files_processed = 1
+            
+            # --- END MANIFEST LOGIC ---
+            
+            # Record that we've processed this top-level request
             async with self.db_pool.acquire() as conn:
-                # Insert or update the pinning request
-                await conn.execute("""
-                    INSERT INTO pinning_requests (
-                        request_hash, owner, file_hash, file_name, 
-                        total_replicas, is_assigned, selected_validator,
-                        created_at, last_charged_at
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                    ON CONFLICT (request_hash) DO UPDATE SET
-                        owner = EXCLUDED.owner,
-                        file_hash = EXCLUDED.file_hash,
-                        file_name = EXCLUDED.file_name,
-                        total_replicas = EXCLUDED.total_replicas,
-                        is_assigned = EXCLUDED.is_assigned,
-                        selected_validator = EXCLUDED.selected_validator,
-                        last_charged_at = EXCLUDED.last_charged_at,
-                        updated_at = CURRENT_TIMESTAMP
-                """, 
-                    request_hash,
-                    owner,
-                    file_cid,
-                    request_data.get('file_name', ''),
-                    request_data.get('total_replicas', 0),
-                    request_data.get('is_assigned', False),
-                    request_data.get('selected_validator', ''),
-                    request_data.get('created_at', 0),
-                    request_data.get('last_charged_at', 0)
-                )
-                
-                # If we have a valid file CID, create file_assignments entry with NULL miners
-                if file_cid:
-                    # Always ensure the file exists in the files table
-                    file_name = request_data.get('file_name', '') or f"file_{file_cid[:8]}"
-                    await conn.execute("""
-                        INSERT INTO files (cid, name, size)
-                        VALUES ($1, $2, $3)
-                        ON CONFLICT (cid) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            size = EXCLUDED.size
-                    """, file_cid, file_name, 0)  # Default size to 0, will be updated by file processor
-                    
-                    # SIMPLE APPROACH: Always create file_assignments with NULL miners
-                    # Let the orchestrator's assignment logic handle miner selection
-                    logger.info(f"📋 Creating file_assignments entry with NULL miners for orchestrator processing")
-                    
-                    await conn.execute("""
-                        INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
-                        VALUES ($1, $2, NULL, NULL, NULL, NULL, NULL)
-                        ON CONFLICT (cid) DO UPDATE SET
-                            owner = EXCLUDED.owner,
-                            updated_at = CURRENT_TIMESTAMP
-                    """, file_cid, owner)
-                    
-                    logger.info(f"✅ File {file_cid[:16]}... added to file_assignments with NULL miners")
-                    logger.info(f"   🎯 Orchestrator will assign miners during next assignment phase")
-                
-                # Record that we've processed this request
                 await conn.execute("""
                     INSERT INTO processed_pinning_requests (request_hash, miner_count)
-                    VALUES ($1, $2)
-                    ON CONFLICT (request_hash) DO UPDATE SET
-                        processed_at = CURRENT_TIMESTAMP,
-                        miner_count = EXCLUDED.miner_count
-                """, request_hash, miner_count)
-                
-                logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}...")
-                logger.info(f"   📋 File {file_cid[:16]}... added to file_assignments with NULL miners")
-                logger.info(f"   🎯 Orchestrator will assign miners during next assignment phase")
-                return True
+                    VALUES ($1, $2) ON CONFLICT DO NOTHING
+                """, request_hash, files_processed)
+            
+            logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}..., resulting in {files_processed} file assignments.")
+            return True
                 
         except Exception as e:
             logger.error(f"Error processing pinning request for {owner} (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")
