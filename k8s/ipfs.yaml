@@ -5,7 +5,7 @@ metadata:
   labels:
     app: ipfs
 spec:
-  replicas: 1 # Reduced for simplicity in this example; adjust as needed
+  replicas: 20
   selector:
     matchLabels:
       app: ipfs
@@ -14,9 +14,9 @@ spec:
       labels:
         app: ipfs
     spec:
-      volumes: # Define volumes at the pod level
+      volumes:
       - name: ipfs-storage
-        emptyDir: {} # Ephemeral storage, lost if pod is deleted. Use PVC for persistence.
+        emptyDir: {} # Replace with PVC for production
       containers:
       - name: ipfs
         image: ipfs/kubo:v0.35.0
@@ -42,9 +42,16 @@ spec:
           value: "8192"
         - name: IPFS_API
           value: "/ip4/0.0.0.0/tcp/5001"
-        - name: IPFS_PATH # Important: Tell IPFS where to store its data
+        - name: IPFS_PATH
           value: "/data/ipfs"
-        volumeMounts: # Mount the volume into the container
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          ipfs config Discovery.MDNS.Enabled false &&
+          ipfs config Swarm.ConnMgr.HighWater 200 &&
+          ipfs config Swarm.ConnMgr.LowWater 50 &&
+          ipfs daemon
+        volumeMounts:
         - name: ipfs-storage
           mountPath: /data/ipfs
         resources:
@@ -62,24 +69,24 @@ spec:
         startupProbe:
           httpGet:
             path: /api/v0/version
-            port: 5001 # Ensure this matches your IPFS_API port
-          initialDelaySeconds: 10 # How long to wait before the first probe
-          periodSeconds: 10       # How often to probe
-          failureThreshold: 18    # 18 * 10s = 3 minutes for startup. If it fails 18 times, it's restarted.
+            port: 5001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 18
           timeoutSeconds: 5
         livenessProbe:
           httpGet:
             path: /api/v0/version
             port: 5001
-          initialDelaySeconds: 30 # This delay starts *after* startupProbe succeeds or if no startupProbe
+          initialDelaySeconds: 30
           periodSeconds: 15
           timeoutSeconds: 5
-          failureThreshold: 3 # Default, but good to be explicit
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /api/v0/version
             port: 5001
-          initialDelaySeconds: 15 # This delay starts *after* startupProbe succeeds or if no startupProbe
+          initialDelaySeconds: 15
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
@@ -95,19 +102,19 @@ spec:
     app: ipfs
   ports:
   - port: 4001
-    targetPort: 4001 # Can use name: swarm-tcp here if you prefer
+    targetPort: swarm-tcp
     name: swarm-tcp
     protocol: TCP
   - port: 4001
-    targetPort: 4001 # Can use name: swarm-udp
+    targetPort: swarm-udp
     name: swarm-udp
     protocol: UDP
   - port: 5001
-    targetPort: 5001 # Can use name: api
+    targetPort: api
     name: api
     protocol: TCP
   - port: 8080
-    targetPort: 8080 # Can use name: gateway
+    targetPort: gateway
     name: gateway
     protocol: TCP
   type: ClusterIP

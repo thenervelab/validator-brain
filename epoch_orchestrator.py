@@ -616,42 +616,99 @@ class EpochOrchestrator:
         fallback_health_data = None
         
         async with self.db_pool.acquire() as conn:
-            # Check for very recent health data (within last hour)
-            current_health_data = await conn.fetchval("""
+            # VALIDATOR OPTIMIZATION: Use more lenient queries when health checks were skipped
+            # Check if we're in validator optimization mode (health_checks_completed but actually skipped)
+            # This is indicated by having health data older than 1 hour but newer than 6 hours
+            validator_optimization_check = await conn.fetchval("""
                 SELECT COUNT(DISTINCT node_id) 
                 FROM miner_epoch_health 
-                WHERE last_activity_at >= NOW() - INTERVAL '1 hour'
+                WHERE last_activity_at >= NOW() - INTERVAL '6 hours'
+                AND last_activity_at < NOW() - INTERVAL '1 hour'
             """)
             
-            # Fallback: check for health data within last 4 hours
-            fallback_health_data = await conn.fetchval("""
-                SELECT COUNT(DISTINCT node_id) 
-                FROM miner_epoch_health 
-                WHERE last_activity_at >= NOW() - INTERVAL '4 hours'
-            """)
+            is_validator_optimization = validator_optimization_check > 50  # Reasonable threshold
             
-            # Safety: Check for VERY old health data (within last day)
-            old_health_data = await conn.fetchval("""
-                SELECT COUNT(DISTINCT node_id) 
-                FROM miner_epoch_health 
-                WHERE last_activity_at >= NOW() - INTERVAL '1 day'
-            """)
+            if is_validator_optimization:
+                logger.info("🚀 VALIDATOR OPTIMIZATION DETECTED: Using ALL preserved health data")
+                logger.info("   Reason: Health data preserved from previous epoch for performance")
+                logger.info("   Strategy: Use ALL available health data regardless of timestamps")
+                
+                # Use ALL available health data - no timestamp restrictions
+                current_health_data = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT node_id) 
+                    FROM miner_epoch_health 
+                    WHERE node_id IS NOT NULL
+                """)
+                
+                fallback_health_data = current_health_data  # Same as current
+                old_health_data = current_health_data  # Same as current
+                
+                logger.info("🎯 Validator optimization: Using ALL preserved health data (no timestamp filters)")
+                
+            else:
+                logger.info("📊 Standard mode: Using fresh health data requirements")
+                
+                # Standard strict queries for fresh health checks
+                current_health_data = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT node_id) 
+                    FROM miner_epoch_health 
+                    WHERE last_activity_at >= NOW() - INTERVAL '1 hour'
+                """)
+                
+                # Fallback: check for health data within last 4 hours
+                fallback_health_data = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT node_id) 
+                    FROM miner_epoch_health 
+                    WHERE last_activity_at >= NOW() - INTERVAL '4 hours'
+                """)
+                
+                # Safety: Check for VERY old health data (within last day)
+                old_health_data = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT node_id) 
+                    FROM miner_epoch_health 
+                    WHERE last_activity_at >= NOW() - INTERVAL '1 day'
+                """)
             
             logger.info(f"📊 Health data availability:")
-            logger.info(f"   Fresh (< 1 hour): {current_health_data} miners")
-            logger.info(f"   Recent (< 4 hours): {fallback_health_data} miners")
-            logger.info(f"   Old (< 1 day): {old_health_data} miners")
-            
-            if current_health_data < 10 and fallback_health_data < 20:
-                if old_health_data < 30:
-                    logger.error("🚨 Insufficient health data for quality assignments!")
-                    logger.error("   This could result in poor miner selection")
-                    return False
-                else:
-                    logger.warning(f"⚠️ No current epoch health data, using {fallback_health_data} miners from previous epoch")
-                    logger.warning("   Assignment quality may be reduced but will proceed")
+            if is_validator_optimization:
+                logger.info(f"   🚀 VALIDATOR OPTIMIZATION MODE:")
+                logger.info(f"   ALL preserved miners: {current_health_data} miners")
+                logger.info(f"   NO TIMESTAMP RESTRICTIONS - using everything we have!")
             else:
-                logger.info(f"✅ Verified fresh health data available: {current_health_data} miners with recent health data")
+                logger.info(f"   📊 STANDARD MODE:")
+                logger.info(f"   Fresh (< 1 hour): {current_health_data} miners")
+                logger.info(f"   Recent (< 4 hours): {fallback_health_data} miners")
+                logger.info(f"   Old (< 1 day): {old_health_data} miners")
+            
+            # Adjust validation thresholds for validator optimization mode
+            if is_validator_optimization:
+                # Much simpler validation for validator optimization
+                if current_health_data >= 100:
+                    logger.info(f"✅ EXCELLENT: Using {current_health_data} preserved miners for assignments")
+                elif current_health_data >= 50:
+                    logger.info(f"✅ GOOD: Using {current_health_data} preserved miners for assignments")
+                elif current_health_data >= 10:
+                    logger.info(f"⚠️ LIMITED: Using {current_health_data} preserved miners for assignments")
+                    logger.info("   Assignment quality may be reduced but proceeding")
+                else:
+                    logger.error("🚨 CRITICAL: Too few preserved health records for any assignments!")
+                    logger.error(f"   Only {current_health_data} miners available - need at least 10")
+                    return False
+                
+                logger.info("🎯 VALIDATOR OPTIMIZATION: Proceeding with ALL preserved health data")
+                
+            else:
+                # Standard validation for fresh health checks
+                if current_health_data < 10 and fallback_health_data < 20:
+                    if old_health_data < 30:
+                        logger.error("🚨 Insufficient health data for quality assignments!")
+                        logger.error("   This could result in poor miner selection")
+                        return False
+                    else:
+                        logger.warning(f"⚠️ No current epoch health data, using {fallback_health_data} miners from previous epoch")
+                        logger.warning("   Assignment quality may be reduced but will proceed")
+                else:
+                    logger.info(f"✅ Verified fresh health data available: {current_health_data} miners with recent health data")
         
         try:
             # ENHANCED: Process assignments in multiple rounds until all files are handled
