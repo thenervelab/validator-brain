@@ -107,8 +107,13 @@ class EpochHealthProcessor:
             # Fallback to a default epoch
             return 0
     
-    async def clear_epoch_health_data(self, epoch: int) -> None:
-        """Preserve existing health data and mark as stale for the new epoch."""
+    async def clear_epoch_health_data(self, current_epoch: int) -> None:
+        """Preserve health data from the PREVIOUS epoch and mark it as stale."""
+        if current_epoch == 0:
+            logger.info("Epoch 0, no previous epoch data to mark as stale.")
+            return
+
+        previous_epoch = current_epoch - 1
         async with self.db_pool.acquire() as conn:
             try:
                 # CONSERVATIVE APPROACH: Preserve health data, just mark as stale
@@ -118,8 +123,8 @@ class EpochHealthProcessor:
                     SET 
                         is_stale = true,
                         archived_at = NOW()
-                    WHERE epoch = $1 AND is_stale IS NOT true
-                """, epoch)
+                    WHERE epoch = $1 AND (is_stale IS NOT true OR is_stale IS NULL)
+                """, previous_epoch)
                 
                 # Add is_stale column if it doesn't exist (migration-safe)
                 try:
@@ -131,12 +136,23 @@ class EpochHealthProcessor:
                 except Exception as alter_e:
                     logger.debug(f"Columns may already exist: {alter_e}")
                 
-                logger.info(f"✅ PRESERVED health data for epoch {epoch} - marked as stale instead of deleting")
+                updated_count = 0
+                if result and 'UPDATE' in result:
+                    try:
+                        updated_count = int(result.split(' ')[-1])
+                    except ValueError:
+                        logger.warning(f"Could not parse update count from: {result}")
+
+                if updated_count > 0:
+                    logger.info(f"✅ PRESERVED health data for PREVIOUS epoch {previous_epoch} ({updated_count} records marked as stale)")
+                else:
+                    logger.info(f"ℹ️ No health data from PREVIOUS epoch {previous_epoch} found to mark as stale, or already marked.")
                 logger.info(f"   This maintains historical health data for trend analysis and debugging")
                 
             except Exception as e:
-                logger.error(f"Error preserving epoch health data: {e}")
-                raise
+                logger.error(f"Error preserving epoch health data for epoch {previous_epoch}: {e}")
+                # Do not raise here, allow the processor to continue for the current epoch
+                # raise
     
     async def fetch_all_miners(self) -> List[Dict[str, Any]]:
         """

@@ -5,7 +5,7 @@ metadata:
   labels:
     app: ipfs
 spec:
-  replicas: 1
+  replicas: 20
   selector:
     matchLabels:
       app: ipfs
@@ -16,7 +16,7 @@ spec:
     spec:
       volumes:
       - name: ipfs-storage
-        emptyDir: {} # Replace with PVC for production (see below)
+        emptyDir: {} # Replace with PVC for production
       containers:
       - name: ipfs
         image: ipfs/kubo:v0.35.0
@@ -40,8 +40,6 @@ spec:
           value: "error"
         - name: IPFS_FD_MAX
           value: "8192"
-        - name: IPFS_API
-          value: "/ip4/0.0.0.0/tcp/5001"
         - name: IPFS_PATH
           value: "/data/ipfs"
         command: ["/bin/sh", "-c"]
@@ -50,6 +48,8 @@ spec:
           if [ ! -f "$IPFS_PATH/config" ]; then
             ipfs init --profile server
           fi &&
+          ipfs config Addresses.API /ip4/0.0.0.0/tcp/5001 &&
+          ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080 &&
           ipfs daemon
         volumeMounts:
         - name: ipfs-storage
