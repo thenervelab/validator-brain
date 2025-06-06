@@ -59,22 +59,29 @@ def hex_to_string(hex_string: str) -> str:
         return hex_string
 
 
-async def fetch_ipfs_content(cid: str, gateway: str = "https://ipfs.io/ipfs/") -> Optional[bytes]:
-    """Fetch content from an IPFS gateway."""
+async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[bytes]:
+    """Fetch content from the local IPFS node."""
     if not cid:
         return None
     
-    url = f"{gateway}{cid}"
+    # Use local IPFS service by default
+    if ipfs_node_url is None:
+        ipfs_node_url = os.getenv("IPFS_NODE_URL", "http://ipfs-service:5001")
+    
+    # Use the local IPFS node's gateway
+    url = f"{ipfs_node_url}/api/v0/cat?arg={cid}"
+    
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=30.0)
-            response.raise_for_status()  # Raise an exception for bad status codes
+            response = await client.post(url, timeout=30.0)
+            response.raise_for_status()
+            logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from local IPFS")
             return response.content
         except httpx.HTTPStatusError as e:
-            logger.error(f"IPFS gateway returned error for CID {cid}: {e}")
+            logger.error(f"IPFS node returned error for CID {cid}: {e}")
             return None
         except httpx.RequestError as e:
-            logger.error(f"Error fetching CID {cid} from IPFS gateway: {e}")
+            logger.error(f"Error fetching CID {cid} from local IPFS: {e}")
             return None
 
 
@@ -203,7 +210,7 @@ class PinningRequestConsumer:
     
     async def process_pinning_request(self, request_data: Dict[str, Any]) -> bool:
         """
-        Process a pinning request, handling manifest CIDs.
+        Process a pinning request, handling manifest CIDs from blockchain storage requests.
         """
         request_hash = request_data.get('request_hash')
         owner = request_data.get('owner')
@@ -212,75 +219,115 @@ class PinningRequestConsumer:
             logger.error(f"Invalid request data: missing request_hash or owner. Data: {request_data}")
             return False
         
-        logger.info(f"Processing pinning request: {owner} -> {request_hash[:16]}...")
+        logger.info(f"🔍 Processing storage request: {owner[:20]}... -> {request_hash[:16]}...")
         
         async with self.db_pool.acquire() as conn:
             # Check if this request has already been processed to avoid re-work
             existing = await conn.fetchrow("SELECT id FROM processed_pinning_requests WHERE request_hash = $1", request_hash)
             if existing:
-                logger.info(f"Request {request_hash[:16]}... already processed.")
+                logger.info(f"✅ Request {request_hash[:16]}... already processed.")
                 return True
         
         try:
             file_hash_hex = request_data.get('file_hash', '')
             manifest_cid = hex_to_string(file_hash_hex) if file_hash_hex else ''
             
+            if not manifest_cid:
+                logger.error(f"❌ No file_hash found in storage request {request_hash[:16]}...")
+                return False
+            
             files_processed = 0
             
-            # --- MANIFEST PROCESSING LOGIC ---
-            if manifest_cid:
-                logger.info(f"Attempting to process {manifest_cid} as a manifest file...")
-                manifest_content = await fetch_ipfs_content(manifest_cid)
-                
-                if manifest_content:
-                    try:
-                        manifest_data = json.loads(manifest_content)
-                        if isinstance(manifest_data, list):
-                            logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Contains {len(manifest_data)} files.")
-                            async with self.db_pool.acquire() as conn:
-                                for file_info in manifest_data:
-                                    # Assuming file_info is a dict with 'cid' and optional 'name'
-                                    if isinstance(file_info, dict):
-                                        file_cid = file_info.get('cid')
-                                        file_name = file_info.get('filename')
+            logger.info(f"📋 Processing manifest CID: {manifest_cid}")
+            
+            # Try to fetch and parse the manifest
+            manifest_content = await fetch_ipfs_content(manifest_cid)
+            
+            if manifest_content:
+                # Successfully fetched manifest content
+                try:
+                    manifest_data = json.loads(manifest_content)
+                    
+                    if isinstance(manifest_data, list):
+                        # Valid manifest format - list of files
+                        logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Contains {len(manifest_data)} files.")
+                        
+                        async with self.db_pool.acquire() as conn:
+                            for i, file_info in enumerate(manifest_data):
+                                if isinstance(file_info, dict):
+                                    file_cid = file_info.get('cid')
+                                    file_name = file_info.get('filename') or file_info.get('name') or f"file_{i+1}.bin"
+                                    
+                                    if file_cid:
                                         await self._assign_file_to_owner(conn, file_cid, owner, file_name)
                                         files_processed += 1
+                                        logger.info(f"  📄 Processed file {i+1}/{len(manifest_data)}: {file_name} ({file_cid[:16]}...)")
                                     else:
-                                        logger.warning(f"Skipping invalid item in manifest: {file_info}")
-                        else:
-                            # Content is valid JSON but not a list, treat as single file
-                            logger.warning(f"Content for CID {manifest_cid} is not a list. Treating as a single file.")
+                                        logger.warning(f"  ⚠️ Skipping manifest entry {i+1}: missing 'cid' field in {file_info}")
+                                elif isinstance(file_info, str):
+                                    # Handle simple string CID format
+                                    file_name = f"file_{i+1}.bin"
+                                    await self._assign_file_to_owner(conn, file_info, owner, file_name)
+                                    files_processed += 1
+                                    logger.info(f"  📄 Processed file {i+1}/{len(manifest_data)}: {file_name} ({file_info[:16]}...)")
+                                else:
+                                    logger.warning(f"  ⚠️ Skipping invalid manifest entry {i+1}: {file_info}")
+                        
+                        logger.info(f"✅ Processed {files_processed} files from manifest")
+                        
+                    elif isinstance(manifest_data, dict):
+                        # Single file object format
+                        logger.info(f"📄 Manifest contains single file object")
+                        file_cid = manifest_data.get('cid')
+                        file_name = manifest_data.get('filename') or manifest_data.get('name') or 'manifest_file.bin'
+                        
+                        if file_cid:
                             async with self.db_pool.acquire() as conn:
-                                await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
+                                await self._assign_file_to_owner(conn, file_cid, owner, file_name)
                             files_processed = 1
-                            
-                    except json.JSONDecodeError:
-                        # Not a JSON file, treat as a single file CID
-                        logger.warning(f"Content for CID {manifest_cid} is not JSON. Treating as a single file.")
+                        else:
+                            # No CID in manifest, treat manifest itself as the file
+                            logger.info(f"📄 No CID in manifest object, treating manifest CID as file")
+                            async with self.db_pool.acquire() as conn:
+                                await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'manifest.json')
+                            files_processed = 1
+                    else:
+                        # Not a JSON object/array, treat as raw file
+                        logger.info(f"📄 Manifest content is not JSON structure, treating as raw file")
                         async with self.db_pool.acquire() as conn:
-                            await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
+                            await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'data.bin')
                         files_processed = 1
-                else:
-                    # Could not fetch content, assume it's a direct file CID
-                    logger.warning(f"Could not fetch content for CID {manifest_cid}. Treating as a single file.")
+                        
+                except json.JSONDecodeError:
+                    # Not a JSON file, treat manifest CID as a single file
+                    logger.info(f"📄 Manifest CID {manifest_cid} is not JSON, treating as single file")
                     async with self.db_pool.acquire() as conn:
-                        await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name'))
+                        await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'data.bin')
                     files_processed = 1
+                    
+            else:
+                # Could not fetch manifest content from local IPFS
+                logger.warning(f"⚠️ Could not fetch manifest content for CID {manifest_cid} from local IPFS")
+                logger.info(f"📄 This might be a storage request for a manifest that needs to be pinned first")
+                logger.info(f"📄 Treating manifest CID as a single file to be pinned")
+                
+                # Treat the manifest CID itself as a file to be pinned
+                async with self.db_pool.acquire() as conn:
+                    await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'manifest.json')
+                files_processed = 1
             
-            # --- END MANIFEST LOGIC ---
-            
-            # Record that we've processed this top-level request
+            # Record that we've processed this storage request
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO processed_pinning_requests (request_hash, miner_count)
                     VALUES ($1, $2) ON CONFLICT DO NOTHING
                 """, request_hash, files_processed)
             
-            logger.info(f"✅ Successfully processed pinning request {request_hash[:16]}..., resulting in {files_processed} file assignments.")
+            logger.info(f"✅ Successfully processed storage request {request_hash[:16]}..., resulting in {files_processed} file assignments.")
             return True
                 
         except Exception as e:
-            logger.error(f"Error processing pinning request for {owner} (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")
+            logger.error(f"❌ Error processing storage request for {owner[:20]}... (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")
             logger.exception("Full traceback:")
             return False
     
