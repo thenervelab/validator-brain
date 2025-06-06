@@ -477,52 +477,47 @@ class EpochOrchestrator:
         return success
     
     async def process_pinning_requests(self) -> bool:
-        """Process pinning requests (validator only) - ENHANCED: Process ALL requests."""
-        logger.info("📌 Processing pinning requests (ENHANCED: Process ALL)")
-        
-        # Run pinning request processor multiple times until all requests are processed
-        total_rounds = 0
-        max_rounds = 5  # Safety limit to prevent infinite loops
-        
-        while total_rounds < max_rounds:
-            total_rounds += 1
-            logger.info(f"📌 Pinning requests processing - Round {total_rounds}")
-            
-            # Check if there are still unprocessed requests
-            async with self.db_pool.acquire() as conn:
-                unprocessed_count = await conn.fetchval("""
-                    SELECT COUNT(*) FROM pinning_requests pr
-                    WHERE pr.file_hash IS NOT NULL 
-                    AND pr.file_hash != ''
-                    AND NOT EXISTS (
-                        SELECT 1 FROM pending_assignment_file paf 
-                        WHERE paf.owner = pr.owner 
-                        AND paf.cid = pr.file_hash
-                    )
-                """)
-                
-                logger.info(f"📊 Round {total_rounds}: {unprocessed_count} unprocessed pinning requests")
-                
-                if unprocessed_count == 0:
-                    logger.info("✅ ALL pinning requests processed successfully!")
-                    break
-        
+        """
+        Process pinning requests by running the necessary processors and waiting for queues.
+        This is a two-stage process:
+        1. Fetch pinning requests from the chain.
+        2. Process the files from those requests to get their sizes.
+        """
+        logger.info("📌 Processing all new pinning requests from the blockchain...")
+
+        # Step 1: Run the processor to fetch requests from the chain and put them on the queue
+        logger.info("   Running pinning_request_processor.py to fetch new requests...")
         success = self.run_processor(
             'pinning_request_processor.py',
-                f'Pinning requests processing (Round {total_rounds})'
+            'Pinning requests processing'
         )
-        
-        if success:
-            # Wait for pinning request consumer to process
-            await self.wait_for_queues_empty(['pinning_request'], 300)
-            logger.info(f"✅ Pinning requests round {total_rounds} completed")
-        else:
-            logger.error(f"❌ Pinning requests round {total_rounds} failed")
+        if not success:
+            logger.error("❌ Pinning request processor script failed to run.")
             return False
-        
-        if total_rounds >= max_rounds:
-            logger.warning(f"⚠️ Reached maximum rounds ({max_rounds}) for pinning requests processing")
-        
+        logger.info("   ✅ Pinning request processor completed.")
+
+        # Step 2: Wait for the consumer to process the messages from the queue
+        logger.info("   ⏳ Waiting for 'pinning_request' queue to be processed...")
+        await self.wait_for_queues_empty(['pinning_request'], 300)
+        logger.info("   ✅ 'pinning_request' queue processed.")
+
+        # Step 3: Now, run the file processor to get file sizes for the new requests
+        logger.info("   📁 Running pinning_file_processor.py to get file sizes...")
+        success = self.run_processor(
+            'pinning_file_processor.py',
+            'Pinning files processing'
+        )
+        if not success:
+            logger.error("❌ Pinning file processor script failed to run.")
+            return False
+        logger.info("   ✅ Pinning file processor completed.")
+
+        # Step 4: Wait for the file consumer to process the files and write to the 'files' table
+        logger.info("   ⏳ Waiting for 'pinning_file_processing' queue to be processed...")
+        await self.wait_for_queues_empty(['pinning_file_processing'], 600)
+        logger.info("   ✅ 'pinning_file_processing' queue processed.")
+
+        logger.info("✅ All new pinning requests and their files have been processed.")
         return True
     
     async def process_pinning_files(self) -> bool:

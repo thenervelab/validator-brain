@@ -79,6 +79,9 @@ class NodeMetricsProcessor:
             Parsed metrics dictionary or None if data is invalid
         """
         try:
+            # AGGRESSIVE DEBUGGING: Log the raw metrics data to see its structure
+            logger.info(f"DEBUG: Raw metrics data for {miner_id}: {json.dumps(metrics_data, indent=2)}")
+
             # Handle both camelCase and snake_case field names
             ipfs_repo_size = metrics_data.get('ipfs_repo_size', metrics_data.get('ipfsRepoSize'))
             
