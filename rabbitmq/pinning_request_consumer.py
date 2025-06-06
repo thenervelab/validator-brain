@@ -94,13 +94,37 @@ async def fetch_ipfs_file_size(cid: str, gateway_api: str = "https://get.hippius
             stats = response.json()
             size = stats.get("Size") # Use 'Size' from files/stat
             if size is not None:
-                logger.info(f"✅ Fetched size for CID {cid}: {size} bytes")
+                logger.info(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes")
                 return int(size)
             else:
                 logger.warning(f"Could not determine size from files/stat for CID {cid}. Stats: {stats}")
-                return 0
+                # Try fallback with block/stat
+                return await _fetch_ipfs_file_size_fallback_gateway(cid, gateway_api)
         except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as e:
             logger.error(f"Error fetching file size for CID {cid} via files/stat: {e}")
+            # Try fallback with block/stat
+            return await _fetch_ipfs_file_size_fallback_gateway(cid, gateway_api)
+
+
+async def _fetch_ipfs_file_size_fallback_gateway(cid: str, gateway_api: str) -> Optional[int]:
+    """Fallback method using block/stat for gateway."""
+    block_url = f"{gateway_api}block/stat"
+    params = {"arg": cid}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(block_url, params=params, timeout=30.0)
+            response.raise_for_status()
+            stats = response.json()
+            size = stats.get("Size")
+            if size is not None:
+                logger.info(f"✅ Fetched block size (fallback) for CID {cid[:16]}...: {size:,} bytes")
+                return int(size)
+            else:
+                logger.error(f"Could not determine size from block/stat fallback for CID {cid}. Stats: {stats}")
+                return 0
+        except Exception as e:
+            logger.error(f"Fallback method also failed for CID {cid}: {e}")
             return 0
 
 
