@@ -143,7 +143,7 @@ class PinningRequestProcessor:
                     # Handle scale_info wrapped keys and values
                     try:
                         # Extract account and request_hash from key
-                    if hasattr(key, '__iter__') and len(key) >= 2:
+                        if hasattr(key, '__iter__') and len(key) >= 2:
                             # Handle scale_info wrapped account
                             account = key[0]
                             if hasattr(account, 'value'):
@@ -164,11 +164,11 @@ class PinningRequestProcessor:
                                 if hasattr(value, 'value'):
                                     actual_value = value.value
                                 
-                            if actual_value is not None:
-                                storage_data.append([
-                                    [account, request_hash],
-                                    actual_value
-                                ])
+                                if actual_value is not None:
+                                    storage_data.append([
+                                        [account, request_hash],
+                                        actual_value
+                                    ])
                                     logger.debug(f"Added storage request: {account} -> {request_hash[:16]}...")
                                 else:
                                     null_entries += 1
