@@ -78,13 +78,17 @@ async def fetch_ipfs_content(cid: str, gateway: str = "https://ipfs.io/ipfs/") -
             return None
 
 
-async def fetch_ipfs_file_size(cid: str, gateway_api: str = "https://get.hippius.network/api/v0/") -> Optional[int]:
-    """Fetch file size using the IPFS gateway's files/stat API."""
+async def fetch_ipfs_file_size(cid: str, ipfs_node_url: str = None) -> Optional[int]:
+    """Fetch file size using the local IPFS node's files/stat API."""
     if not cid:
         return None
     
-    # Use the more accurate /files/stat endpoint
-    stat_url = f"{gateway_api}files/stat"
+    # Use local IPFS service by default, fall back to environment variable
+    if ipfs_node_url is None:
+        ipfs_node_url = os.getenv("IPFS_NODE_URL", "http://ipfs-service:5001")
+    
+    # Use the local IPFS node's /files/stat endpoint
+    stat_url = f"{ipfs_node_url}/api/v0/files/stat"
     params = {"arg": f"/ipfs/{cid}"}
     
     async with httpx.AsyncClient() as client:
@@ -94,21 +98,21 @@ async def fetch_ipfs_file_size(cid: str, gateway_api: str = "https://get.hippius
             stats = response.json()
             size = stats.get("Size") # Use 'Size' from files/stat
             if size is not None:
-                logger.info(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes")
+                logger.info(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
                 return int(size)
             else:
                 logger.warning(f"Could not determine size from files/stat for CID {cid}. Stats: {stats}")
                 # Try fallback with block/stat
-                return await _fetch_ipfs_file_size_fallback_gateway(cid, gateway_api)
+                return await _fetch_ipfs_file_size_fallback_local(cid, ipfs_node_url)
         except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as e:
-            logger.error(f"Error fetching file size for CID {cid} via files/stat: {e}")
+            logger.error(f"Error fetching file size for CID {cid} via local files/stat: {e}")
             # Try fallback with block/stat
-            return await _fetch_ipfs_file_size_fallback_gateway(cid, gateway_api)
+            return await _fetch_ipfs_file_size_fallback_local(cid, ipfs_node_url)
 
 
-async def _fetch_ipfs_file_size_fallback_gateway(cid: str, gateway_api: str) -> Optional[int]:
-    """Fallback method using block/stat for gateway."""
-    block_url = f"{gateway_api}block/stat"
+async def _fetch_ipfs_file_size_fallback_local(cid: str, ipfs_node_url: str) -> Optional[int]:
+    """Fallback method using block/stat for local IPFS service."""
+    block_url = f"{ipfs_node_url}/api/v0/block/stat"
     params = {"arg": cid}
     
     async with httpx.AsyncClient() as client:
@@ -118,13 +122,13 @@ async def _fetch_ipfs_file_size_fallback_gateway(cid: str, gateway_api: str) -> 
             stats = response.json()
             size = stats.get("Size")
             if size is not None:
-                logger.info(f"✅ Fetched block size (fallback) for CID {cid[:16]}...: {size:,} bytes")
+                logger.info(f"✅ Fetched block size (fallback) for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
                 return int(size)
             else:
                 logger.error(f"Could not determine size from block/stat fallback for CID {cid}. Stats: {stats}")
                 return 0
         except Exception as e:
-            logger.error(f"Fallback method also failed for CID {cid}: {e}")
+            logger.error(f"Local IPFS fallback method also failed for CID {cid}: {e}")
             return 0
 
 
