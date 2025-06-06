@@ -646,6 +646,9 @@ class EpochOrchestrator:
                     ORDER BY pr.created_at ASC
                 """)
                 
+                # DEBUG LOGGING: Print raw storage requests from DB
+                logger.info(f"DEBUG: Raw storage requests from DB: {rows}")
+
                 for row in rows:
                     # Convert to the format expected by ValidatorWorkflow
                     storage_request = (
@@ -666,19 +669,32 @@ class EpochOrchestrator:
             miner_profiles = []
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch("""
-                    SELECT r.node_id, r.ipfs_peer_id, r.owner_account,
-                           COALESCE(ms.storage_capacity_bytes, 1000000000) as storage_capacity_bytes,
-                           COALESCE(ms.total_files_pinned, 0) as total_files_pinned,
-                           COALESCE(ms.total_files_size_bytes, 0) as total_files_size_bytes,
-                           COALESCE(ms.health_score, 100) as health_score
+                    SELECT 
+                        r.node_id, 
+                        r.ipfs_peer_id, 
+                        r.owner_account,
+                        COALESCE(nm.ipfs_storage_max, ms.storage_capacity_bytes, 1000000000) as storage_capacity_bytes,
+                        COALESCE(ms.total_files_pinned, 0) as total_files_pinned,
+                        COALESCE(ms.total_files_size_bytes, 0) as total_files_size_bytes,
+                        COALESCE(ms.health_score, 100) as health_score
                     FROM registration r
                     LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
+                    LEFT JOIN (
+                        SELECT DISTINCT ON (miner_id)
+                            miner_id,
+                            ipfs_storage_max
+                        FROM node_metrics
+                        ORDER BY miner_id, block_number DESC
+                    ) nm ON r.node_id = nm.miner_id
                     WHERE r.node_type = 'StorageMiner' 
                     AND r.status = 'active'
                     AND COALESCE(ms.health_score, 100) >= 1.0
                     ORDER BY COALESCE(ms.health_score, 100) DESC
                 """)
                 
+                # DEBUG LOGGING: Print raw miner profiles from DB
+                logger.info(f"DEBUG: Raw miner profiles from DB: {rows}")
+
                 for row in rows:
                     # Convert to the format expected by ValidatorWorkflow
                     miner_profile = {
