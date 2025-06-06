@@ -27,6 +27,7 @@ data:
   
   # Blockchain Configuration
   NODE_URL: "wss://rpc.hippius.network"
+  PINNING_NODE_URL: "ws://192.168.1.107:9944"  # Local IP for pinning operations to avoid DNS issues
   
   # Validator Configuration (UPDATE THESE WITH YOUR ACTUAL VALUES)
   VALIDATOR_ACCOUNT_ID: "YOUR_VALI_SS58"
@@ -53,7 +54,7 @@ data:
   REPLICAS_PER_FILE: "5"             # Number of replicas per file
   MAX_FILES_PER_BATCH: "1000"        # Files processed per batch (increased for large pinning volumes)
   MAX_REASSIGNMENTS_PER_BATCH: "500" # Reassignments processed per batch (increased)
-  MIN_MINER_HEALTH_SCORE: "70.0"     # Minimum health score for assignment
+  MIN_MINER_HEALTH_SCORE: "30.0"     # Minimum health score for assignment (lowered from 70.0 to allow more miners)
   NEW_MINER_BOOST_DAYS: "30"         # Days for new miner boost
   NEW_MINER_BOOST_FACTOR: "1.5"      # Boost factor for new miners
   

@@ -595,252 +595,194 @@ class EpochOrchestrator:
     
     async def assign_files(self) -> bool:
         """
-        Assign miners to files that need assignments. Phase 3: File assignment (blocks 36-60)
+        Assign miners to files using the previous ValidatorWorkflow approach.
+        Phase 3: File assignment (blocks 36-60)
         
-        Uses the scalable RabbitMQ-based file assignment system to fill ANY NULL miner columns 
-        in file_assignments table, ensuring all files have complete 5-miner assignments.
-        
-        ENHANCED: Also performs network rebalancing during validator workflow.
-        ENHANCED: Processes ALL pending files in multiple rounds if needed.
+        REVERTED: Using the previous storage request assignment workflow instead of 
+        the complex RabbitMQ-based file assignment system with NULL miner issues.
         """
-        logger.info("📋 Starting file assignment phase (ENHANCED: Process ALL files)")
-        logger.info("🔧 Enhanced assignment: Fill ANY NULL miner columns in file_assignments")
+        logger.info("📋 Starting file assignment phase (REVERTED: Using ValidatorWorkflow)")
+        logger.info("🔧 Using previous storage request assignment workflow")
         
         # Validate that health checks completed
         if not self.health_checks_completed:
             logger.error("❌ Health checks must complete before file assignment")
             return False
-            
-        # Check that we have fresh health data for better assignment quality
-        current_health_data = None
-        fallback_health_data = None
-        
-        async with self.db_pool.acquire() as conn:
-            # VALIDATOR OPTIMIZATION: Use more lenient queries when health checks were skipped
-            # Check if we're in validator optimization mode (health_checks_completed but actually skipped)
-            # This is indicated by having health data older than 1 hour but newer than 6 hours
-            validator_optimization_check = await conn.fetchval("""
-                SELECT COUNT(DISTINCT node_id) 
-                FROM miner_epoch_health 
-                WHERE last_activity_at >= NOW() - INTERVAL '6 hours'
-                AND last_activity_at < NOW() - INTERVAL '1 hour'
-            """)
-            
-            is_validator_optimization = self.is_validator  # SIMPLE: validators use all data
-            
-            if is_validator_optimization:
-                logger.info("🚀 VALIDATOR OPTIMIZATION DETECTED: Using ALL preserved health data")
-                logger.info("   Reason: Health data preserved from previous epoch for performance")
-                logger.info("   Strategy: Use ALL available health data regardless of timestamps")
-                
-                # Use ALL available health data - no timestamp restrictions
-                current_health_data = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT node_id) 
-                    FROM miner_epoch_health 
-                    WHERE node_id IS NOT NULL
-                """)
-                
-                fallback_health_data = current_health_data  # Same as current
-                old_health_data = current_health_data  # Same as current
-                
-                logger.info("🎯 Validator optimization: Using ALL preserved health data (no timestamp filters)")
-                
-            else:
-                logger.info("📊 Standard mode: Using fresh health data requirements")
-                
-                # Standard strict queries for fresh health checks
-                current_health_data = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT node_id) 
-                    FROM miner_epoch_health 
-                    WHERE last_activity_at >= NOW() - INTERVAL '1 hour'
-                """)
-                
-                # Fallback: check for health data within last 4 hours
-                fallback_health_data = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT node_id) 
-                    FROM miner_epoch_health 
-                    WHERE last_activity_at >= NOW() - INTERVAL '4 hours'
-                """)
-                
-                # Safety: Check for VERY old health data (within last day)
-                old_health_data = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT node_id) 
-                    FROM miner_epoch_health 
-                    WHERE last_activity_at >= NOW() - INTERVAL '1 day'
-                """)
-            
-            logger.info(f"📊 Health data availability:")
-            if is_validator_optimization:
-                logger.info(f"   🚀 VALIDATOR OPTIMIZATION MODE:")
-                logger.info(f"   ALL preserved miners: {current_health_data} miners")
-                logger.info(f"   NO TIMESTAMP RESTRICTIONS - using everything we have!")
-            else:
-                logger.info(f"   📊 STANDARD MODE:")
-                logger.info(f"   Fresh (< 1 hour): {current_health_data} miners")
-                logger.info(f"   Recent (< 4 hours): {fallback_health_data} miners")
-                logger.info(f"   Old (< 1 day): {old_health_data} miners")
-            
-            # Adjust validation thresholds for validator optimization mode
-            if is_validator_optimization:
-                # Much simpler validation for validator optimization
-                if current_health_data >= 100:
-                    logger.info(f"✅ EXCELLENT: Using {current_health_data} preserved miners for assignments")
-                elif current_health_data >= 50:
-                    logger.info(f"✅ GOOD: Using {current_health_data} preserved miners for assignments")
-                elif current_health_data >= 10:
-                    logger.info(f"⚠️ LIMITED: Using {current_health_data} preserved miners for assignments")
-                    logger.info("   Assignment quality may be reduced but proceeding")
-                else:
-                    logger.error("🚨 CRITICAL: Too few preserved health records for any assignments!")
-                    logger.error(f"   Only {current_health_data} miners available - need at least 10")
-                    return False
-                
-                logger.info("🎯 VALIDATOR OPTIMIZATION: Proceeding with ALL preserved health data")
-                
-            else:
-                # Standard validation for fresh health checks
-                if current_health_data < 10 and fallback_health_data < 20:
-                    if old_health_data < 30:
-                        logger.error("🚨 Insufficient health data for quality assignments!")
-                        logger.error("   This could result in poor miner selection")
-                        return False
-                    else:
-                        logger.warning(f"⚠️ No current epoch health data, using {fallback_health_data} miners from previous epoch")
-                        logger.warning("   Assignment quality may be reduced but will proceed")
-                else:
-                    logger.info(f"✅ Verified fresh health data available: {current_health_data} miners with recent health data")
         
         try:
-            # ENHANCED: Process assignments in multiple rounds until all files are handled
-            total_rounds = 0
-            max_rounds = 15  # Allow many rounds for large volumes (e.g., 450 files could need multiple rounds)
-            total_assignments_processed = 0
+            # Import the previous ValidatorWorkflow
+            from substrate_fetcher.validator_workflow import ValidatorWorkflow
             
-            while total_rounds < max_rounds:
-                total_rounds += 1
-                logger.info(f"📋 File assignment processing - Round {total_rounds}")
-                
-                # Check if there are still files needing assignment
-                async with self.db_pool.acquire() as conn:
-                    # Check for new files from pinning
-                    pending_new_files = await conn.fetchval("""
-                        SELECT COUNT(*) FROM pending_assignment_file paf
-                        WHERE paf.status = 'processed' 
-                          AND paf.file_size_bytes IS NOT NULL
-                          AND NOT EXISTS (
-                              SELECT 1 FROM file_assignments fa 
-                              WHERE fa.cid = paf.cid
-                          )
-                    """)
-                    
-                    # Check for files with NULL miners
-                    files_with_nulls = await conn.fetchval("""
-                        SELECT COUNT(*) FROM file_assignments 
-                        WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
-                          OR miner4 IS NULL OR miner5 IS NULL
-                    """)
-                    
-                    total_files_needing_work = pending_new_files + files_with_nulls
-                    
-                    logger.info(f"📊 Round {total_rounds}: {pending_new_files} new files, {files_with_nulls} files with NULL miners")
-                    logger.info(f"    Total files needing work: {total_files_needing_work}")
-                    
-                    if total_files_needing_work == 0:
-                        logger.info("✅ ALL files have complete assignments!")
-                        break
-                
-                # Use the scalable RabbitMQ-based file assignment system
-                logger.info(f"🚀 Starting RabbitMQ-based file assignment processor (Round {total_rounds})...")
-                success = self.run_processor(
-                    'file_assignment_processor.py',
-                    f'File assignment processing (Round {total_rounds})'
-                )
-                
-                if success:
-                    logger.info(f"✅ File assignment processor round {total_rounds} completed successfully")
-                    
-                    # Wait for file assignment consumer to process all assignment tasks
-                    logger.info(f"⏳ Waiting for file assignment consumer to process assignment tasks (Round {total_rounds})...")
-                    await self.wait_for_queues_empty(['file_assignment_processing'], 600)  # 10 minute timeout
-                    logger.info(f"✅ File assignment processing round {total_rounds} completed")
-                    
-                    # Count what was processed in this round
-                    async with self.db_pool.acquire() as conn:
-                        current_assignments = await conn.fetchval("""
-                            SELECT COUNT(*) FROM file_assignments 
-                            WHERE miner1 IS NOT NULL AND miner2 IS NOT NULL AND miner3 IS NOT NULL 
-                              AND miner4 IS NOT NULL AND miner5 IS NOT NULL
-                        """)
-                    
-                    assignments_this_round = current_assignments - total_assignments_processed
-                    total_assignments_processed = current_assignments
-                    logger.info(f"📈 Round {total_rounds}: Processed {assignments_this_round} assignments (Total: {total_assignments_processed})")
-                    
-                else:
-                    logger.error(f"❌ File assignment processor round {total_rounds} failed")
-                    return False
+            # Create workflow instance
+            workflow = ValidatorWorkflow(
+                validator_account_id=self.validator_account_id,
+                validator_seed=self.validator_seed
+            )
             
-            if total_rounds >= max_rounds:
-                logger.warning(f"⚠️ Reached maximum rounds ({max_rounds}) for file assignment processing")
-                logger.warning("   Some files may still need assignment - check for system issues")
+            # Collect blockchain data for assignment processing
+            logger.info("📦 Collecting blockchain data for storage request processing...")
             
-            # Final verification of assignments
+            # Get storage requests from pinning_requests table
+            storage_requests = []
             async with self.db_pool.acquire() as conn:
-                complete_assignments = await conn.fetchval("""
-                    SELECT COUNT(*) FROM file_assignments 
-                    WHERE miner1 IS NOT NULL AND miner2 IS NOT NULL AND miner3 IS NOT NULL 
-                      AND miner4 IS NOT NULL AND miner5 IS NOT NULL
+                rows = await conn.fetch("""
+                    SELECT pr.owner, pr.request_hash, pr.file_hash, pr.file_name, 
+                           COALESCE(f.size, 1000000) as file_size, pr.total_replicas,
+                           pr.created_at
+                    FROM pinning_requests pr
+                    LEFT JOIN files f ON pr.file_hash = f.cid
+                    WHERE pr.is_assigned = FALSE
+                    ORDER BY pr.created_at ASC
                 """)
                 
-                incomplete_assignments = await conn.fetchval("""
-                    SELECT COUNT(*) FROM file_assignments 
-                    WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
-                      OR miner4 IS NULL OR miner5 IS NULL
+                for row in rows:
+                    # Convert to the format expected by ValidatorWorkflow
+                    storage_request = (
+                        (row['owner'], row['request_hash']),
+                        {
+                            'file_hash': row['file_hash'],
+                            'file_name': row['file_name'],
+                            'file_size': row['file_size'],
+                            'total_replicas': row['total_replicas'],
+                            'created_at': row['created_at']
+                        }
+                    )
+                    storage_requests.append(storage_request)
+                
+                logger.info(f"📋 Found {len(storage_requests)} storage requests to process")
+            
+            # Get miner profiles from database
+            miner_profiles = []
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT r.node_id, r.ipfs_peer_id, r.owner_account,
+                           COALESCE(ms.storage_capacity_bytes, 1000000000) as storage_capacity_bytes,
+                           COALESCE(ms.total_files_pinned, 0) as total_files_pinned,
+                           COALESCE(ms.total_files_size_bytes, 0) as total_files_size_bytes,
+                           COALESCE(ms.health_score, 100) as health_score
+                    FROM registration r
+                    LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
+                    WHERE r.node_type = 'StorageMiner' 
+                    AND r.status = 'active'
+                    AND COALESCE(ms.health_score, 100) >= 1.0
+                    ORDER BY COALESCE(ms.health_score, 100) DESC
                 """)
                 
-                pending_new_files = await conn.fetchval("""
-                    SELECT COUNT(*) FROM pending_assignment_file paf
-                    WHERE paf.status = 'processed' 
-                      AND paf.file_size_bytes IS NOT NULL
-                      AND NOT EXISTS (
-                          SELECT 1 FROM file_assignments fa 
-                          WHERE fa.cid = paf.cid
-                      )
+                for row in rows:
+                    # Convert to the format expected by ValidatorWorkflow
+                    miner_profile = {
+                        'node_id': row['node_id'],
+                        'ipfs_peer_id': row['ipfs_peer_id'],
+                        'owner_account': row['owner_account'],
+                        'storage_capacity_bytes': row['storage_capacity_bytes'],
+                        'total_files_pinned': row['total_files_pinned'],
+                        'total_files_size_bytes': row['total_files_size_bytes'],
+                        'health_score': row['health_score']
+                    }
+                    miner_profiles.append(miner_profile)
+                
+                logger.info(f"⛏️ Found {len(miner_profiles)} available miners")
+            
+            # Get node registration data
+            node_registration = []
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT node_id, ipfs_peer_id
+                    FROM registration 
+                    WHERE node_type = 'StorageMiner' AND status = 'active'
                 """)
                 
-                logger.info(f"📊 FINAL ASSIGNMENT RESULTS:")
-                logger.info(f"   ✅ Complete assignments: {complete_assignments}")
-                logger.info(f"   ⚠️ Incomplete assignments: {incomplete_assignments}")
-                logger.info(f"   📁 Pending new files: {pending_new_files}")
-                logger.info(f"   🔄 Total rounds processed: {total_rounds}")
-                
-                if incomplete_assignments == 0 and pending_new_files == 0:
-                    logger.info("🎉 ALL files now have complete 5-miner assignments!")
-                else:
-                    if incomplete_assignments > 0:
-                        logger.warning(f"⚠️ {incomplete_assignments} files still have incomplete assignments")
-                        logger.warning("   Some files may not have enough available miners")
-                    if pending_new_files > 0:
-                        logger.warning(f"⚠️ {pending_new_files} new files still need assignment")
-                        logger.warning("   May need additional processing rounds")
-                
-                # ENHANCED: Run network rebalancing as part of validator workflow
-                # logger.info("🔄 Running targeted network rebalancing (only if offline miners detected)...")
-                # rebalancing_success = await self.run_network_rebalancing()
-                # 
-                # if rebalancing_success:
-                #     logger.info("✅ Network rebalancing check completed successfully")
-                # else:
-                #     logger.warning("⚠️ Network rebalancing failed, but continuing (not critical)")
-                
-                logger.info("ℹ️ Network rebalancing disabled (commented out)")
-                
-                logger.info("✅ File assignment completed successfully with RabbitMQ system")
-                logger.info("🎯 Files ready for profile reconstruction")
+                for row in rows:
+                    # Convert to expected format
+                    node_reg = type('NodeReg', (), {
+                        'node_id': row['node_id'],
+                        'ipfs_node_id': row['ipfs_peer_id']
+                    })()
+                    node_registration.append(node_reg)
+            
+            if not storage_requests:
+                logger.info("✅ No storage requests to process")
                 return True
-                
+            
+            if not miner_profiles:
+                logger.error("❌ No available miners found")
+                return False
+            
+            # Process storage requests using ValidatorWorkflow
+            logger.info("🚀 Processing storage requests with ValidatorWorkflow...")
+            user_profiles, processed_miner_profiles = await workflow.process_storage_requests(
+                storage_requests=storage_requests,
+                miner_profiles=miner_profiles,
+                node_registration=node_registration
+            )
+            
+            logger.info(f"✅ ValidatorWorkflow completed:")
+            logger.info(f"   📝 Generated {len(user_profiles)} user profile entries")
+            logger.info(f"   ⛏️ Generated {len(processed_miner_profiles)} miner profile entries")
+            
+            # Store results in storage_requests table for later use
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    # Clear existing storage requests for this epoch
+                    await conn.execute("DELETE FROM storage_requests")
+                    
+                    # Group user profiles by owner
+                    user_assignments = {}
+                    for profile in user_profiles:
+                        owner = profile['user_id']
+                        if owner not in user_assignments:
+                            user_assignments[owner] = []
+                        user_assignments[owner].append(profile)
+                    
+                    # Insert storage requests with assigned miners
+                    for owner, profiles in user_assignments.items():
+                        for profile in profiles:
+                            # Extract assigned miners from profile
+                            assigned_miners = profile.get('assigned_miners', [])
+                            
+                            await conn.execute("""
+                                INSERT INTO storage_requests 
+                                (owner_account, file_hash, file_name, file_size_bytes, 
+                                 total_replicas, last_charged_at, created_at, miner_ids, 
+                                 selected_validator, status)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                ON CONFLICT (owner_account, file_hash) DO UPDATE SET
+                                    miner_ids = EXCLUDED.miner_ids,
+                                    status = EXCLUDED.status,
+                                    updated_at = CURRENT_TIMESTAMP
+                            """, 
+                            owner,
+                            profile['file_hash'],
+                            profile.get('file_name', ''),
+                            profile['file_size_in_bytes'],
+                            len(assigned_miners),
+                            profile.get('created_at', 0),
+                            profile.get('created_at', 0),
+                            assigned_miners,
+                            self.validator_account_id,
+                            'assigned'
+                            )
+                    
+                    # Update pinning_requests to mark as assigned
+                    processed_hashes = [p['file_hash'] for p in user_profiles]
+                    if processed_hashes:
+                        await conn.execute("""
+                            UPDATE pinning_requests 
+                            SET is_assigned = TRUE, 
+                                selected_validator = $1,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE file_hash = ANY($2)
+                        """, self.validator_account_id, processed_hashes)
+                    
+                    logger.info(f"💾 Stored {len(user_profiles)} storage request assignments")
+            
+            logger.info("✅ File assignment completed successfully with ValidatorWorkflow")
+            logger.info("🎯 Storage requests ready for profile reconstruction")
+            return True
+            
         except Exception as e:
-            logger.error(f"❌ Error during file assignment: {e}")
+            logger.error(f"❌ Error during ValidatorWorkflow file assignment: {e}")
+            logger.exception("Full traceback:")
             return False
     
     # DISABLED: Network rebalancing functionality

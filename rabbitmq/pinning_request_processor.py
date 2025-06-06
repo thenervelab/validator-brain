@@ -143,42 +143,42 @@ class PinningRequestProcessor:
                     # Handle scale_info wrapped keys and values
                     try:
                         # Extract account and request_hash from key
-                        if hasattr(key, '__iter__') and len(key) >= 2:
-                                # Handle scale_info wrapped account
-                                account = key[0]
-                                if hasattr(account, 'value'):
-                                    account = str(account.value)
-                                else:
-                                    account = str(account)
+                    if hasattr(key, '__iter__') and len(key) >= 2:
+                            # Handle scale_info wrapped account
+                            account = key[0]
+                            if hasattr(account, 'value'):
+                                account = str(account.value)
+                            else:
+                                account = str(account)
+                            
+                            # Handle scale_info wrapped request_hash  
+                            request_hash = key[1]
+                            if hasattr(request_hash, 'value'):
+                                request_hash = str(request_hash.value)
+                            else:
+                                request_hash = str(request_hash)
+                            
+                            # Handle scale_info wrapped value
+                            if value is not None:
+                                actual_value = value
+                                if hasattr(value, 'value'):
+                                    actual_value = value.value
                                 
-                                # Handle scale_info wrapped request_hash  
-                                request_hash = key[1]
-                                if hasattr(request_hash, 'value'):
-                                    request_hash = str(request_hash.value)
+                            if actual_value is not None:
+                                storage_data.append([
+                                    [account, request_hash],
+                                    actual_value
+                                ])
+                                    logger.debug(f"Added storage request: {account} -> {request_hash[:16]}...")
                                 else:
-                                    request_hash = str(request_hash)
-                                
-                                # Handle scale_info wrapped value
-                                if value is not None:
-                                    actual_value = value
-                                    if hasattr(value, 'value'):
-                                        actual_value = value.value
-                                    
-                                        if actual_value is not None:
-                                            storage_data.append([
-                                                [account, request_hash],
-                                                actual_value
-                                            ])
-                                            logger.debug(f"Added storage request: {account} -> {request_hash[:16]}...")
-                                        else:
-                                            null_entries += 1
-                                            logger.debug(f"Found null value for {account} -> {request_hash}")
-                                    else:
-                                        null_entries += 1
-                                        logger.debug(f"Found null entry for {account} -> {request_hash}")
-                                else:
-                                    logger.warning(f"Invalid key format: {key}")
-                                
+                                    null_entries += 1
+                                    logger.debug(f"Found null value for {account} -> {request_hash}")
+                            else:
+                                null_entries += 1
+                                logger.debug(f"Found null entry for {account} -> {request_hash}")
+                        else:
+                            logger.warning(f"Invalid key format: {key}")
+                            
                     except Exception as e:
                         logger.error(f"Error parsing entry {key}: {e}")
                         continue
