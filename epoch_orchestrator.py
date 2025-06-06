@@ -1231,18 +1231,40 @@ class EpochOrchestrator:
             else:
                 logger.warning("⚠️ Non-validator: User profile refresh failed")
         
-        # Perform health checks and submit to chain
+        # CRITICAL TIMING: Only start health checks at the very beginning of epochs
         if not self.health_checks_completed:
-            logger.info("🏥 Non-validator: Starting health checks (not time-pressured)...")
-            logger.info("   Non-validators can run full health checks since no epoch deadline")
-            success = await self.perform_health_checks()
-            if success:
-                self.health_checks_completed = True
-                logger.info("✅ Non-validator: Health checks completed")
+            if block_position <= 10:  # Only start health checks in the first 10 blocks
+                logger.info("🏥 Non-validator: Starting health checks at epoch beginning...")
+                logger.info(f"   TIMING: Starting at block {block_position}/99 (safe epoch start window)")
+                success = await self.perform_health_checks()
+                if success:
+                    self.health_checks_completed = True
+                    logger.info("✅ Non-validator: Health checks completed")
+                else:
+                    logger.error("❌ Non-validator: Health checks failed")
+                    # Non-validators can continue with partial health data
+                    logger.info("   Continuing with existing health data...")
             else:
-                logger.error("❌ Non-validator: Health checks failed")
-                # Non-validators can continue with partial health data
-                logger.info("   Continuing with existing health data...")
+                # Too late in epoch to start health checks - use previous data
+                logger.info(f"⏰ Non-validator: Too late to start health checks (block {block_position}/99)")
+                logger.info("   Using previous epoch health data and waiting for next epoch")
+                
+                # Check if we have usable previous health data
+                async with self.db_pool.acquire() as conn:
+                    health_data_count = await conn.fetchval("""
+                        SELECT COUNT(DISTINCT node_id) 
+                        FROM miner_epoch_health 
+                        WHERE last_activity_at >= NOW() - INTERVAL '12 hours'
+                    """)
+                    
+                    if health_data_count >= 100:
+                        logger.info(f"✅ Found {health_data_count} miners with recent health data")
+                        self.health_checks_completed = True
+                        logger.info("✅ Non-validator: Using previous epoch health data")
+                    else:
+                        logger.warning(f"⚠️ Limited health data ({health_data_count} miners)")
+                        logger.warning("   Will wait for next epoch to run fresh health checks")
+                        # Don't mark completed - wait for next epoch
         
         # ENHANCED: Run file assignment processing to catch NULL miners (every 15 blocks)
         if self.health_checks_completed and block_position % 15 == 0:
@@ -1311,28 +1333,46 @@ class EpochOrchestrator:
                 logger.info("✅ Phase 1 complete: Initialization")
                 return
         
-        # Phase 2: VALIDATOR OPTIMIZATION - Skip health checks, use previous epoch data
-        elif (block_position <= 40 or self.initialization_completed) and not self.health_checks_completed:
-            logger.info("🏥 VALIDATOR OPTIMIZATION: Skipping health checks - using previous epoch data")
-            logger.info("   Reason: Health checks take 3+ hours (527 miners × 22s each)")
-            logger.info("   Previous epoch health data is sufficient for file assignments")
-            
-            # Check if we have usable health data from previous epoch
-            async with self.db_pool.acquire() as conn:
-                health_data_count = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT node_id) 
-                    FROM miner_epoch_health 
-                    WHERE last_activity_at >= NOW() - INTERVAL '6 hours'
-                """)
+        # Phase 2: CRITICAL TIMING - Health checks ONLY at epoch beginning
+        elif self.initialization_completed and not self.health_checks_completed:
+            if block_position <= 10:
+                # EARLY EPOCH: Can start health checks OR use previous data
+                logger.info(f"🏥 VALIDATOR: Health check decision at block {block_position}/99")
                 
-                logger.info(f"✅ Found {health_data_count} miners with recent health data (< 6 hours)")
-                
-                if health_data_count >= 100:  # Reasonable threshold
-                    logger.info("✅ Sufficient previous epoch health data available")
-                    self.health_checks_completed = True
-                    logger.info("✅ VALIDATOR: Health checks marked complete (using previous data)")
+                # Check if we have recent health data to skip checks
+                async with self.db_pool.acquire() as conn:
+                    health_data_count = await conn.fetchval("""
+                        SELECT COUNT(DISTINCT node_id) 
+                        FROM miner_epoch_health 
+                        WHERE last_activity_at >= NOW() - INTERVAL '6 hours'
+                    """)
                     
-                    # CRITICAL: Process pinning requests immediately
+                    logger.info(f"📊 Found {health_data_count} miners with recent health data (< 6 hours)")
+                    
+                    if health_data_count >= 400:  # High threshold for validators
+                        logger.info("✅ VALIDATOR OPTIMIZATION: Using previous epoch health data")
+                        logger.info("   Reason: Fresh health data available, skipping 3+ hour health checks")
+                        self.health_checks_completed = True
+                        logger.info("✅ VALIDATOR: Health checks marked complete (using previous data)")
+                    else:
+                        logger.info(f"🏥 VALIDATOR: Starting fresh health checks (insufficient previous data: {health_data_count})")
+                        logger.info("   Starting health checks at epoch beginning for fresh data")
+                        success = await self.perform_health_checks()
+                        if success:
+                            self.health_checks_completed = True
+                            logger.info("✅ VALIDATOR: Fresh health checks completed")
+                        else:
+                            logger.error("❌ VALIDATOR: Fresh health checks failed")
+                            # Fall back to previous data if available
+                            if health_data_count >= 100:
+                                logger.info("   Falling back to previous epoch health data")
+                                self.health_checks_completed = True
+                            else:
+                                logger.warning("   Insufficient health data - validator proceeding with risks")
+                                self.health_checks_completed = True
+                
+                # CRITICAL: Process pinning requests after health decision
+                if self.health_checks_completed:
                     logger.info("📌 VALIDATOR: Processing pinning requests for new files...")
                     pinning_success = await self.process_pinning_requests()
                     if pinning_success:
@@ -1348,8 +1388,8 @@ class EpochOrchestrator:
                     else:
                         logger.warning("⚠️ VALIDATOR: Pinning requests processing failed")
                     
-                    # Run self-healing with existing health data
-                    logger.info("🛠️ Running network self-healing with previous epoch health data...")
+                    # Run self-healing with health data
+                    logger.info("🛠️ Running network self-healing with health data...")
                     await self.network_self_healing_routine()
                     
                     # FALLBACK: Also run availability maintenance
@@ -1361,12 +1401,26 @@ class EpochOrchestrator:
                             logger.info("✅ VALIDATOR: Availability maintenance completed as backup")
                         else:
                             logger.warning("⚠️ VALIDATOR: Availability maintenance failed")
-                else:
-                    logger.warning(f"⚠️ Insufficient health data ({health_data_count} miners)")
-                    logger.warning("   Proceeding with available health data for assignments...")
-                    logger.warning("   Assignment quality may be reduced but validator must proceed")
-                    self.health_checks_completed = True
-                    logger.info("✅ VALIDATOR: Proceeding with available health data")
+            else:
+                # TOO LATE IN EPOCH: Only use previous data, don't start new health checks
+                logger.info(f"⏰ VALIDATOR: Too late for health checks (block {block_position}/99)")
+                logger.info("   CRITICAL TIMING: Using previous epoch health data only")
+                
+                async with self.db_pool.acquire() as conn:
+                    health_data_count = await conn.fetchval("""
+                        SELECT COUNT(DISTINCT node_id) 
+                        FROM miner_epoch_health 
+                        WHERE last_activity_at >= NOW() - INTERVAL '12 hours'
+                    """)
+                    
+                    if health_data_count >= 100:
+                        logger.info(f"✅ Using {health_data_count} miners from previous epoch health data")
+                        self.health_checks_completed = True
+                        logger.info("✅ VALIDATOR: Proceeding with previous epoch health data")
+                    else:
+                        logger.warning(f"⚠️ Insufficient previous health data ({health_data_count} miners)")
+                        logger.warning("   VALIDATOR RISK: Proceeding with limited health data")
+                        self.health_checks_completed = True  # Must proceed for validator duties
             return
         
         # Phase 3: SEQUENTIAL File Assignment (immediately after health checks complete)
