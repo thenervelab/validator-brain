@@ -1207,7 +1207,9 @@ class EpochOrchestrator:
             logger.warning("⚠️ Table cleanup failed, but continuing with initialization")
         
         # Use simple modulo to determine if we need to refresh node metrics (every 300 blocks)
-        should_refresh_node_metrics = (self.current_block % self.node_metrics_refresh_interval == 0)
+        # TEMPORARY OVERRIDE FOR DEBUGGING
+        should_refresh_node_metrics = True # (self.current_block % self.node_metrics_refresh_interval == 0)
+        logger.info(f"DEBUG: FORCING NODE METRICS REFRESH: {should_refresh_node_metrics}")
         
         # Build tasks list with conditional node metrics refresh
         tasks = [
