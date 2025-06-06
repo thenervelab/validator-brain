@@ -81,11 +81,25 @@ class NodeMetricsProcessor:
         try:
             # Handle both camelCase and snake_case field names
             ipfs_repo_size = metrics_data.get('ipfs_repo_size', metrics_data.get('ipfsRepoSize'))
-            ipfs_storage_max = metrics_data.get('ipfs_storage_max', metrics_data.get('ipfsStorageMax'))
             
-            if ipfs_repo_size is None or ipfs_storage_max is None:
-                logger.warning(f"Missing required fields for miner {miner_id}")
-                return None
+            # Try various keys for storage max
+            ipfs_storage_max = (
+                metrics_data.get('ipfs_storage_max') or
+                metrics_data.get('ipfsStorageMax') or
+                metrics_data.get('storage_capacity') or
+                metrics_data.get('storageCapacity') or
+                metrics_data.get('max_storage') or
+                metrics_data.get('maxStorage')
+            )
+            
+            # Default to 0 if any required field is missing
+            if ipfs_repo_size is None:
+                logger.warning(f"Missing ipfs_repo_size for miner {miner_id}, defaulting to 0")
+                ipfs_repo_size = 0
+            
+            if ipfs_storage_max is None:
+                logger.warning(f"Missing ipfs_storage_max for miner {miner_id}, defaulting to 0")
+                ipfs_storage_max = 0
             
             return {
                 'miner_id': miner_id,

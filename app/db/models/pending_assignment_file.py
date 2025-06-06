@@ -68,15 +68,26 @@ class PendingAssignmentFile:
             return [cls(**dict(row)) for row in rows]
 
     async def update_size(self, file_size_bytes: int) -> None:
-        """Update the file size and mark as processed."""
+        """Update the file size and mark as processed. Also updates the main files table."""
         pool = await get_db_pool()
         async with pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE pending_assignment_file
-                SET file_size_bytes = $1, processed_at = CURRENT_TIMESTAMP, status = 'processed'
-                WHERE id = $2
-            """, file_size_bytes, self.id)
-            
+            async with conn.transaction():
+                # 1. Update the pending assignment file record
+                await conn.execute("""
+                    UPDATE pending_assignment_file
+                    SET file_size_bytes = $1, processed_at = CURRENT_TIMESTAMP, status = 'processed'
+                    WHERE id = $2
+                """, file_size_bytes, self.id)
+                
+                # 2. Upsert into the main 'files' table to ensure it has the correct size
+                await conn.execute("""
+                    INSERT INTO files (cid, size)
+                    VALUES ($1, $2)
+                    ON CONFLICT (cid) DO UPDATE SET
+                        size = EXCLUDED.size,
+                        updated_at = CURRENT_TIMESTAMP
+                """, self.cid, file_size_bytes)
+
             self.file_size_bytes = file_size_bytes
             self.processed_at = datetime.now()
             self.status = 'processed'

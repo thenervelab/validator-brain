@@ -673,7 +673,7 @@ class EpochOrchestrator:
                         r.node_id, 
                         r.ipfs_peer_id, 
                         r.owner_account,
-                        COALESCE(nm.ipfs_storage_max, ms.storage_capacity_bytes, 1000000000) as storage_capacity_bytes,
+                        GREATEST(0, COALESCE(nm.ipfs_storage_max, 0) - COALESCE(nm.ipfs_repo_size, 0)) as storage_capacity_bytes,
                         COALESCE(ms.total_files_pinned, 0) as total_files_pinned,
                         COALESCE(ms.total_files_size_bytes, 0) as total_files_size_bytes,
                         COALESCE(ms.health_score, 100) as health_score
@@ -682,7 +682,8 @@ class EpochOrchestrator:
                     LEFT JOIN (
                         SELECT DISTINCT ON (miner_id)
                             miner_id,
-                            ipfs_storage_max
+                            ipfs_storage_max,
+                            ipfs_repo_size
                         FROM node_metrics
                         ORDER BY miner_id, block_number DESC
                     ) nm ON r.node_id = nm.miner_id

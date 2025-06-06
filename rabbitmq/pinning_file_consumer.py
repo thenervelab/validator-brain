@@ -25,6 +25,7 @@ from aio_pika import IncomingMessage
 from app.db.connection import init_db_pool, close_db_pool
 from app.db.models.pending_assignment_file import PendingAssignmentFile
 from app.utils.config import get_ipfs_node_url, get_ipfs_timeout
+from app.utils.file_utils import fetch_ipfs_file_size
 
 # Setup logging
 logging.basicConfig(
@@ -32,33 +33,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-async def get_file_size(cid: str) -> Optional[int]:
-    """
-    Get the size of a file in IPFS by its CID.
-
-    Args:
-        cid: The CID to get the size for
-
-    Returns:
-        The file size in bytes, or None if the file could not be found
-    """
-    ipfs_node_url = get_ipfs_node_url()
-    stat_url = f"{ipfs_node_url}/api/v0/files/stat"
-    timeout = get_ipfs_timeout("fetch")
-    params = {"arg": f"/ipfs/{cid}"}
-
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(stat_url, params=params)
-            response.raise_for_status()
-
-            data = response.json()
-            return data.get("Size")
-    except Exception as e:
-        logger.error(f"Error getting file size for CID {cid}: {e}")
-        return None
 
 
 class PinningFileConsumer:
@@ -105,19 +79,23 @@ class PinningFileConsumer:
         try:
             # Check if file already exists
             existing = await PendingAssignmentFile.get_by_cid(cid)
-            if existing:
-                logger.info(f"File {cid} already exists in database, skipping")
+            if existing and existing.file_size_bytes and existing.file_size_bytes > 0:
+                logger.info(f"File {cid} already exists with valid size, skipping")
                 return True
             
-            # Create the pending assignment file record
-            pending_file = await PendingAssignmentFile.create(
-                cid=cid,
-                owner=owner,
-                filename=filename
-            )
+            # If file exists but size is 0, we will re-fetch
+            if existing:
+                pending_file = existing
+            else:
+                # Create the pending assignment file record
+                pending_file = await PendingAssignmentFile.create(
+                    cid=cid,
+                    owner=owner,
+                    filename=filename
+                )
             
-            # Get file size from IPFS
-            file_size = await get_file_size(cid)
+            # Get file size from IPFS using our robust utility
+            file_size = await fetch_ipfs_file_size(cid)
             
             if file_size is not None:
                 # Update with file size
