@@ -605,6 +605,15 @@ class EpochOrchestrator:
         the complex RabbitMQ-based file assignment system with NULL miner issues.
         """
         logger.info("📋 Starting file assignment phase (REVERTED: Using ValidatorWorkflow)")
+        
+        # CRITICAL: Always process pinning requests first to get the latest data
+        logger.info("📌 Processing pinning requests for new files before assignment...")
+        pinning_success = await self.process_pinning_requests()
+        if pinning_success:
+            logger.info("✅ Pinning requests processed successfully")
+        else:
+            logger.warning("⚠️ Pinning requests processing failed, assignment may use stale data.")
+
         logger.info("🔧 Using previous storage request assignment workflow")
         
         # Validate that health checks completed
@@ -1388,37 +1397,6 @@ class EpochOrchestrator:
                             else:
                                 logger.warning("   Insufficient health data - validator proceeding with risks")
                                 self.health_checks_completed = True
-                
-                # CRITICAL: Process pinning requests after health decision
-                if self.health_checks_completed:
-                    logger.info("📌 VALIDATOR: Processing pinning requests for new files...")
-                    pinning_success = await self.process_pinning_requests()
-                    if pinning_success:
-                        logger.info("✅ VALIDATOR: Pinning requests processed successfully")
-                        
-                        # Also process individual pinning files
-                        logger.info("📁 VALIDATOR: Processing individual pinning files...")
-                        pinning_files_success = await self.process_pinning_files()
-                        if pinning_files_success:
-                            logger.info("✅ VALIDATOR: Pinning files processed successfully")
-                        else:
-                            logger.warning("⚠️ VALIDATOR: Pinning files processing failed")
-                    else:
-                        logger.warning("⚠️ VALIDATOR: Pinning requests processing failed")
-                    
-                    # Run self-healing with health data
-                    logger.info("🛠️ Running network self-healing with health data...")
-                    await self.network_self_healing_routine()
-                    
-                    # FALLBACK: Also run availability maintenance
-                    if not self.availability_completed:
-                        logger.info("🛠️ VALIDATOR: Running availability maintenance as backup...")
-                        maintenance_success = await self.run_availability_maintenance()
-                        if maintenance_success:
-                            self.availability_completed = True
-                            logger.info("✅ VALIDATOR: Availability maintenance completed as backup")
-                        else:
-                            logger.warning("⚠️ VALIDATOR: Availability maintenance failed")
             else:
                 # TOO LATE IN EPOCH: Only use previous data, don't start new health checks
                 logger.info(f"⏰ VALIDATOR: Too late for health checks (block {block_position}/99)")
