@@ -618,8 +618,7 @@ class EpochOrchestrator:
             
             # Create workflow instance
             workflow = ValidatorWorkflow(
-                validator_account_id=self.our_validator_account,
-                validator_seed=self.validator_seed
+                validator_account_id=self.our_validator_account
             )
             
             # Collect blockchain data for assignment processing
