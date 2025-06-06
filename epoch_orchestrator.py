@@ -1340,13 +1340,16 @@ class EpochOrchestrator:
         logger.info(f"Current block position in epoch: {block_position}/99")
         logger.info("🔄 SEQUENTIAL MODE: Steps run immediately when previous completes")
         
-        # Phase 1: Initialization (blocks 0-15) - EXTENDED window
-        if block_position <= 15 and not self.initialization_completed:
+        # Phase 1: Initialization (ALWAYS run if not completed)
+        if not self.initialization_completed:
+            logger.info(f"🚀 Validator starting initialization (block: {block_position}/99)")
             success = await self.epoch_initialization()
             if success:
                 self.initialization_completed = True
                 logger.info("✅ Phase 1 complete: Initialization")
-                return
+            else:
+                logger.error("❌ Initialization failed, will retry next cycle.")
+            return
         
         # Phase 2: CRITICAL TIMING - Health checks ONLY at epoch beginning
         elif self.initialization_completed and not self.health_checks_completed:
