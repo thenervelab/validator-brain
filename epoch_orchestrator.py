@@ -184,6 +184,9 @@ class EpochOrchestrator:
         self.last_failure_time = 0
         self.max_backoff = 300  # 5 minutes max backoff
         
+        # Node metrics timing: Use simple modulo check (refresh every 300 blocks)
+        self.node_metrics_refresh_interval = 300  # Refresh every 300 blocks
+        
         # Configuration
         self.block_check_interval = int(os.getenv('BLOCK_CHECK_INTERVAL', '6'))  # seconds (every block)
         self.queue_check_timeout = int(os.getenv('QUEUE_CHECK_TIMEOUT', '300'))  # seconds
@@ -1183,13 +1186,24 @@ class EpochOrchestrator:
         if not cleanup_success:
             logger.warning("⚠️ Table cleanup failed, but continuing with initialization")
         
-        # Refresh all base data
+        # Use simple modulo to determine if we need to refresh node metrics (every 300 blocks)
+        should_refresh_node_metrics = (self.current_block % self.node_metrics_refresh_interval == 0)
+        
+        # Build tasks list with conditional node metrics refresh
         tasks = [
             self.refresh_registration_data(),
-            self.refresh_node_metrics(),
             self.refresh_user_profiles()
         ]
         
+        if should_refresh_node_metrics:
+            logger.info(f"📊 Including node metrics refresh (block {self.current_block} % 300 == 0)")
+            tasks.insert(1, self.refresh_node_metrics())  # Insert after registration
+        else:
+            blocks_until_refresh = self.node_metrics_refresh_interval - (self.current_block % self.node_metrics_refresh_interval)
+            logger.info(f"📊 Skipping node metrics refresh (using cached data)")
+            logger.info(f"   Current block: {self.current_block}, next refresh in {blocks_until_refresh} blocks")
+        
+        # Execute tasks
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         success = all(isinstance(r, bool) and r for r in results)
@@ -1200,6 +1214,8 @@ class EpochOrchestrator:
             logger.error("❌ Epoch initialization failed")
         
         return success
+    
+
     
     async def non_validator_workflow(self):
         """Execute non-validator workflow."""
@@ -1509,7 +1525,11 @@ class EpochOrchestrator:
         if hasattr(self, 'waiting_for_next_epoch'):
             self.waiting_for_next_epoch = False
         
+        # NOTE: Node metrics timing uses modulo - no state to preserve
+        # Node metrics refreshed every 300 blocks regardless of epoch boundaries
+        
         logger.info("🔄 Epoch state reset for new epoch")
+        logger.info("📊 Node metrics timing uses modulo (block % 300 == 0) - no state to preserve")
     
     def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
         """
@@ -1766,7 +1786,7 @@ class EpochOrchestrator:
         
         tables_to_clean = [
             'pinning_requests',
-            'node_metrics',
+            # 'node_metrics',  # PRESERVE: Only refresh every 300 blocks, not every epoch
             'parsed_cids',
             'pending_assignment_file',
             'pending_miner_profile',
@@ -1781,10 +1801,11 @@ class EpochOrchestrator:
                 return False
             
             async with self.db_pool.acquire() as conn:
-                # PRESERVE health data - don't clean miner_epoch_health at all
-                # Previous epoch health data is valuable for validator performance
-                logger.info("✅ PRESERVING all miner_epoch_health data for validator performance")
+                # PRESERVE health data and node metrics for performance optimization
+                logger.info("✅ PRESERVING miner_epoch_health data for validator performance")
                 logger.info("   Previous epoch health data allows validators to skip 3+ hour health checks")
+                logger.info("✅ PRESERVING node_metrics data (only refreshed every 300 blocks)")
+                logger.info("   Node metrics don't change frequently, saving processing overhead")
                 
                 for table in tables_to_clean:
                     try:
@@ -1796,7 +1817,7 @@ class EpochOrchestrator:
                         # Some tables might not exist, which is okay
                         logger.warning(f"⚠️ Could not clean table '{table}': {e}")
             
-            logger.info("✅ Epoch table cleanup completed (preserved health data as fallback)")
+            logger.info("✅ Epoch table cleanup completed (preserved health data + node metrics for performance)")
             return True
             
         except Exception as e:
