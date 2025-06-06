@@ -618,7 +618,7 @@ class EpochOrchestrator:
             
             # Create workflow instance
             workflow = ValidatorWorkflow(
-                validator_account_id=self.validator_account_id,
+                validator_account_id=self.our_validator_account,
                 validator_seed=self.validator_seed
             )
             
@@ -762,7 +762,7 @@ class EpochOrchestrator:
                             profile.get('created_at', 0),
                             profile.get('created_at', 0),
                             assigned_miners,
-                            self.validator_account_id,
+                            self.our_validator_account,
                             'assigned'
                             )
                     
@@ -775,7 +775,7 @@ class EpochOrchestrator:
                                 selected_validator = $1,
                                 updated_at = CURRENT_TIMESTAMP
                             WHERE file_hash = ANY($2)
-                        """, self.validator_account_id, processed_hashes)
+                        """, self.our_validator_account, processed_hashes)
                     
                     logger.info(f"💾 Stored {len(user_profiles)} storage request assignments")
             
