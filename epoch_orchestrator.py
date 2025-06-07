@@ -890,6 +890,9 @@ class EpochOrchestrator:
                         for profile in profiles:
                             assigned_miners = profile.get('assigned_miners', [])
                             
+                            # created_at is a block number, use it directly
+                            block_number = profile.get('created_at', 0)
+                            
                             await conn.execute("""
                                 INSERT INTO storage_requests 
                                 (owner_account, file_hash, file_name, file_size_bytes, 
@@ -902,8 +905,8 @@ class EpochOrchestrator:
                             profile.get('file_name', ''),
                             profile['file_size_in_bytes'],
                             len(assigned_miners),
-                            profile.get('created_at', 0),
-                            profile.get('created_at', 0),
+                            block_number,  # Use block number directly
+                            block_number,  # Use block number directly
                             assigned_miners,
                             self.our_validator_account,
                             'assigned'
