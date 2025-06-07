@@ -691,20 +691,43 @@ class EpochOrchestrator:
         Assign miners to files using the previous ValidatorWorkflow approach.
         Phase 3: File assignment (blocks 36-60)
         
-        REVERTED: Using the previous storage request assignment workflow instead of 
-        the complex RabbitMQ-based file assignment system with NULL miner issues.
+        ENHANCED: Comprehensive queue monitoring to prevent race conditions.
         """
-        logger.info("📋 Starting file assignment phase (REVERTED: Using ValidatorWorkflow)")
+        logger.info("📋 Starting file assignment phase (ENHANCED: Queue monitoring)")
         
         # CRITICAL: Always process pinning requests first to get the latest data
-        logger.info("📌 Processing pinning requests for new files before assignment...")
+        logger.info("📌 Step 1: Processing pinning requests for new files before assignment...")
         pinning_success = await self.process_pinning_requests()
         if pinning_success:
             logger.info("✅ Pinning requests processed successfully")
+            
+            # CRITICAL: Wait for pinning request queue to be empty
+            logger.info("⏳ Step 1a: Waiting for pinning request queue to be empty...")
+            pinning_queue_empty = await self.wait_for_queues_empty(['pinning_request'], 300)
+            if pinning_queue_empty:
+                logger.info("✅ Pinning request queue is empty")
+            else:
+                logger.warning("⚠️ Pinning request queue timeout - proceeding with assignment")
         else:
             logger.warning("⚠️ Pinning requests processing failed, assignment may use stale data.")
 
-        logger.info("🔧 Using previous storage request assignment workflow")
+        # CRITICAL: Process pinning files (extract individual files from manifests)
+        logger.info("📁 Step 2: Processing pinning files (manifest extraction)...")
+        pinning_files_success = await self.process_pinning_files()
+        if pinning_files_success:
+            logger.info("✅ Pinning files processed successfully")
+            
+            # CRITICAL: Wait for pinning file processing queue to be empty
+            logger.info("⏳ Step 2a: Waiting for pinning file processing queue to be empty...")
+            pinning_files_queue_empty = await self.wait_for_queues_empty(['pinning_file_processing'], 300)
+            if pinning_files_queue_empty:
+                logger.info("✅ Pinning file processing queue is empty")
+            else:
+                logger.warning("⚠️ Pinning file processing queue timeout - proceeding with assignment")
+        else:
+            logger.warning("⚠️ Pinning files processing failed, assignment may use stale data.")
+
+        logger.info("🔧 Step 3: Using previous storage request assignment workflow")
         
         # Validate that health checks completed
         if not self.health_checks_completed:
@@ -721,7 +744,7 @@ class EpochOrchestrator:
             )
             
             # Collect blockchain data for assignment processing
-            logger.info("📦 Collecting blockchain data for storage request processing...")
+            logger.info("📦 Step 3a: Collecting blockchain data for storage request processing...")
             
             # Get individual files from file_assignments (already extracted from manifests by pinning consumer)
             storage_requests = []
@@ -742,7 +765,7 @@ class EpochOrchestrator:
                 """)
                 
                 # DEBUG LOGGING: Print raw file assignments from DB
-                logger.info(f"DEBUG: Raw individual files from DB: {rows}")
+                logger.info(f"DEBUG: Raw individual files from DB: {len(rows)} files")
 
                 for row in rows:
                     # Convert to the format expected by ValidatorWorkflow (using file CID as request_hash)
@@ -789,7 +812,7 @@ class EpochOrchestrator:
                 """)
                 
                 # DEBUG LOGGING: Print raw miner profiles from DB
-                logger.info(f"DEBUG: Raw miner profiles from DB: {rows}")
+                logger.info(f"DEBUG: Raw miner profiles from DB: {len(rows)} miners")
 
                 for row in rows:
                     # Convert to the format expected by ValidatorWorkflow
@@ -832,7 +855,7 @@ class EpochOrchestrator:
                 return False
             
             # Process individual files using ValidatorWorkflow
-            logger.info("🚀 Processing individual files with ValidatorWorkflow...")
+            logger.info("🚀 Step 3b: Processing individual files with ValidatorWorkflow...")
             user_profiles, processed_miner_profiles = await workflow.process_storage_requests(
                 storage_requests=storage_requests,
                 miner_profiles=miner_profiles,
@@ -844,6 +867,7 @@ class EpochOrchestrator:
             logger.info(f"   ⛏️ Generated {len(processed_miner_profiles)} miner profile entries")
             
             # Update file_assignments with assigned miners
+            logger.info("💾 Step 3c: Updating file assignments in database...")
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
                     assignments_updated = 0
@@ -929,6 +953,22 @@ class EpochOrchestrator:
                     
                     logger.info(f"💾 Updated {assignments_updated} individual file assignments")
                     logger.info(f"💾 Created {len(user_profiles)} storage request entries for blockchain submission")
+            
+            # CRITICAL ENHANCEMENT: Verify no unassigned files remain before declaring success
+            logger.info("🔍 Step 4: Verifying assignment completion...")
+            async with self.db_pool.acquire() as conn:
+                unassigned_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
+                      AND miner4 IS NULL AND miner5 IS NULL
+                """)
+                
+                if unassigned_count > 0:
+                    logger.warning(f"⚠️ Found {unassigned_count} files still unassigned after assignment process")
+                    logger.warning("   This suggests assignment process was incomplete")
+                    # Don't return False immediately - might be files with no available miners
+                else:
+                    logger.info("✅ All files have been assigned to miners")
             
             logger.info("✅ Individual file assignment completed successfully with ValidatorWorkflow")
             logger.info("🎯 File assignments ready for profile reconstruction")
@@ -1130,86 +1170,148 @@ class EpochOrchestrator:
         Reconstruct user and miner profiles from file assignments.
         Phase 4: Profile reconstruction (blocks 61-75)
         
-        Uses the scalable RabbitMQ-based reconstruction system for both user and miner profiles.
+        ENHANCED: Comprehensive queue monitoring and data verification to prevent race conditions.
         """
-        logger.info("🔧 Starting profile reconstruction phase")
+        logger.info("🔧 Starting profile reconstruction phase (ENHANCED: Comprehensive verification)")
         
         try:
-            # Step 1: Reconstruct user profiles using RabbitMQ system
-            logger.info("👥 Starting user profile reconstruction...")
+            # Step 1: Verify assignment data is ready
+            logger.info("🔍 Step 1: Verifying assignment data is ready for profile reconstruction...")
+            async with self.db_pool.acquire() as conn:
+                # Check for unassigned files
+                unassigned_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
+                      AND miner4 IS NULL AND miner5 IS NULL
+                """)
+                
+                # Check for assigned files
+                assigned_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
+                      OR miner4 IS NOT NULL OR miner5 IS NOT NULL
+                """)
+                
+                logger.info(f"📊 Assignment data status:")
+                logger.info(f"   - {assigned_count} files assigned to miners")
+                logger.info(f"   - {unassigned_count} files still unassigned")
+                
+                if assigned_count == 0:
+                    logger.error("❌ No assigned files found - profile reconstruction cannot proceed")
+                    logger.error("   This suggests file assignment phase did not complete successfully")
+                    return False
+                
+                if unassigned_count > 0:
+                    logger.warning(f"⚠️ Found {unassigned_count} unassigned files")
+                    logger.warning("   Proceeding with profile reconstruction for assigned files only")
+            
+            # Step 2: Reconstruct user profiles using RabbitMQ system
+            logger.info("👥 Step 2: Starting user profile reconstruction...")
             user_reconstruction_success = self.run_processor(
-            'user_profile_reconstruction_processor.py',
-            'User profile reconstruction'
-        )
-        
+                'user_profile_reconstruction_processor.py',
+                'User profile reconstruction'
+            )
+            
             if user_reconstruction_success:
                 logger.info("✅ User profile reconstruction processor completed")
                 
                 # Wait for the consumer to finish processing user profiles
-                logger.info("⏳ Waiting for user profile reconstruction to complete...")
-                await self.wait_for_queues_empty(['user_profile_reconstruction'], 600)  # 10 minute timeout
-                logger.info("✅ User profile reconstruction completed")
+                logger.info("⏳ Step 2a: Waiting for user profile reconstruction queue to be empty...")
+                user_queue_empty = await self.wait_for_queues_empty(['user_profile_reconstruction'], 600)  # 10 minute timeout
+                if user_queue_empty:
+                    logger.info("✅ User profile reconstruction queue is empty")
+                else:
+                    logger.warning("⚠️ User profile reconstruction queue timeout - continuing")
             else:
                 logger.error("❌ User profile reconstruction processor failed")
                 return False
             
-            # Step 2: Reconstruct miner profiles using RabbitMQ system
-            logger.info("⛏️ Starting miner profile reconstruction...")
+            # Step 3: Reconstruct miner profiles using RabbitMQ system
+            logger.info("⛏️ Step 3: Starting miner profile reconstruction...")
             miner_reconstruction_success = self.run_processor(
-            'miner_profile_reconstruction_processor.py',
-            'Miner profile reconstruction'
-        )
-        
+                'miner_profile_reconstruction_processor.py',
+                'Miner profile reconstruction'
+            )
+            
             if miner_reconstruction_success:
                 logger.info("✅ Miner profile reconstruction processor completed")
                 
                 # Wait for the consumer to finish processing miner profiles
-                logger.info("⏳ Waiting for miner profile reconstruction to complete...")
-                await self.wait_for_queues_empty(['miner_profile_reconstruction'], 600)  # 10 minute timeout
-                logger.info("✅ Miner profile reconstruction completed")
+                logger.info("⏳ Step 3a: Waiting for miner profile reconstruction queue to be empty...")
+                miner_queue_empty = await self.wait_for_queues_empty(['miner_profile_reconstruction'], 600)  # 10 minute timeout
+                if miner_queue_empty:
+                    logger.info("✅ Miner profile reconstruction queue is empty")
+                else:
+                    logger.warning("⚠️ Miner profile reconstruction queue timeout - continuing")
             else:
                 logger.error("❌ Miner profile reconstruction processor failed")
                 return False
             
-            # Step 3: Verify profiles were created
-            logger.info("🔍 Verifying profiles were reconstructed...")
+            # Step 4: CRITICAL VERIFICATION - Check that profiles were actually created
+            logger.info("🔍 Step 4: Verifying profiles were reconstructed...")
             
             # Import utilities for verification
             from app.utils.blockchain_submission import collect_miner_profiles_for_submission
             
             # Check miner profiles
+            logger.info("🔍 Step 4a: Verifying miner profiles...")
             miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
             logger.info(f"✅ Found {len(miner_profiles)} miner profiles ready for submission")
             
+            if len(miner_profiles) == 0:
+                logger.error("🚨 CRITICAL: NO MINER PROFILES FOUND!")
+                logger.error("   This indicates miner profile reconstruction failed")
+                
+                # Debug the database state
+                async with self.db_pool.acquire() as conn:
+                    pending_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile")
+                    published_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'")
+                    logger.error(f"   Database state: {pending_count} total profiles, {published_count} published")
+                    
+                    if pending_count == 0:
+                        logger.error("   🔥 NO profiles in pending_miner_profile table!")
+                        logger.error("   🔥 Miner profile reconstruction processor never created profiles!")
+                    elif published_count == 0:
+                        logger.error("   🔥 Profiles exist but none are 'published'!")
+                        logger.error("   🔥 Miner profile reconstruction consumer failed!")
+                
+                return False
+            
             # Check user profiles
+            logger.info("🔍 Step 4b: Verifying user profiles...")
             async with self.db_pool.acquire() as conn:
                 user_count = await conn.fetchval("SELECT COUNT(*) FROM pending_user_profile WHERE status = 'published'")
-                logger.info(f"✅ Found {user_count} user profiles ready for submission")
+                user_total = await conn.fetchval("SELECT COUNT(*) FROM pending_user_profile")
+                logger.info(f"✅ Found {user_count} user profiles ready for submission (of {user_total} total)")
+                
+                if user_count == 0 and user_total > 0:
+                    logger.error("🚨 CRITICAL: User profiles exist but none are 'published'!")
+                    logger.error("   This indicates user profile reconstruction consumer failed")
+                    return False
+                elif user_count == 0 and user_total == 0:
+                    logger.warning("⚠️ No user profiles found - this might be normal if no storage requests")
             
-            # Verify we have data to submit
-            if user_count > 0 or len(miner_profiles) > 0:
-                logger.info("✅ Profile reconstruction completed successfully")
-                logger.info(f"📊 Reconstruction summary:")
-                logger.info(f"   - {user_count} user profiles reconstructed")
-                logger.info(f"   - {len(miner_profiles)} miner profiles reconstructed")
-                logger.info("🎯 Profiles ready for blockchain submission")
-                return True
-            else:
-                logger.error("❌ Profile reconstruction failed - no profiles generated")
-                logger.error("🔥 Both user and miner profile reconstruction systems produced no output!")
-                
-                # Debug database state
-                async with self.db_pool.acquire() as conn:
-                    file_assignments = await conn.fetchval("SELECT COUNT(*) FROM file_assignments WHERE miner1 IS NOT NULL")
-                    logger.error(f"   Database diagnostic: {file_assignments} file assignments available for reconstruction")
-                    
-                    if file_assignments == 0:
-                        logger.error("   🔥 NO file assignments found - assignment phase failed!")
-                    else:
-                        logger.error("   🔥 File assignments exist but reconstruction processors failed!")
-                        
+            # Step 5: Verify storage requests are ready for blockchain submission
+            logger.info("🔍 Step 4c: Verifying storage requests for blockchain submission...")
+            from app.utils.blockchain_submission import collect_storage_requests_for_submission
+            storage_requests = await collect_storage_requests_for_submission(self.db_pool)
+            logger.info(f"✅ Found {len(storage_requests)} storage requests ready for submission")
+            
+            # Step 6: Final summary
+            logger.info("📊 FINAL PROFILE RECONSTRUCTION SUMMARY:")
+            logger.info(f"   - {len(miner_profiles)} miner profiles ready")
+            logger.info(f"   - {user_count} user profiles ready") 
+            logger.info(f"   - {len(storage_requests)} storage requests ready")
+            
+            if len(miner_profiles) == 0 and len(storage_requests) == 0:
+                logger.error("🚨 CRITICAL: No profiles or storage requests ready for blockchain submission!")
+                logger.error("   Profile reconstruction appears to have failed completely")
                 return False
-                
+            
+            logger.info("✅ Profile reconstruction completed successfully with comprehensive verification")
+            logger.info("🚀 Profiles are ready for blockchain submission")
+            return True
+            
         except Exception as e:
             logger.error(f"❌ Error during profile reconstruction: {e}")
             logger.exception("Full traceback:")
@@ -1219,8 +1321,10 @@ class EpochOrchestrator:
         """
         Submit all data to blockchain including health metrics.
         Phase 5: Blockchain submission (blocks 76-90) - EARLY with more time
+        
+        ENHANCED: Comprehensive verification before submission to prevent empty profiles.
         """
-        logger.info("🚀 Starting blockchain submission phase (EARLY to meet deadline)")
+        logger.info("🚀 Starting blockchain submission phase (ENHANCED: Pre-submission verification)")
         
         try:
             # Import submission utilities
@@ -1234,54 +1338,111 @@ class EpochOrchestrator:
             
             # Step 1: Submit health metrics FIRST (if not already done)
             if self.health_checks_completed and not self.health_metrics_submitted:
-                logger.info("📊 Submitting health metrics to blockchain...")
+                logger.info("📊 Step 1: Submitting health metrics to blockchain...")
                 health_success = await submit_health_metrics_to_blockchain(self.db_pool)
                 if health_success:
                     self.health_metrics_submitted = True
                     logger.info("✅ Health metrics submitted successfully")
                 else:
                     logger.warning("⚠️ Health metrics submission failed but continuing")
+            else:
+                logger.info("✅ Step 1: Health metrics already submitted or not needed")
             
-            # Step 2: Collect data for main submission
-            logger.info("📦 Collecting data for blockchain submission...")
-            logger.info("🔍 Step 2a: Collecting storage requests...")
+            # Step 2: PRE-SUBMISSION VERIFICATION - Critical to prevent empty submissions
+            logger.info("🔍 Step 2: Pre-submission verification...")
+            
+            # Verify profile reconstruction actually completed
+            async with self.db_pool.acquire() as conn:
+                # Check pending profiles that should be ready
+                pending_miner_profiles = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'")
+                pending_user_profiles = await conn.fetchval("SELECT COUNT(*) FROM pending_user_profile WHERE status = 'published'")
+                
+                # Check file assignments that should exist  
+                assigned_files = await conn.fetchval("""
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
+                      OR miner4 IS NOT NULL OR miner5 IS NOT NULL
+                """)
+                
+                logger.info(f"📊 Pre-submission data check:")
+                logger.info(f"   - {pending_miner_profiles} miner profiles published")
+                logger.info(f"   - {pending_user_profiles} user profiles published")
+                logger.info(f"   - {assigned_files} files assigned to miners")
+                
+                if pending_miner_profiles == 0 and assigned_files > 0:
+                    logger.error("🚨 CRITICAL: Files are assigned but no miner profiles published!")
+                    logger.error("   This indicates profile reconstruction failed to publish profiles")
+                    logger.error("   Cannot submit to blockchain - would result in empty miner profiles")
+                    return False
+                
+                if assigned_files == 0:
+                    logger.warning("⚠️ No files assigned - might be normal if no storage requests")
+            
+            # Step 3: Collect data for main submission with verification
+            logger.info("📦 Step 3: Collecting data for blockchain submission...")
+            logger.info("🔍 Step 3a: Collecting storage requests...")
             
             storage_requests = await collect_storage_requests_for_submission(self.db_pool)
             logger.info(f"✅ Collected {len(storage_requests)} storage requests")
             
-            logger.info("🔍 Step 2b: Collecting miner profiles...")
+            logger.info("🔍 Step 3b: Collecting miner profiles...")
             miner_profiles = await collect_miner_profiles_for_submission(self.db_pool)
             logger.info(f"✅ Collected {len(miner_profiles)} miner profiles")
             
+            # Step 4: CRITICAL VERIFICATION - Ensure we're not submitting empty data
+            logger.info("🔍 Step 4: Final data verification before blockchain submission...")
+            
+            if len(miner_profiles) == 0:
+                logger.error("🚨 CRITICAL: NO MINER PROFILES TO SUBMIT!")
+                logger.error("   This would result in empty blockchain submission")
+                logger.error("   Check profile reconstruction process")
+                
+                # Additional debugging
+                async with self.db_pool.acquire() as conn:
+                    pending_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile")
+                    published_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'")
+                    logger.error(f"   Database state: {pending_count} total profiles, {published_count} published")
+                    
+                    if pending_count == 0:
+                        logger.error("   🔥 NO profiles in pending_miner_profile table!")
+                    elif published_count == 0:
+                        logger.error("   🔥 Profiles exist but none are 'published'!")
+                
+                return False
+            
+            # Verify miner profiles have actual content
+            profiles_with_files = 0
+            total_files_in_profiles = 0
+            for profile in miner_profiles:
+                file_count = profile.get('files_count', 0)
+                if file_count > 0:
+                    profiles_with_files += 1
+                    total_files_in_profiles += file_count
+            
+            logger.info(f"📊 Miner profile content analysis:")
+            logger.info(f"   - {len(miner_profiles)} total miner profiles")
+            logger.info(f"   - {profiles_with_files} profiles with files ({profiles_with_files/len(miner_profiles)*100:.1f}%)")
+            logger.info(f"   - {total_files_in_profiles} total files in all profiles")
+            
+            if profiles_with_files == 0 and total_files_in_profiles == 0:
+                logger.warning("⚠️ All miner profiles are empty (no files)")
+                logger.warning("   This might be normal if no storage requests were processed")
+                logger.warning("   But check if this is expected...")
+            
             logger.info(f"📊 FINAL DATA SUMMARY:")
             logger.info(f"  - {len(storage_requests)} original storage requests (for closing)")
-            logger.info(f"  - {len(miner_profiles)} miner profiles")
+            logger.info(f"  - {len(miner_profiles)} miner profiles ({profiles_with_files} with files)")
+            logger.info(f"  - {total_files_in_profiles} total files in profiles")
             
-            # Debug: Check if miner profiles were actually reconstructed
-            if len(miner_profiles) == 0:
-                logger.error("🚨 CRITICAL: NO MINER PROFILES FOUND!")
-                logger.error("   This suggests miner profile reconstruction did not work")
-                logger.error("   Check the RabbitMQ miner profile reconstruction system")
-                
-                # Check the database state
-                async with self.db_pool.acquire() as conn:
-                    profile_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile")
-                    published_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'")
-                    logger.error(f"   Database state: {profile_count} total profiles, {published_count} published")
-                    
-                    if profile_count == 0:
-                        logger.error("   🔥 NO profiles in pending_miner_profile table at all!")
-                        logger.error("   🔥 Miner profile reconstruction processor never ran or failed!")
-                    elif published_count == 0:
-                        logger.error("   🔥 Profiles exist but none are 'published' status!")
-                        logger.error("   🔥 Miner profile reconstruction consumer failed!")
-            
+            # Allow submission even with empty profiles if no data to process
             if len(storage_requests) == 0 and len(miner_profiles) == 0:
                 logger.warning("⚠️ No data to submit to blockchain")
-                return True  # Not an error, just nothing to do
+                logger.info("✅ This is normal if no storage requests were processed")
+                return True
             
-            # Step 3: Submit to blockchain
-            logger.info("🚀 Step 3: Submitting to blockchain...")
+            # Step 5: Submit to blockchain
+            logger.info("🚀 Step 5: Submitting to blockchain...")
+            logger.info("📤 Initiating blockchain transaction...")
             success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(
                 storage_requests, miner_profiles
             )
@@ -1290,12 +1451,20 @@ class EpochOrchestrator:
                 # Mark as completed in database
                 logger.info("✅ Blockchain submission successful! Marking as completed in database...")
                 await mark_submissions_as_completed(self.db_pool, submitted_requests, submitted_profiles)
-                logger.info("✅ Blockchain submission completed successfully")
-                logger.info(f"🎯 Successfully submitted {len(submitted_profiles)} miner profiles to chain!")
+                logger.info("✅ Database updated with submission completion")
+                
+                # Success summary
+                logger.info("🎯 BLOCKCHAIN SUBMISSION SUMMARY:")
+                logger.info(f"   ✅ Successfully submitted {len(submitted_profiles)} miner profiles")
+                logger.info(f"   ✅ Successfully submitted {len(submitted_requests)} storage requests")
+                logger.info(f"   ✅ Profiles contained {total_files_in_profiles} files total")
+                logger.info("🔒 Transaction submitted to blockchain - awaiting confirmation")
+                
                 return True
             else:
                 logger.error("❌ Blockchain submission failed")
                 logger.error("🔥 The transaction was not sent to the blockchain!")
+                logger.error("   Check blockchain connection and validator key setup")
                 return False
                 
         except Exception as e:
