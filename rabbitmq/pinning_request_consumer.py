@@ -60,7 +60,7 @@ def hex_to_string(hex_string: str) -> str:
 
 
 async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[bytes]:
-    """Fetch content from the local IPFS node."""
+    """Fetch content from the local IPFS node with external gateway fallback."""
     if not cid:
         return None
     
@@ -68,7 +68,7 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
     if ipfs_node_url is None:
         ipfs_node_url = os.getenv("IPFS_NODE_URL", "http://ipfs-service:5001")
     
-    # Use the local IPFS node's gateway
+    # Try local IPFS node first
     url = f"{ipfs_node_url}/api/v0/cat?arg={cid}"
     
     async with httpx.AsyncClient() as client:
@@ -78,11 +78,27 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
             logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from local IPFS")
             return response.content
         except httpx.HTTPStatusError as e:
-            logger.error(f"IPFS node returned error for CID {cid}: {e}")
-            return None
+            logger.warning(f"IPFS node returned error for CID {cid}: {e}")
         except httpx.RequestError as e:
-            logger.error(f"Error fetching CID {cid} from local IPFS: {e}")
-            return None
+            logger.warning(f"Error fetching CID {cid} from local IPFS: {e}")
+    
+    # Fallback to external gateway
+    logger.info(f"🌐 Trying external gateway for CID {cid[:16]}...")
+    gateway_url = f"https://get.hippius.network/ipfs/{cid}"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(gateway_url, timeout=60.0)
+            response.raise_for_status()
+            logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from external gateway")
+            return response.content
+        except httpx.HTTPStatusError as e:
+            logger.error(f"External gateway returned error for CID {cid}: {e}")
+        except httpx.RequestError as e:
+            logger.error(f"Error fetching CID {cid} from external gateway: {e}")
+    
+    logger.error(f"❌ Failed to fetch content for CID {cid} from both local IPFS and external gateway")
+    return None
 
 
 async def fetch_ipfs_file_size(cid: str, ipfs_node_url: str = None) -> Optional[int]:
@@ -306,15 +322,11 @@ class PinningRequestConsumer:
                     files_processed = 1
                     
             else:
-                # Could not fetch manifest content from local IPFS
-                logger.warning(f"⚠️ Could not fetch manifest content for CID {manifest_cid} from local IPFS")
-                logger.info(f"📄 This might be a storage request for a manifest that needs to be pinned first")
-                logger.info(f"📄 Treating manifest CID as a single file to be pinned")
-                
-                # Treat the manifest CID itself as a file to be pinned
-                async with self.db_pool.acquire() as conn:
-                    await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'manifest.json')
-                files_processed = 1
+                # Could not fetch manifest content from both local IPFS and external gateway
+                logger.error(f"❌ Could not fetch manifest content for CID {manifest_cid} from local IPFS or external gateway")
+                logger.error(f"❌ Cannot process storage request - manifest is not accessible")
+                logger.error(f"❌ Skipping storage request {request_hash[:16]}... - manifest parsing failed")
+                return False
             
             # Record that we've processed this storage request
             async with self.db_pool.acquire() as conn:

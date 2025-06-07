@@ -250,33 +250,33 @@ spec:
             name: ipfs-validator-config
         workingDir: /app
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: file-assignment-consumer
-spec:
-  replicas: 10
-  selector:
-    matchLabels:
-      app: file-assignment-consumer
-  template:
-    metadata:
-      labels:
-        app: file-assignment-consumer
-    spec:
-      initContainers:
-      - name: wait-for-services
-        image: busybox:1.35
-        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
-      containers:
-      - name: consumer
-        image: registry.starkleytech.com/library/ipfs-service-validator
-        imagePullPolicy: Always
-        command: ["python", "rabbitmq/file_assignment_consumer.py"]
-        envFrom:
-        - configMapRef:
-            name: ipfs-validator-config
-        workingDir: /app
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: file-assignment-consumer
+# spec:
+#   replicas: 10
+#   selector:
+#     matchLabels:
+#       app: file-assignment-consumer
+#   template:
+#     metadata:
+#       labels:
+#         app: file-assignment-consumer
+#     spec:
+#       initContainers:
+#       - name: wait-for-services
+#         image: busybox:1.35
+#         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+#       containers:
+#       - name: consumer
+#         image: registry.starkleytech.com/library/ipfs-service-validator
+#         imagePullPolicy: Always
+#         command: ["python", "rabbitmq/file_assignment_consumer.py"]
+#         envFrom:
+#         - configMapRef:
+#             name: ipfs-validator-config
+#         workingDir: /app
 ---
 apiVersion: apps/v1
 kind: Deployment
