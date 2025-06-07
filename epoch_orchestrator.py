@@ -890,8 +890,26 @@ class EpochOrchestrator:
                         for profile in profiles:
                             assigned_miners = profile.get('assigned_miners', [])
                             
-                            # created_at is a block number, use it directly
-                            block_number = profile.get('created_at', 0)
+                            # Convert created_at (datetime) to Unix timestamp
+                            created_at_value = profile.get('created_at', 0)
+                            if hasattr(created_at_value, 'timestamp'):
+                                # It's a datetime object, convert to Unix timestamp
+                                timestamp = int(created_at_value.timestamp())
+                            elif isinstance(created_at_value, str):
+                                # It's a datetime string, parse and convert
+                                from datetime import datetime
+                                try:
+                                    dt = datetime.fromisoformat(created_at_value.replace('Z', '+00:00'))
+                                    timestamp = int(dt.timestamp())
+                                except:
+                                    timestamp = 0
+                            elif isinstance(created_at_value, (int, float)):
+                                # Already a timestamp
+                                timestamp = int(created_at_value)
+                            else:
+                                # Default to current time
+                                import time
+                                timestamp = int(time.time())
                             
                             await conn.execute("""
                                 INSERT INTO storage_requests 
@@ -905,8 +923,8 @@ class EpochOrchestrator:
                             profile.get('file_name', ''),
                             profile['file_size_in_bytes'],
                             len(assigned_miners),
-                            block_number,  # Use block number directly
-                            block_number,  # Use block number directly
+                            timestamp,  # Use converted timestamp
+                            timestamp,  # Use converted timestamp
                             assigned_miners,
                             self.our_validator_account,
                             'assigned'
