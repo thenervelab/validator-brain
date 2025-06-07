@@ -866,12 +866,11 @@ class EpochOrchestrator:
                         await conn.execute("""
                             UPDATE file_assignments 
                             SET miner1 = $3, miner2 = $4, miner3 = $5, miner4 = $6, miner5 = $7,
-                                selected_validator = $8, updated_at = CURRENT_TIMESTAMP
+                                updated_at = CURRENT_TIMESTAMP
                             WHERE cid = $1 AND owner = $2
                         """, 
                         file_cid, owner, 
-                        miner_slots[0], miner_slots[1], miner_slots[2], miner_slots[3], miner_slots[4],
-                        self.our_validator_account
+                        miner_slots[0], miner_slots[1], miner_slots[2], miner_slots[3], miner_slots[4]
                         )
                         assignments_updated += 1
                     
