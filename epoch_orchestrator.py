@@ -526,27 +526,24 @@ class EpochOrchestrator:
                     total_pin_checks = pin_successes + pin_failures
                     successful_pin_checks = pin_successes
                     
-                    # Update or insert into miner_stats (health_score is auto-calculated)
-                    await conn.execute("""
-                        INSERT INTO miner_stats (
-                            node_id, 
-                            successful_pin_checks,
-                            total_pin_checks,
-                            ping_successes,
-                            ping_failures,
-                            updated_at
-                        )
-                        VALUES ($1, $2, $3, $4, $5, NOW())
-                        ON CONFLICT (node_id) 
-                        DO UPDATE SET 
-                            successful_pin_checks = $2,
-                            total_pin_checks = $3,
-                            ping_successes = $4,
-                            ping_failures = $5,
-                            updated_at = NOW()
-                    """, node_id, successful_pin_checks, total_pin_checks, ping_successes, ping_failures)
-                    
-                    updated_count += 1
+                                    # Update or insert into miner_stats (health_score is auto-calculated)
+                # Note: miner_stats table only has pin check columns, not ping columns
+                await conn.execute("""
+                    INSERT INTO miner_stats (
+                        node_id, 
+                        successful_pin_checks,
+                        total_pin_checks,
+                        updated_at
+                    )
+                    VALUES ($1, $2, $3, NOW())
+                    ON CONFLICT (node_id) 
+                    DO UPDATE SET 
+                        successful_pin_checks = $2,
+                        total_pin_checks = $3,
+                        updated_at = NOW()
+                """, node_id, successful_pin_checks, total_pin_checks)
+                
+                updated_count += 1
                 
                 # Verify health scores were calculated
                 healthy_miners = await conn.fetchval("""
@@ -1470,6 +1467,27 @@ class EpochOrchestrator:
             else:
                 logger.error("❌ Non-validator: Health metrics submission failed")
         
+        # PERIODIC DATABASE CLEANUP: Run comprehensive miner records cleanup (every 4 hours)
+        # Use block position to determine timing - run at specific intervals to avoid validator interference
+        cleanup_interval = 240  # Approximately 4 hours (240 blocks * 6 seconds = 1440 seconds = 24 minutes actual)
+        if (self.current_block % cleanup_interval == 0) and block_position > 20:  # Avoid early epoch interference
+            logger.info("🧹 Non-validator: Starting periodic database cleanup (every ~4 hours)...")
+            logger.info("   This runs on non-validators to avoid impacting validator performance")
+            
+            # Run both health data cleanup and miner records cleanup
+            health_cleanup_success = await self.cleanup_old_health_data()
+            miner_cleanup_success = await self.cleanup_old_miner_records()
+            
+            if health_cleanup_success and miner_cleanup_success:
+                logger.info("✅ Non-validator: Periodic database cleanup completed successfully")
+                logger.info("💾 Database optimized - improved query performance for all nodes")
+            else:
+                logger.warning("⚠️ Non-validator: Database cleanup partially failed")
+                if not health_cleanup_success:
+                    logger.warning("   Health data cleanup failed")
+                if not miner_cleanup_success:
+                    logger.warning("   Miner records cleanup failed")
+        
         # Status summary for non-validators
         if block_position % 25 == 0:  # Every 25 blocks show summary
             logger.info("📋 Non-validator status summary:")
@@ -2244,6 +2262,115 @@ class EpochOrchestrator:
                 
         except Exception as e:
             logger.error(f"❌ Error during health data cleanup: {e}")
+            logger.exception("Full traceback:")
+            return False
+
+    async def cleanup_old_miner_records(self) -> bool:
+        """
+        Clean up old miner records and stale data to optimize database performance.
+        
+        This cleanup runs on non-validators to avoid impacting validator performance.
+        Removes:
+        - Inactive/old miner registrations
+        - Stale node metrics (>7 days)
+        - Orphaned miner_stats for non-existent miners
+        - Old system events
+        """
+        logger.info("🧹 Starting comprehensive miner records cleanup")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                cleanup_stats = {
+                    'inactive_registrations': 0,
+                    'old_node_metrics': 0,
+                    'orphaned_miner_stats': 0,
+                    'old_system_events': 0
+                }
+                
+                # Get initial counts for reporting
+                total_registrations = await conn.fetchval("SELECT COUNT(*) FROM registration WHERE node_type = 'StorageMiner'")
+                total_node_metrics = await conn.fetchval("SELECT COUNT(*) FROM node_metrics")
+                total_miner_stats = await conn.fetchval("SELECT COUNT(*) FROM miner_stats")
+                total_system_events = await conn.fetchval("SELECT COUNT(*) FROM system_events")
+                
+                logger.info(f"📊 Database before cleanup:")
+                logger.info(f"   - Miner registrations: {total_registrations:,}")
+                logger.info(f"   - Node metrics: {total_node_metrics:,}")
+                logger.info(f"   - Miner stats: {total_miner_stats:,}")
+                logger.info(f"   - System events: {total_system_events:,}")
+                
+                async with conn.transaction():
+                    # 1. Clean up inactive miner registrations (status != 'active' and old)
+                    result = await conn.execute("""
+                        DELETE FROM registration 
+                        WHERE node_type = 'StorageMiner' 
+                          AND status != 'active'
+                          AND updated_at < NOW() - INTERVAL '3 days'
+                    """)
+                    cleanup_stats['inactive_registrations'] = int(result.split()[-1])
+                    
+                    # 2. Clean up old node metrics (>7 days)
+                    result = await conn.execute("""
+                        DELETE FROM node_metrics 
+                        WHERE created_at < NOW() - INTERVAL '7 days'
+                    """)
+                    cleanup_stats['old_node_metrics'] = int(result.split()[-1])
+                    
+                    # 3. Clean up orphaned miner_stats (miners not in registration)
+                    result = await conn.execute("""
+                        DELETE FROM miner_stats 
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM registration r 
+                            WHERE r.node_id = miner_stats.node_id 
+                              AND r.node_type = 'StorageMiner'
+                              AND r.status = 'active'
+                        )
+                    """)
+                    cleanup_stats['orphaned_miner_stats'] = int(result.split()[-1])
+                    
+                    # 4. Clean up old system events (>30 days)
+                    result = await conn.execute("""
+                        DELETE FROM system_events 
+                        WHERE created_at < NOW() - INTERVAL '30 days'
+                    """)
+                    cleanup_stats['old_system_events'] = int(result.split()[-1])
+                
+                # Get final counts
+                final_registrations = await conn.fetchval("SELECT COUNT(*) FROM registration WHERE node_type = 'StorageMiner'")
+                final_node_metrics = await conn.fetchval("SELECT COUNT(*) FROM node_metrics")
+                final_miner_stats = await conn.fetchval("SELECT COUNT(*) FROM miner_stats")
+                final_system_events = await conn.fetchval("SELECT COUNT(*) FROM system_events")
+                
+                total_cleaned = sum(cleanup_stats.values())
+                
+                logger.info(f"✅ Miner records cleanup completed:")
+                logger.info(f"   🗑️  Inactive registrations: {cleanup_stats['inactive_registrations']:,}")
+                logger.info(f"   🗑️  Old node metrics: {cleanup_stats['old_node_metrics']:,}")
+                logger.info(f"   🗑️  Orphaned miner stats: {cleanup_stats['orphaned_miner_stats']:,}")
+                logger.info(f"   🗑️  Old system events: {cleanup_stats['old_system_events']:,}")
+                logger.info(f"   📊 Total records cleaned: {total_cleaned:,}")
+                
+                logger.info(f"📊 Database after cleanup:")
+                logger.info(f"   - Miner registrations: {final_registrations:,} (-{total_registrations - final_registrations:,})")
+                logger.info(f"   - Node metrics: {final_node_metrics:,} (-{total_node_metrics - final_node_metrics:,})")
+                logger.info(f"   - Miner stats: {final_miner_stats:,} (-{total_miner_stats - final_miner_stats:,})")
+                logger.info(f"   - System events: {final_system_events:,} (-{total_system_events - final_system_events:,})")
+                
+                # Calculate space savings
+                total_reduction = (total_registrations - final_registrations + 
+                                 total_node_metrics - final_node_metrics + 
+                                 total_miner_stats - final_miner_stats + 
+                                 total_system_events - final_system_events)
+                
+                if total_reduction > 0:
+                    logger.info(f"💾 Database optimization: {total_reduction:,} total records removed")
+                else:
+                    logger.info("✅ Database already optimized - no cleanup needed")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Error during miner records cleanup: {e}")
             logger.exception("Full traceback:")
             return False
 
