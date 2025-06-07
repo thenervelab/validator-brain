@@ -156,6 +156,7 @@ class EpochOrchestrator:
         self.pinning_completed = False
         self.assignment_completed = False
         self.health_checks_completed = False
+        self.health_scores_processed = False  # CRITICAL: Transfer health data to miner_stats
         self.health_metrics_submitted = False
         self.availability_completed = False  # Track availability maintenance
         self.profiles_reconstructed = False
@@ -475,6 +476,103 @@ class EpochOrchestrator:
             await self.wait_for_queues_empty(['miner_health_check'], 600)
         
         return success
+
+    async def process_health_scores(self) -> bool:
+        """
+        Process health scores from epoch health data to miner stats.
+        This MUST run after health checks complete to ensure health_score data is available for file assignment.
+        """
+        logger.info("🏥 Processing health scores from epoch health data to miner stats")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Get most recent health data per miner (avoiding duplicates from multiple epochs)
+                health_calculations = await conn.fetch("""
+                    SELECT DISTINCT ON (meh.node_id)
+                        meh.node_id,
+                        meh.epoch,
+                        meh.ping_successes,
+                        meh.ping_failures,
+                        meh.pin_check_successes,
+                        meh.pin_check_failures,
+                        -- Calculate overall health score (ping + pin performance)
+                        CASE 
+                            WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
+                            ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
+                                  (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
+                        END AS calculated_health_score,
+                        meh.last_activity_at
+                    FROM miner_epoch_health meh
+                    WHERE meh.last_activity_at >= NOW() - INTERVAL '6 hours'
+                    ORDER BY meh.node_id, meh.last_activity_at DESC
+                """)
+                
+                if not health_calculations:
+                    logger.warning("⚠️ No recent health data found to process")
+                    return False
+                
+                logger.info(f"📊 Processing health scores for {len(health_calculations)} miners")
+                
+                # Update miner_stats with pin check data (health_score is auto-calculated from successful_pin_checks/total_pin_checks)
+                updated_count = 0
+                for health in health_calculations:
+                    node_id = health['node_id']
+                    ping_successes = health['ping_successes'] or 0
+                    ping_failures = health['ping_failures'] or 0
+                    pin_successes = health['pin_check_successes'] or 0
+                    pin_failures = health['pin_check_failures'] or 0
+                    
+                    # Calculate totals for the generated health_score column
+                    total_pin_checks = pin_successes + pin_failures
+                    successful_pin_checks = pin_successes
+                    
+                    # Update or insert into miner_stats (health_score is auto-calculated)
+                    await conn.execute("""
+                        INSERT INTO miner_stats (
+                            node_id, 
+                            successful_pin_checks,
+                            total_pin_checks,
+                            ping_successes,
+                            ping_failures,
+                            updated_at
+                        )
+                        VALUES ($1, $2, $3, $4, $5, NOW())
+                        ON CONFLICT (node_id) 
+                        DO UPDATE SET 
+                            successful_pin_checks = $2,
+                            total_pin_checks = $3,
+                            ping_successes = $4,
+                            ping_failures = $5,
+                            updated_at = NOW()
+                    """, node_id, successful_pin_checks, total_pin_checks, ping_successes, ping_failures)
+                    
+                    updated_count += 1
+                
+                # Verify health scores were calculated
+                healthy_miners = await conn.fetchval("""
+                    SELECT COUNT(*) FROM miner_stats 
+                    WHERE health_score > 0 AND updated_at >= NOW() - INTERVAL '10 minutes'
+                """)
+                
+                avg_health = await conn.fetchval("""
+                    SELECT ROUND(AVG(health_score), 1) FROM miner_stats 
+                    WHERE health_score > 0 AND updated_at >= NOW() - INTERVAL '10 minutes'
+                """)
+                
+                logger.info(f"✅ Health score processing completed:")
+                logger.info(f"   📊 Updated {updated_count} miner records")
+                logger.info(f"   🏥 {healthy_miners} miners now have health scores > 0")
+                logger.info(f"   📈 Average health score: {avg_health}%")
+                
+                if healthy_miners < 100:
+                    logger.warning(f"⚠️ Only {healthy_miners} healthy miners - may impact assignment quality")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Error processing health scores: {e}")
+            logger.exception("Full traceback:")
+            return False
     
     async def process_pinning_requests(self) -> bool:
         """
@@ -1374,7 +1472,7 @@ class EpochOrchestrator:
                 logger.error("❌ Initialization failed, will retry next cycle.")
             return
         
-        # Phase 2: CRITICAL TIMING - Health checks ONLY at epoch beginning
+                # Phase 2: CRITICAL TIMING - Health checks ONLY at epoch beginning
         elif self.initialization_completed and not self.health_checks_completed:
             if block_position <= 10:
                 # EARLY EPOCH: Can start health checks OR use previous data
@@ -1432,9 +1530,23 @@ class EpochOrchestrator:
                         logger.warning("   VALIDATOR RISK: Proceeding with limited health data")
                         self.health_checks_completed = True  # Must proceed for validator duties
             return
-        
-        # Phase 3: SEQUENTIAL File Assignment (immediately after health checks complete)
-        elif self.health_checks_completed and not self.assignment_completed:
+
+        # Phase 2.5: CRITICAL - Process health scores (transfer epoch health data to miner_stats)
+        elif self.health_checks_completed and not self.health_scores_processed:
+            logger.info(f"🏥 SEQUENTIAL: Processing health scores at block {block_position}/99")
+            logger.info("   CRITICAL: Transferring health data from epoch health to miner stats for assignment")
+            success = await self.process_health_scores()
+            if success:
+                self.health_scores_processed = True
+                logger.info("✅ SEQUENTIAL: Health scores processed - miner stats updated for assignment")
+            else:
+                logger.error("❌ Health score processing failed - assignment may use stale data")
+                # Proceed anyway to avoid blocking the validator
+                self.health_scores_processed = True
+            return
+
+        # Phase 3: SEQUENTIAL File Assignment (immediately after health score processing complete)
+        elif self.health_scores_processed and not self.assignment_completed:
             logger.info(f"📋 SEQUENTIAL: Starting file assignment at block {block_position}/99")
             logger.info("   Health checks completed - starting assignment immediately for speed")
             success = await self.assign_files()
@@ -1488,6 +1600,8 @@ class EpochOrchestrator:
                 logger.info(f"⏳ Waiting for initialization phase (current: {block_position}/99)")
             elif not self.health_checks_completed:
                 logger.info(f"⏳ Waiting for health checks completion (current: {block_position}/99)")  
+            elif not self.health_scores_processed:
+                logger.info(f"⏳ Waiting for health score processing completion (current: {block_position}/99)")
             elif not self.assignment_completed:
                 logger.info(f"⏳ Waiting for file assignment completion (current: {block_position}/99)")
             elif not self.profiles_completed:
@@ -1502,6 +1616,7 @@ class EpochOrchestrator:
         """Reset epoch state for new epoch."""
         self.initialization_completed = False
         self.health_checks_completed = False
+        self.health_scores_processed = False  # CRITICAL: Health score processing
         self.assignment_completed = False
         self.profiles_completed = False  # NEW
         self.submission_completed = False  # NEW
@@ -1884,6 +1999,7 @@ class EpochOrchestrator:
             logger.info(f"   Epoch {self.current_epoch} Results:")
             logger.info(f"   ✅ Phase 1 - Initialization: {self.initialization_completed}")
             logger.info(f"   ✅ Phase 2 - Health Checks: {self.health_checks_completed}")
+            logger.info(f"   ✅ Phase 2.5 - Health Score Processing: {self.health_scores_processed}")
             logger.info(f"   ✅ Phase 3 - File Assignment: {self.assignment_completed}")
             logger.info(f"   ✅ Phase 4 - Profile Reconstruction: {self.profiles_completed}")
             logger.info(f"   ✅ Phase 5 - Blockchain Submission: {self.submission_completed}")
@@ -1919,6 +2035,12 @@ class EpochOrchestrator:
             
             if not self.health_checks_completed:
                 critical_issues.append("Health checks never completed")
+            
+            if not self.health_scores_processed and self.health_checks_completed:
+                critical_issues.append("Health scores never processed after health checks")
+            
+            if self.assignment_completed and not self.health_scores_processed:
+                critical_issues.append("Assignments completed WITHOUT health score processing")
             
             if self.assignment_completed and not self.health_checks_completed:
                 critical_issues.append("Assignments completed WITHOUT health checks")
