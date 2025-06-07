@@ -1993,6 +1993,9 @@ class EpochOrchestrator:
             # Cleanup old data if needed
             await self.cleanup_epoch_tables()
             
+            # Clean up old health data to optimize database performance
+            await self.cleanup_old_health_data()
+            
             # Provide comprehensive epoch summary
             logger.info("🏁 EPOCH SUMMARY:")
             logger.info("=" * 50)
@@ -2071,6 +2074,141 @@ class EpochOrchestrator:
             
         except Exception as e:
             logger.error(f"❌ Error during epoch cleanup: {e}")
+            return False
+
+    async def cleanup_old_health_data(self) -> bool:
+        """
+        Clean up old miner health data to optimize database performance.
+        
+        Removes:
+        - Very old health records (>3 days)
+        - Duplicate old health records (1-3 days, keeps 1 per miner)
+        - Orphaned health records for non-existent miners
+        
+        Preserves recent data (< 24 hours) for performance.
+        """
+        logger.info("🧹 Cleaning up old miner health data")
+        
+        try:
+            async with self.db_pool.acquire() as conn:
+                # Check current volumes before cleanup
+                total_health_before = await conn.fetchval("SELECT COUNT(*) FROM miner_epoch_health")
+                registered_miners = await conn.fetchval("SELECT COUNT(*) FROM registration WHERE node_type = 'StorageMiner' AND status = 'active'")
+                
+                logger.info(f"📊 Health data before cleanup: {total_health_before:,} records for {registered_miners:,} miners")
+                
+                if total_health_before == 0:
+                    logger.info("✅ No health data to clean")
+                    return True
+                
+                # Count what will be cleaned
+                very_old_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM miner_epoch_health 
+                    WHERE last_activity_at < NOW() - INTERVAL '3 days'
+                """)
+                
+                old_duplicates_count = await conn.fetchval("""
+                    SELECT COUNT(*) - COUNT(DISTINCT node_id) FROM miner_epoch_health 
+                    WHERE last_activity_at < NOW() - INTERVAL '24 hours' 
+                    AND last_activity_at >= NOW() - INTERVAL '3 days'
+                """)
+                
+                orphaned_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM miner_epoch_health meh
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM registration r 
+                        WHERE r.node_id = meh.node_id 
+                        AND r.node_type = 'StorageMiner'
+                    )
+                """)
+                
+                total_to_clean = very_old_count + old_duplicates_count + orphaned_count
+                
+                if total_to_clean == 0:
+                    logger.info("✅ Health data is already clean")
+                    return True
+                
+                logger.info(f"🧹 Cleaning {total_to_clean:,} old health records:")
+                logger.info(f"   - Very old (>3 days): {very_old_count:,}")
+                logger.info(f"   - Old duplicates (1-3 days): {old_duplicates_count:,}")
+                logger.info(f"   - Orphaned records: {orphaned_count:,}")
+                
+                # Execute cleanup in transaction
+                async with conn.transaction():
+                    cleaned_count = 0
+                    
+                    # 1. Delete very old records
+                    if very_old_count > 0:
+                        result = await conn.execute("""
+                            DELETE FROM miner_epoch_health 
+                            WHERE last_activity_at < NOW() - INTERVAL '3 days'
+                        """)
+                        deleted = int(result.split()[-1])
+                        cleaned_count += deleted
+                        logger.info(f"   ✅ Deleted {deleted:,} very old health records")
+                    
+                    # 2. Delete old duplicates (keep most recent per miner)
+                    if old_duplicates_count > 0:
+                        result = await conn.execute("""
+                            DELETE FROM miner_epoch_health 
+                            WHERE last_activity_at < NOW() - INTERVAL '24 hours' 
+                            AND last_activity_at >= NOW() - INTERVAL '3 days'
+                            AND (node_id, last_activity_at) NOT IN (
+                                SELECT DISTINCT ON (node_id) node_id, last_activity_at
+                                FROM miner_epoch_health 
+                                WHERE last_activity_at < NOW() - INTERVAL '24 hours' 
+                                AND last_activity_at >= NOW() - INTERVAL '3 days'
+                                ORDER BY node_id, last_activity_at DESC
+                            )
+                        """)
+                        deleted = int(result.split()[-1])
+                        cleaned_count += deleted
+                        logger.info(f"   ✅ Deleted {deleted:,} old duplicate records")
+                    
+                    # 3. Delete orphaned records
+                    if orphaned_count > 0:
+                        result = await conn.execute("""
+                            DELETE FROM miner_epoch_health 
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM registration r 
+                                WHERE r.node_id = miner_epoch_health.node_id 
+                                AND r.node_type = 'StorageMiner'
+                            )
+                        """)
+                        deleted = int(result.split()[-1])
+                        cleaned_count += deleted
+                        logger.info(f"   ✅ Deleted {deleted:,} orphaned health records")
+                
+                # Verify cleanup results
+                total_health_after = await conn.fetchval("SELECT COUNT(*) FROM miner_epoch_health")
+                reduction = total_health_before - total_health_after
+                reduction_pct = (reduction / total_health_before * 100) if total_health_before > 0 else 0
+                
+                # Verify data preservation
+                recent_miners = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT node_id) FROM miner_epoch_health 
+                    WHERE last_activity_at >= NOW() - INTERVAL '24 hours'
+                """)
+                
+                coverage_pct = (recent_miners / registered_miners * 100) if registered_miners > 0 else 0
+                
+                logger.info(f"✅ Health data cleanup completed:")
+                logger.info(f"   📊 Records: {total_health_before:,} → {total_health_after:,} (-{reduction:,})")
+                logger.info(f"   💾 Space reduction: {reduction_pct:.1f}%")
+                logger.info(f"   🎯 Coverage preserved: {recent_miners:,}/{registered_miners:,} miners ({coverage_pct:.1f}%)")
+                
+                if coverage_pct >= 80:
+                    logger.info("   ✅ EXCELLENT: Data integrity maintained")
+                elif coverage_pct >= 50:
+                    logger.info("   ⚠️ ACCEPTABLE: Most data preserved")
+                else:
+                    logger.warning("   🚨 WARNING: Low data preservation")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Error during health data cleanup: {e}")
+            logger.exception("Full traceback:")
             return False
 
 
