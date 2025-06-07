@@ -578,10 +578,11 @@ class EpochOrchestrator:
         1. Fetch pinning requests from the chain.
         2. Process the files from those requests to get their sizes.
         """
-        logger.info("📌 Processing all new pinning requests from the blockchain...")
+        logger.info("📌 Processing ALL unassigned pinning requests from the blockchain...")
+        logger.info("   🔄 This includes both NEW requests AND old unprocessed requests from previous validators")
 
         # Step 1: Run the processor to fetch requests from the chain and put them on the queue
-        logger.info("   Running pinning_request_processor.py to fetch new requests...")
+        logger.info("   Running pinning_request_processor.py to fetch ALL unassigned requests from chain...")
         success = self.run_processor(
             'pinning_request_processor.py',
             'Pinning requests processing'
@@ -612,7 +613,7 @@ class EpochOrchestrator:
         await self.wait_for_queues_empty(['pinning_file_processing'], 600)
         logger.info("   ✅ 'pinning_file_processing' queue processed.")
 
-        logger.info("✅ All new pinning requests and their files have been processed.")
+        logger.info("✅ ALL unassigned pinning requests (new + old unprocessed) and their files have been processed.")
         return True
     
     async def process_pinning_files(self) -> bool:
@@ -2133,15 +2134,16 @@ class EpochOrchestrator:
         """Clean up tables at the start of each epoch."""
         logger.info("🧹 Cleaning up epoch tables")
         
+        # CORRECTED APPROACH: Clean everything and refetch from chain as source of truth
         tables_to_clean = [
-            'pinning_requests',
-            # 'node_metrics',  # PRESERVE: Only refresh every 300 blocks, not every epoch
+            'pinning_requests',          # CLEAN: Will be refetched from chain with ALL unassigned requests
+            # 'node_metrics',            # PRESERVE: Only refresh every 300 blocks, not every epoch
             'parsed_cids',
             'pending_assignment_file',
             'pending_miner_profile',
             'pending_submissions',
             'pending_user_profile',
-            'processed_pinning_requests'
+            'processed_pinning_requests' # CLEAN: Will start fresh tracking for this epoch
         ]
         
         try:
@@ -2156,6 +2158,11 @@ class EpochOrchestrator:
                 logger.info("✅ PRESERVING node_metrics data (only refreshed every 300 blocks)")
                 logger.info("   Node metrics don't change frequently, saving processing overhead")
                 
+                # CORRECTED APPROACH: Clean everything and refetch from blockchain as source of truth
+                logger.info("🔄 CLEANING pinning_requests table - will refetch ALL unassigned from chain")
+                logger.info("   Blockchain is source of truth for unprocessed storage requests")
+                logger.info("   This ensures we get ALL unassigned requests regardless of age or original validator")
+                
                 for table in tables_to_clean:
                     try:
                         # Delete all records from the table
@@ -2166,7 +2173,7 @@ class EpochOrchestrator:
                         # Some tables might not exist, which is okay
                         logger.warning(f"⚠️ Could not clean table '{table}': {e}")
             
-            logger.info("✅ Epoch table cleanup completed (preserved health data + node metrics for performance)")
+            logger.info("✅ Epoch table cleanup completed (preserved health data + node metrics, ready for chain refetch)")
             return True
             
         except Exception as e:
