@@ -726,37 +726,42 @@ class EpochOrchestrator:
             # Collect blockchain data for assignment processing
             logger.info("📦 Collecting blockchain data for storage request processing...")
             
-            # Get storage requests from pinning_requests table
+            # Get individual files from file_assignments (already extracted from manifests by pinning consumer)
             storage_requests = []
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch("""
-                    SELECT pr.owner, pr.request_hash, pr.file_hash, pr.file_name, 
-                           COALESCE(f.size, 1000000) as file_size, pr.total_replicas,
-                           pr.created_at
-                    FROM pinning_requests pr
-                    LEFT JOIN files f ON pr.file_hash = f.cid
-                    WHERE pr.is_assigned = FALSE
-                    ORDER BY pr.created_at ASC
+                    SELECT 
+                        fa.owner, 
+                        fa.cid as file_hash,  -- Use individual file CID, not manifest CID
+                        f.name as file_name,
+                        f.size as file_size,
+                        3 as total_replicas,  -- Default replica count
+                        fa.created_at
+                    FROM file_assignments fa
+                    LEFT JOIN files f ON fa.cid = f.cid
+                    WHERE fa.miner1 IS NULL AND fa.miner2 IS NULL AND fa.miner3 IS NULL 
+                      AND fa.miner4 IS NULL AND fa.miner5 IS NULL  -- Not yet assigned
+                    ORDER BY fa.created_at ASC
                 """)
                 
-                # DEBUG LOGGING: Print raw storage requests from DB
-                logger.info(f"DEBUG: Raw storage requests from DB: {rows}")
+                # DEBUG LOGGING: Print raw file assignments from DB
+                logger.info(f"DEBUG: Raw individual files from DB: {rows}")
 
                 for row in rows:
-                    # Convert to the format expected by ValidatorWorkflow
+                    # Convert to the format expected by ValidatorWorkflow (using file CID as request_hash)
                     storage_request = (
-                        (row['owner'], row['request_hash']),
+                        (row['owner'], row['file_hash']),  # Use file CID as unique identifier
                         {
-                            'file_hash': row['file_hash'],
+                            'file_hash': row['file_hash'],  # Individual file CID
                             'file_name': row['file_name'],
-                            'file_size': row['file_size'],
+                            'file_size': row['file_size'] or 0,  # Handle NULL sizes
                             'total_replicas': row['total_replicas'],
                             'created_at': row['created_at']
                         }
                     )
                     storage_requests.append(storage_request)
                 
-                logger.info(f"📋 Found {len(storage_requests)} storage requests to process")
+                logger.info(f"📋 Found {len(storage_requests)} individual files to assign")
             
             # Get miner profiles from database
             miner_profiles = []
@@ -822,15 +827,15 @@ class EpochOrchestrator:
                     node_registration.append(node_reg)
             
             if not storage_requests:
-                logger.info("✅ No storage requests to process")
+                logger.info("✅ No unassigned files to process")
                 return True
             
             if not miner_profiles:
                 logger.error("❌ No available miners found")
                 return False
             
-            # Process storage requests using ValidatorWorkflow
-            logger.info("🚀 Processing storage requests with ValidatorWorkflow...")
+            # Process individual files using ValidatorWorkflow
+            logger.info("🚀 Processing individual files with ValidatorWorkflow...")
             user_profiles, processed_miner_profiles = await workflow.process_storage_requests(
                 storage_requests=storage_requests,
                 miner_profiles=miner_profiles,
@@ -841,13 +846,39 @@ class EpochOrchestrator:
             logger.info(f"   📝 Generated {len(user_profiles)} user profile entries")
             logger.info(f"   ⛏️ Generated {len(processed_miner_profiles)} miner profile entries")
             
-            # Store results in storage_requests table for later use
+            # Update file_assignments with assigned miners
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
-                    # Clear existing storage requests for this epoch
+                    assignments_updated = 0
+                    
+                    # Process each user profile and update file_assignments
+                    for profile in user_profiles:
+                        file_cid = profile['file_hash']
+                        owner = profile['user_id']
+                        assigned_miners = profile.get('assigned_miners', [])
+                        
+                        # Update file_assignments with assigned miners
+                        # Assign miners to miner1, miner2, miner3, miner4, miner5 slots
+                        miner_slots = [None] * 5
+                        for i, miner_id in enumerate(assigned_miners[:5]):  # Max 5 miners
+                            miner_slots[i] = miner_id
+                        
+                        await conn.execute("""
+                            UPDATE file_assignments 
+                            SET miner1 = $3, miner2 = $4, miner3 = $5, miner4 = $6, miner5 = $7,
+                                selected_validator = $8, updated_at = CURRENT_TIMESTAMP
+                            WHERE cid = $1 AND owner = $2
+                        """, 
+                        file_cid, owner, 
+                        miner_slots[0], miner_slots[1], miner_slots[2], miner_slots[3], miner_slots[4],
+                        self.our_validator_account
+                        )
+                        assignments_updated += 1
+                    
+                    # Also store in storage_requests table for blockchain submission
                     await conn.execute("DELETE FROM storage_requests")
                     
-                    # Group user profiles by owner
+                    # Group by owner for storage_requests
                     user_assignments = {}
                     for profile in user_profiles:
                         owner = profile['user_id']
@@ -855,10 +886,9 @@ class EpochOrchestrator:
                             user_assignments[owner] = []
                         user_assignments[owner].append(profile)
                     
-                    # Insert storage requests with assigned miners
+                    # Insert storage requests for blockchain submission
                     for owner, profiles in user_assignments.items():
                         for profile in profiles:
-                            # Extract assigned miners from profile
                             assigned_miners = profile.get('assigned_miners', [])
                             
                             await conn.execute("""
@@ -867,10 +897,6 @@ class EpochOrchestrator:
                                  total_replicas, last_charged_at, created_at, miner_ids, 
                                  selected_validator, status)
                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                                ON CONFLICT (owner_account, file_hash) DO UPDATE SET
-                                    miner_ids = EXCLUDED.miner_ids,
-                                    status = EXCLUDED.status,
-                                    updated_at = CURRENT_TIMESTAMP
                             """, 
                             owner,
                             profile['file_hash'],
@@ -884,21 +910,11 @@ class EpochOrchestrator:
                             'assigned'
                             )
                     
-                    # Update pinning_requests to mark as assigned
-                    processed_hashes = [p['file_hash'] for p in user_profiles]
-                    if processed_hashes:
-                        await conn.execute("""
-                            UPDATE pinning_requests 
-                            SET is_assigned = TRUE, 
-                                selected_validator = $1,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE file_hash = ANY($2)
-                        """, self.our_validator_account, processed_hashes)
-                    
-                    logger.info(f"💾 Stored {len(user_profiles)} storage request assignments")
+                    logger.info(f"💾 Updated {assignments_updated} individual file assignments")
+                    logger.info(f"💾 Created {len(user_profiles)} storage request entries for blockchain submission")
             
-            logger.info("✅ File assignment completed successfully with ValidatorWorkflow")
-            logger.info("🎯 Storage requests ready for profile reconstruction")
+            logger.info("✅ Individual file assignment completed successfully with ValidatorWorkflow")
+            logger.info("🎯 File assignments ready for profile reconstruction")
             return True
             
         except Exception as e:
