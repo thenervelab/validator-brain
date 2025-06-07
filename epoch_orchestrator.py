@@ -1589,6 +1589,13 @@ class EpochOrchestrator:
         elif self.health_checks_completed and not self.health_scores_processed:
             logger.info(f"🏥 SEQUENTIAL: Processing health scores at block {block_position}/99")
             logger.info("   CRITICAL: Transferring health data from epoch health to miner stats for assignment")
+            
+            # CRITICAL FIX: Reset assignment state at epoch start to ensure fresh processing
+            if block_position <= 15:  # Early in epoch
+                if self.assignment_completed:
+                    logger.info("🔄 EPOCH START: Resetting assignment state to ensure fresh storage request processing")
+                    self.assignment_completed = False
+            
             success = await self.process_health_scores()
             if success:
                 self.health_scores_processed = True
@@ -1600,14 +1607,23 @@ class EpochOrchestrator:
             return
 
         # Phase 3: SEQUENTIAL File Assignment (immediately after health score processing complete)
+        # CRITICAL: ALWAYS run file assignment at epoch start for new storage requests
         elif self.health_scores_processed and not self.assignment_completed:
             logger.info(f"📋 SEQUENTIAL: Starting file assignment at block {block_position}/99")
             logger.info("   Health checks completed - starting assignment immediately for speed")
+            logger.info("   🔄 ENSURING fresh storage request processing for new epoch")
             success = await self.assign_files()
             if success:
                 self.assignment_completed = True
                 logger.info("✅ SEQUENTIAL: File assignment completed - starting profiles next")
             return
+        
+        # CRITICAL FIX: Handle case where assignment was already marked complete but we need fresh processing
+        elif self.health_scores_processed and self.assignment_completed and block_position <= 15:
+            logger.info(f"🔄 EPOCH START: Found assignment already complete at block {block_position}/99")
+            logger.info("   Forcing fresh file assignment for new storage requests")
+            self.assignment_completed = False
+            return  # Will process assignment in next cycle
         
         # Phase 4: SEQUENTIAL Profile Reconstruction (immediately after assignment completes)
         elif self.assignment_completed and not self.profiles_completed:
@@ -1671,7 +1687,7 @@ class EpochOrchestrator:
         self.initialization_completed = False
         self.health_checks_completed = False
         self.health_scores_processed = False  # CRITICAL: Health score processing
-        self.assignment_completed = False
+        self.assignment_completed = False  # CRITICAL: Always reset to ensure fresh storage request processing
         self.profiles_completed = False  # NEW
         self.submission_completed = False  # NEW
         self.cleanup_completed = False  # NEW
@@ -1693,6 +1709,7 @@ class EpochOrchestrator:
         
         logger.info("🔄 Epoch state reset for new epoch")
         logger.info("📊 Node metrics timing uses modulo (block % 300 == 0) - no state to preserve")
+        logger.info("🔄 ENFORCED: File assignment will run fresh to process new storage requests")
     
     def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
         """
