@@ -1605,17 +1605,9 @@ class EpochOrchestrator:
                         logger.warning("   Will wait for next epoch to run fresh health checks")
                         # Don't mark completed - wait for next epoch
         
-        # ENHANCED: Run file assignment processing to catch NULL miners (every 15 blocks)
-        if self.health_checks_completed and block_position % 15 == 0:
-            logger.info("📋 Non-validator: Running file assignment processing to fix NULL miners...")
-            assignment_success = await self.assign_files()
-            if assignment_success:
-                logger.info("✅ Non-validator: File assignment processing completed (fixed NULL miners)")
-                
-                # Update assignment completion flag for this cycle
-                self.assignment_completed = True
-            else:
-                logger.warning("⚠️ Non-validator: File assignment processing failed")
+        # REMOVED: Non-validators should NOT process storage requests or pinning assignments
+        # File assignment processing is VALIDATOR-ONLY work
+        # Non-validators only do: health checks, availability maintenance, health metrics submission
         
         # Run availability maintenance (non-validators can help maintain the network)
         if self.health_checks_completed and not self.availability_completed:
@@ -1663,9 +1655,9 @@ class EpochOrchestrator:
             logger.info("📋 Non-validator status summary:")
             logger.info(f"   Initialization: {'✅' if self.initialization_completed else '❌'}")
             logger.info(f"   Health checks: {'✅' if self.health_checks_completed else '❌'}")
-            logger.info(f"   File assignments: {'✅' if self.assignment_completed else '❌'}")
             logger.info(f"   Availability maintenance: {'✅' if self.availability_completed else '❌'}")
             logger.info(f"   Health metrics submitted: {'✅' if self.health_metrics_submitted else '❌'}")
+            logger.info("   📌 NOTE: File assignments are VALIDATOR-ONLY (non-validators don't process storage requests)")
         
         # Wait for end of epoch
         if block_position % 30 == 0:  # Every 30 blocks
@@ -2467,7 +2459,7 @@ class EpochOrchestrator:
         - Inactive/old miner registrations
         - Stale node metrics (>7 days)
         - Orphaned miner_stats for non-existent miners
-        - Old system events
+        - Old system events (if table exists)
         """
         logger.info("🧹 Starting comprehensive miner records cleanup")
         
@@ -2480,11 +2472,31 @@ class EpochOrchestrator:
                     'old_system_events': 0
                 }
                 
-                # Get initial counts for reporting
+                # Helper function to check if table exists
+                async def table_exists(table_name: str) -> bool:
+                    try:
+                        result = await conn.fetchval("""
+                            SELECT EXISTS (
+                                SELECT 1 FROM information_schema.tables 
+                                WHERE table_name = $1
+                            )
+                        """, table_name)
+                        return result
+                    except Exception:
+                        return False
+                
+                # Get initial counts for reporting (with table existence checks)
                 total_registrations = await conn.fetchval("SELECT COUNT(*) FROM registration WHERE node_type = 'StorageMiner'")
-                total_node_metrics = await conn.fetchval("SELECT COUNT(*) FROM node_metrics")
-                total_miner_stats = await conn.fetchval("SELECT COUNT(*) FROM miner_stats")
-                total_system_events = await conn.fetchval("SELECT COUNT(*) FROM system_events")
+                
+                # Check if optional tables exist before querying
+                node_metrics_exists = await table_exists('node_metrics')
+                total_node_metrics = await conn.fetchval("SELECT COUNT(*) FROM node_metrics") if node_metrics_exists else 0
+                
+                miner_stats_exists = await table_exists('miner_stats')
+                total_miner_stats = await conn.fetchval("SELECT COUNT(*) FROM miner_stats") if miner_stats_exists else 0
+                
+                system_events_exists = await table_exists('system_events')
+                total_system_events = await conn.fetchval("SELECT COUNT(*) FROM system_events") if system_events_exists else 0
                 
                 logger.info(f"📊 Database before cleanup:")
                 logger.info(f"   - Miner registrations: {total_registrations:,}")
@@ -2502,37 +2514,46 @@ class EpochOrchestrator:
                     """)
                     cleanup_stats['inactive_registrations'] = int(result.split()[-1])
                     
-                    # 2. Clean up old node metrics (>7 days)
-                    result = await conn.execute("""
-                        DELETE FROM node_metrics 
-                        WHERE created_at < NOW() - INTERVAL '7 days'
-                    """)
-                    cleanup_stats['old_node_metrics'] = int(result.split()[-1])
+                    # 2. Clean up old node metrics (>7 days) - only if table exists
+                    if node_metrics_exists:
+                        result = await conn.execute("""
+                            DELETE FROM node_metrics 
+                            WHERE created_at < NOW() - INTERVAL '7 days'
+                        """)
+                        cleanup_stats['old_node_metrics'] = int(result.split()[-1])
+                    else:
+                        logger.info("   ⚠️ Skipping node_metrics cleanup - table doesn't exist")
                     
-                    # 3. Clean up orphaned miner_stats (miners not in registration)
-                    result = await conn.execute("""
-                        DELETE FROM miner_stats 
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM registration r 
-                            WHERE r.node_id = miner_stats.node_id 
-                              AND r.node_type = 'StorageMiner'
-                              AND r.status = 'active'
-                        )
-                    """)
-                    cleanup_stats['orphaned_miner_stats'] = int(result.split()[-1])
+                    # 3. Clean up orphaned miner_stats (miners not in registration) - only if table exists
+                    if miner_stats_exists:
+                        result = await conn.execute("""
+                            DELETE FROM miner_stats 
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM registration r 
+                                WHERE r.node_id = miner_stats.node_id 
+                                  AND r.node_type = 'StorageMiner'
+                                  AND r.status = 'active'
+                            )
+                        """)
+                        cleanup_stats['orphaned_miner_stats'] = int(result.split()[-1])
+                    else:
+                        logger.info("   ⚠️ Skipping miner_stats cleanup - table doesn't exist")
                     
-                    # 4. Clean up old system events (>30 days)
-                    result = await conn.execute("""
-                        DELETE FROM system_events 
-                        WHERE created_at < NOW() - INTERVAL '30 days'
-                    """)
-                    cleanup_stats['old_system_events'] = int(result.split()[-1])
+                    # 4. Clean up old system events (>30 days) - only if table exists
+                    if system_events_exists:
+                        result = await conn.execute("""
+                            DELETE FROM system_events 
+                            WHERE created_at < NOW() - INTERVAL '30 days'
+                        """)
+                        cleanup_stats['old_system_events'] = int(result.split()[-1])
+                    else:
+                        logger.info("   ⚠️ Skipping system_events cleanup - table doesn't exist")
                 
-                # Get final counts
+                # Get final counts (with table existence checks)
                 final_registrations = await conn.fetchval("SELECT COUNT(*) FROM registration WHERE node_type = 'StorageMiner'")
-                final_node_metrics = await conn.fetchval("SELECT COUNT(*) FROM node_metrics")
-                final_miner_stats = await conn.fetchval("SELECT COUNT(*) FROM miner_stats")
-                final_system_events = await conn.fetchval("SELECT COUNT(*) FROM system_events")
+                final_node_metrics = await conn.fetchval("SELECT COUNT(*) FROM node_metrics") if node_metrics_exists else 0
+                final_miner_stats = await conn.fetchval("SELECT COUNT(*) FROM miner_stats") if miner_stats_exists else 0
+                final_system_events = await conn.fetchval("SELECT COUNT(*) FROM system_events") if system_events_exists else 0
                 
                 total_cleaned = sum(cleanup_stats.values())
                 
