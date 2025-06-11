@@ -189,19 +189,10 @@ class PinningRequestProcessor:
                 # Parse the data
                 parsed_requests = self.parse_storage_request_data(storage_data)
                 
-                # Send each request to the queue
-                for request in parsed_requests:
-                    message_body = json.dumps(request).encode()
-                    
-                    await self.rabbitmq_channel.default_exchange.publish(
-                        aio_pika.Message(
-                            body=message_body,
-                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                        ),
-                        routing_key=self.queue_name
-                    )
-                    
-                    logger.info(f"Sent request to queue: {request['owner']} -> {request['request_hash'][:16]}...")
+                # Send all requests to queue in parallel
+                if parsed_requests:
+                    await self._publish_requests_parallel(parsed_requests)
+                    logger.info(f"📦 Batch published {len(parsed_requests)} requests to queue")
                 
                 logger.info(f"Successfully processed {len(parsed_requests)} storage requests")
                 
@@ -216,6 +207,35 @@ class PinningRequestProcessor:
                 if run_once:
                     raise
                 await asyncio.sleep(10)  # Wait before retry
+    
+    async def _publish_requests_parallel(self, requests: List[Dict[str, Any]]) -> None:
+        semaphore = asyncio.Semaphore(50)
+        
+        async def _publish_single_request(request: Dict[str, Any]) -> None:
+            async with semaphore:
+                try:
+                    message_body = json.dumps(request).encode()
+                    await self.rabbitmq_channel.default_exchange.publish(
+                        aio_pika.Message(
+                            body=message_body,
+                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                        ),
+                        routing_key=self.queue_name
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to publish request {request['request_hash'][:16]}...: {e}")
+                    raise
+        
+        tasks = [_publish_single_request(request) for request in requests]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        successful = sum(1 for r in results if not isinstance(r, Exception))
+        failed = len(results) - successful
+        
+        if failed > 0:
+            logger.warning(f"Parallel publishing: {successful} succeeded, {failed} failed")
+        else:
+            logger.info(f"Parallel publishing: {successful}/{len(requests)} requests published successfully")
     
     async def close(self):
         """Close all connections."""

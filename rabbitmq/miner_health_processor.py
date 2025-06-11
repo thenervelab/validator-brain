@@ -147,6 +147,31 @@ class MinerHealthProcessor:
         
         logger.debug(f"Queued health check for miner {node_id} with {len(files_to_check)} files to check")
     
+    async def _queue_health_checks_parallel(self, miners: List[Dict[str, Any]], epoch: int, block_number: int) -> int:
+        semaphore = asyncio.Semaphore(20)
+        
+        async def _queue_single_health_check(miner: Dict[str, Any]) -> bool:
+            async with semaphore:
+                try:
+                    await self.queue_health_check(miner, epoch, block_number)
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to queue health check for miner {miner['node_id']}: {e}")
+                    return False
+        
+        tasks = [_queue_single_health_check(miner) for miner in miners]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        successful = sum(1 for r in results if r is True)
+        failed = len(results) - successful
+        
+        if failed > 0:
+            logger.warning(f"Parallel health check queuing: {successful} succeeded, {failed} failed")
+        else:
+            logger.info(f"Parallel health check queuing: {successful}/{len(miners)} miners queued successfully")
+        
+        return successful
+    
     async def process_miner_health_checks(self) -> None:
         """Main processing function to queue miner health checks."""
         try:
@@ -162,17 +187,10 @@ class MinerHealthProcessor:
             
             logger.info(f"Found {len(miners)} miners for health checking in epoch {current_epoch}")
             
-            # Queue health checks for all miners
-            queued_count = 0
-            for miner in miners:
-                try:
-                    await self.queue_health_check(miner, current_epoch, current_block)
-                    queued_count += 1
-                except Exception as e:
-                    logger.error(f"Error queuing health check for miner {miner['node_id']}: {e}")
-                    continue
-            
-            logger.info(f"Successfully queued {queued_count} health checks for epoch {current_epoch}")
+            # Queue health checks for all miners in parallel
+            if miners:
+                queued_count = await self._queue_health_checks_parallel(miners, current_epoch, current_block)
+                logger.info(f"📦 Batch queued {queued_count}/{len(miners)} health checks for epoch {current_epoch}")
             
         except Exception as e:
             logger.error(f"Error in miner health check processing: {e}")

@@ -73,7 +73,7 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(url, timeout=30.0)
+            response = await client.post(url, timeout=10.0)
             response.raise_for_status()
             logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from local IPFS")
             return response.content
@@ -88,7 +88,7 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(gateway_url, timeout=60.0)
+            response = await client.get(gateway_url, timeout=20.0)
             response.raise_for_status()
             logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from external gateway")
             return response.content
@@ -116,7 +116,7 @@ async def fetch_ipfs_file_size(cid: str, ipfs_node_url: str = None) -> Optional[
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(stat_url, params=params, timeout=30.0)
+            response = await client.post(stat_url, params=params, timeout=10.0)
             response.raise_for_status()
             stats = response.json()
             size = stats.get("Size") # Use 'Size' from files/stat
@@ -140,7 +140,7 @@ async def _fetch_ipfs_file_size_fallback_local(cid: str, ipfs_node_url: str) -> 
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(block_url, params=params, timeout=30.0)
+            response = await client.post(block_url, params=params, timeout=10.0)
             response.raise_for_status()
             stats = response.json()
             size = stats.get("Size")
@@ -224,6 +224,78 @@ class PinningRequestConsumer:
         """, cid, owner)
         logger.info(f"✅ File {cid[:16]}... added to file_assignments for owner {owner[:16]}...")
     
+    async def _process_manifest_files_parallel(self, manifest_data: List, owner: str) -> int:
+        if not manifest_data:
+            return 0
+            
+        file_assignments = []
+        
+        for i, file_info in enumerate(manifest_data):
+            if isinstance(file_info, dict):
+                file_cid = file_info.get('cid')
+                file_name = file_info.get('filename') or file_info.get('name') or f"file_{i+1}.bin"
+                
+                if file_cid:
+                    file_assignments.append({
+                        'cid': file_cid,
+                        'owner': owner,
+                        'filename': file_name,
+                        'index': i + 1
+                    })
+                else:
+                    logger.warning(f"Skipping manifest entry {i+1}: missing 'cid' field")
+                    
+            elif isinstance(file_info, str):
+                file_name = f"file_{i+1}.bin"
+                file_assignments.append({
+                    'cid': file_info,
+                    'owner': owner,
+                    'filename': file_name,
+                    'index': i + 1
+                })
+            else:
+                logger.warning(f"Skipping invalid manifest entry {i+1}: {file_info}")
+        
+        if not file_assignments:
+            logger.warning("No valid file assignments found in manifest")
+            return 0
+        
+        return await self._batch_process_file_assignments(file_assignments)
+    
+    async def _batch_process_file_assignments(self, file_assignments: List[Dict]) -> int:
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                files_data = []
+                assignments_data = []
+                
+                for assignment in file_assignments:
+                    files_data.append((
+                        assignment['cid'],
+                        assignment['filename'],
+                        0
+                    ))
+                    assignments_data.append((
+                        assignment['cid'],
+                        assignment['owner']
+                    ))
+                
+                await conn.executemany("""
+                    INSERT INTO files (cid, name, size)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (cid) DO UPDATE SET
+                        name = EXCLUDED.name
+                """, files_data)
+                
+                await conn.executemany("""
+                    INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+                    VALUES ($1, $2, NULL, NULL, NULL, NULL, NULL)
+                    ON CONFLICT (cid) DO UPDATE SET
+                        owner = EXCLUDED.owner,
+                        updated_at = CURRENT_TIMESTAMP
+                """, assignments_data)
+                
+                return len(file_assignments)
+    
     async def process_pinning_request(self, request_data: Dict[str, Any]) -> bool:
         """
         Process a pinning request, handling manifest CIDs from blockchain storage requests.
@@ -268,28 +340,9 @@ class PinningRequestConsumer:
                         # Valid manifest format - list of files
                         logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Contains {len(manifest_data)} files.")
                         
-                        async with self.db_pool.acquire() as conn:
-                            for i, file_info in enumerate(manifest_data):
-                                if isinstance(file_info, dict):
-                                    file_cid = file_info.get('cid')
-                                    file_name = file_info.get('filename') or file_info.get('name') or f"file_{i+1}.bin"
-                                    
-                                    if file_cid:
-                                        await self._assign_file_to_owner(conn, file_cid, owner, file_name)
-                                        files_processed += 1
-                                        logger.info(f"  📄 Processed file {i+1}/{len(manifest_data)}: {file_name} ({file_cid[:16]}...)")
-                                    else:
-                                        logger.warning(f"  ⚠️ Skipping manifest entry {i+1}: missing 'cid' field in {file_info}")
-                                elif isinstance(file_info, str):
-                                    # Handle simple string CID format
-                                    file_name = f"file_{i+1}.bin"
-                                    await self._assign_file_to_owner(conn, file_info, owner, file_name)
-                                    files_processed += 1
-                                    logger.info(f"  📄 Processed file {i+1}/{len(manifest_data)}: {file_name} ({file_info[:16]}...)")
-                                else:
-                                    logger.warning(f"  ⚠️ Skipping invalid manifest entry {i+1}: {file_info}")
-                        
-                        logger.info(f"✅ Processed {files_processed} files from manifest")
+                        # Process all files in parallel - MAJOR PERFORMANCE BOOST!
+                        files_processed = await self._process_manifest_files_parallel(manifest_data, owner)
+                        logger.info(f"📦 Batch processed {files_processed} files from manifest")
                         
                     elif isinstance(manifest_data, dict):
                         # Single file object format

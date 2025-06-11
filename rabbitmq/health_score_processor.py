@@ -110,8 +110,7 @@ class HealthScoreProcessor:
             if len(health_calculations) > total_registered_miners:
                 logger.warning(f"⚠️ More health records ({len(health_calculations):,}) than registered miners ({total_registered_miners:,})")
             
-            # Update miner_stats with pin check data (health_score is auto-calculated)
-            updated_count = 0
+            batch_data = []
             for health in health_calculations:
                 node_id = health['node_id']
                 ping_successes = health['ping_successes'] or 0
@@ -119,12 +118,13 @@ class HealthScoreProcessor:
                 pin_successes = health['pin_check_successes'] or 0
                 pin_failures = health['pin_check_failures'] or 0
                 
-                # Calculate total successful and total checks
                 total_successful = ping_successes + pin_successes
                 total_checks = ping_successes + ping_failures + pin_successes + pin_failures
                 
-                # Update or insert into miner_stats (health_score will be auto-calculated)
-                await conn.execute("""
+                batch_data.append((node_id, total_successful, total_checks))
+            
+            if batch_data:
+                await conn.executemany("""
                     INSERT INTO miner_stats (
                         node_id, 
                         successful_pin_checks,
@@ -137,12 +137,9 @@ class HealthScoreProcessor:
                         successful_pin_checks = $2,
                         total_pin_checks = $3,
                         updated_at = NOW()
-                """, node_id, total_successful, total_checks)
+                """, batch_data)
                 
-                updated_count += 1
-                
-                if updated_count % 100 == 0:
-                    logger.info(f"   Updated {updated_count:,} miners...")
+                updated_count = len(batch_data)
             
             logger.info(f"✅ Updated health scores for {updated_count:,} miners")
             
