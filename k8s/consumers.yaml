@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: user-profile-consumer
 spec:
-  replicas: 5
+  replicas: 1
   selector:
     matchLabels:
       app: user-profile-consumer
@@ -115,7 +115,7 @@ kind: Deployment
 metadata:
   name: miner-profile-reconstruction-consumer
 spec:
-  replicas: 10
+  replicas: 1
   selector:
     matchLabels:
       app: miner-profile-reconstruction-consumer
@@ -199,7 +199,7 @@ kind: Deployment
 metadata:
   name: miner-health-consumer
 spec:
-  replicas: 50
+  replicas: 2
   selector:
     matchLabels:
       app: miner-health-consumer
@@ -227,7 +227,7 @@ kind: Deployment
 metadata:
   name: epoch-health-consumer
 spec:
-  replicas: 60
+  replicas: 2
   selector:
     matchLabels:
       app: epoch-health-consumer

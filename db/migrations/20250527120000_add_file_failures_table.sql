@@ -41,15 +41,6 @@ CREATE INDEX idx_miner_availability_score ON miner_availability (availability_sc
 CREATE INDEX idx_miner_availability_active ON miner_availability (is_active);
 CREATE INDEX idx_miner_availability_updated ON miner_availability (updated_at);
 
--- Create function to update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
 -- Create trigger to update miner_availability.updated_at
 CREATE TRIGGER update_miner_availability_updated_at
     BEFORE UPDATE ON miner_availability
