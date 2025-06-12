@@ -986,7 +986,7 @@ async def main():
     try:
         # Initialize database pool
         await init_db_pool()
-        processor.db_pool = await get_db_pool()
+        processor.db_pool = get_db_pool()
         logger.info("Database connection pool initialized")
         
         # Connect to services

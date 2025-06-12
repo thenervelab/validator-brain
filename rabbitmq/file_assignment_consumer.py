@@ -589,7 +589,7 @@ async def main():
     try:
         # Initialize database pool
         await init_db_pool()
-        consumer.db_pool = await get_db_pool()
+        consumer.db_pool = get_db_pool()
         logger.info("Database connection pool initialized")
         
         # Connect to RabbitMQ

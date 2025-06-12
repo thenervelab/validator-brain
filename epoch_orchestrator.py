@@ -213,7 +213,7 @@ class EpochOrchestrator:
             
             # Initialize database pool
             await init_db_pool()
-            self.db_pool = await get_db_pool()
+            self.db_pool = get_db_pool()
             logger.info("Database connection pool initialized")
             
             logger.info("Epoch orchestrator initialized successfully")
@@ -1543,7 +1543,7 @@ class EpochOrchestrator:
     async def non_validator_workflow(self):
         """Execute non-validator workflow."""
         logger.info("👤 Executing NON-VALIDATOR workflow")
-        
+
         # Get current position for context
         current_block = self.current_block
         block_position = get_epoch_block_position(current_block)
@@ -1668,7 +1668,7 @@ class EpochOrchestrator:
     async def validator_workflow(self):
         """Execute validator workflow with SEQUENTIAL processing for security and speed."""
         logger.info("👑 Executing VALIDATOR workflow (SEQUENTIAL)")
-        
+
         # Use the current epoch and block from the main loop
         current_epoch = self.current_epoch
         current_block = self.current_block

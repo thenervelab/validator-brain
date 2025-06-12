@@ -7,7 +7,7 @@ from app.db.connection import init_db_pool, get_db_pool
 
 async def quick_check():
     await init_db_pool()
-    db_pool = await get_db_pool()
+    db_pool = get_db_pool()
     async with db_pool.acquire() as conn:
         # Check how many miners have health scores
         total_miners = await conn.fetchval('SELECT COUNT(*) FROM registration WHERE node_type = \'StorageMiner\' AND status = \'active\'')

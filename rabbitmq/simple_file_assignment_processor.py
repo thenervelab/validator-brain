@@ -65,7 +65,7 @@ class SimpleFileAssignmentProcessor:
         try:
             # Initialize database - always call init_db_pool first when running standalone
             try:
-                self.db_pool = await get_db_pool()
+                self.db_pool = get_db_pool()
                 if self.db_pool:
                     logger.info("✅ Using existing database pool")
                 else:
@@ -74,7 +74,7 @@ class SimpleFileAssignmentProcessor:
                 # No existing pool, initialize new one
                 logger.info("🔧 Initializing new database pool...")
                 await init_db_pool()
-                self.db_pool = await get_db_pool()
+                self.db_pool = get_db_pool()
                 
                 if not self.db_pool:
                     raise Exception("Failed to initialize database pool")

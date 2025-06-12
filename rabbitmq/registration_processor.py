@@ -58,7 +58,7 @@ class RegistrationProcessor:
     async def init_database(self):
         """Initialize database connection pool."""
         await init_db_pool()
-        self.db_pool = await get_db_pool()
+        self.db_pool = get_db_pool()
         logger.info("Database connection pool initialized")
         
     async def connect_rabbitmq(self):

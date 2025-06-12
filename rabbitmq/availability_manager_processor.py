@@ -58,7 +58,7 @@ class AvailabilityManagerProcessor:
         try:
             # Initialize database connection
             await init_db_pool()
-            self.db_pool = await get_db_pool()
+            self.db_pool = get_db_pool()
             
             # Initialize availability manager
             self.availability_manager = FileAvailabilityManager(self.db_pool, self.rules)

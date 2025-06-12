@@ -376,14 +376,24 @@ class SubstrateClient:
             await self.connect()
 
         result = await self._execute_query_async(
-            self.substrate.query(
-                module="Credits",
-                storage_function="FreeCredits",
-                params=[account_id],
-            )
+            self.substrate.query,
+            module="Credits",
+            storage_function="FreeCredits",
+            params=[account_id],
+
         )
 
-        return int(result.value) if result and result.value is not None else 0
+        if not result or result.value is None:
+            return 0
+
+        try:
+            balance_value = result.value
+            if hasattr(balance_value, 'value'):
+                balance_value = balance_value.value
+            return int(balance_value)
+        except Exception as e:
+            logger.exception(f"Balance parsing error for {account_id}: {e}")
+            return 0
 
     async def check_multiple_user_balances(self, account_ids: list[str]) -> dict[str, int]:
         """
@@ -397,20 +407,20 @@ class SubstrateClient:
         """
         if not self.connected:
             await self.connect()
-            
+
         semaphore = asyncio.Semaphore(20)  # Limit concurrent queries
-        
+
         async def _check_single_balance(account_id: str) -> tuple[str, int]:
             async with semaphore:
                 balance = await self.check_user_balance(account_id)
                 return account_id, balance
-        
+
         tasks = [_check_single_balance(account_id) for account_id in account_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         balance_map = {}
         failed_count = 0
-        
+
         for result in results:
             if isinstance(result, Exception):
                 failed_count += 1
@@ -418,10 +428,10 @@ class SubstrateClient:
             else:
                 account_id, balance = result
                 balance_map[account_id] = balance
-        
+
         if failed_count > 0:
             logger.warning(f"Failed to check balances for {failed_count} accounts")
-        
+
         logger.info(f"Successfully checked balances for {len(balance_map)} accounts in parallel")
         return balance_map
 

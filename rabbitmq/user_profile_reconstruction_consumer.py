@@ -158,7 +158,7 @@ class UserProfileReconstructionConsumer:
                     if existing:
                         # Update the existing record with the new IPFS CID
                         from app.db.connection import get_db_pool
-                        pool = await get_db_pool()
+                        pool = get_db_pool()
                         async with pool.acquire() as conn:
                             await conn.execute(
                                 """UPDATE pending_user_profile 

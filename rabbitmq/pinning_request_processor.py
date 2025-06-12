@@ -206,8 +206,20 @@ class PinningRequestProcessor:
                         logger.error(f"Error parsing entry {key}: {e}")
                         continue
 
-                logger.info(f"Found {total_entries} total entries, {null_entries} null values")
-                logger.info(f"Collected {len(raw_storage_data)} storage requests from {len(unique_users)} unique users")
+                logger.info(f"🔍 DEBUG: Found {total_entries} total entries, {null_entries} null values")
+                logger.info(f"🔍 DEBUG: Collected {len(raw_storage_data)} storage requests from {len(unique_users)} unique users")
+                
+                # DEBUG: Log all raw storage data
+                if raw_storage_data:
+                    logger.info(f"🔍 DEBUG: Raw storage requests found:")
+                    for i, data in enumerate(raw_storage_data[:10]):  # Log first 10
+                        logger.info(f"  [{i+1}] Account: {data['account'][:20]}...")
+                        logger.info(f"      Request Hash: {data['request_hash'][:20]}...")
+                        logger.info(f"      Value: {str(data['value'])[:100]}...")
+                    if len(raw_storage_data) > 10:
+                        logger.info(f"  ... and {len(raw_storage_data) - 10} more")
+                else:
+                    logger.info(f"🔍 DEBUG: No raw storage requests found")
 
                 # Fetch all user credits in parallel
                 logger.info(f"Fetching credits for {len(unique_users)} users in parallel...")
@@ -233,12 +245,33 @@ class PinningRequestProcessor:
 
                 filtered_by_credits = len(zero_credit_users)
                 if filtered_by_credits > 0:
-                    logger.info(f"Filtered out storage requests from {filtered_by_credits} users with zero credits")
+                    logger.info(f"🔍 DEBUG: Filtered out storage requests from {filtered_by_credits} users with zero credits")
+                    logger.info(f"🔍 DEBUG: Zero credit users: {list(zero_credit_users)[:5]}...")
                 
-                logger.info(f"Final result: {len(storage_data)} storage requests after credit filtering")
+                logger.info(f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering")
+                
+                # DEBUG: Log final storage data before parsing
+                if storage_data:
+                    logger.info(f"🔍 DEBUG: Final storage data to be parsed:")
+                    for i, data in enumerate(storage_data[:5]):  # Log first 5
+                        logger.info(f"  [{i+1}] Key: {data[0]}")
+                        logger.info(f"      Value: {str(data[1])[:150]}...")
+                else:
+                    logger.info(f"🔍 DEBUG: No storage data after credit filtering")
 
                 # Parse the data
                 parsed_requests = self.parse_storage_request_data(storage_data)
+                
+                # DEBUG: Log parsed requests
+                if parsed_requests:
+                    logger.info(f"🔍 DEBUG: Parsed {len(parsed_requests)} requests:")
+                    for i, req in enumerate(parsed_requests[:3]):  # Log first 3
+                        logger.info(f"  [{i+1}] Owner: {req['owner'][:20]}...")
+                        logger.info(f"      File Hash: {req.get('file_hash', 'N/A')[:30]}...")
+                        logger.info(f"      Is Assigned: {req.get('is_assigned', 'N/A')}")
+                        logger.info(f"      Selected Validator: {req.get('selected_validator', 'N/A')[:20]}...")
+                else:
+                    logger.info(f"🔍 DEBUG: No requests parsed from storage data")
                 
                 # Send all requests to queue in parallel
                 if parsed_requests:

@@ -33,7 +33,7 @@ class PendingMinerProfile:
     @classmethod
     async def create(cls, cid: str, node_id: str, files_count: int = 0, files_size: int = 0, block_number: int = 0) -> 'PendingMinerProfile':
         """Create a new pending miner profile record"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -48,7 +48,7 @@ class PendingMinerProfile:
     @classmethod
     async def get_by_cid(cls, cid: str) -> Optional['PendingMinerProfile']:
         """Get a pending miner profile by CID"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM pending_miner_profile WHERE cid = $1",
@@ -59,7 +59,7 @@ class PendingMinerProfile:
     @classmethod
     async def get_by_node_id(cls, node_id: str) -> Optional['PendingMinerProfile']:
         """Get a pending miner profile by node_id"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM pending_miner_profile WHERE node_id = $1",
@@ -70,7 +70,7 @@ class PendingMinerProfile:
     @classmethod
     async def get_pending(cls, limit: int = 100) -> List['PendingMinerProfile']:
         """Get pending profiles that need to be published"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -85,7 +85,7 @@ class PendingMinerProfile:
     
     async def mark_published(self) -> None:
         """Mark the profile as published"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -100,7 +100,7 @@ class PendingMinerProfile:
     
     async def mark_failed(self, error_message: str) -> None:
         """Mark the profile as failed with an error message"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 """

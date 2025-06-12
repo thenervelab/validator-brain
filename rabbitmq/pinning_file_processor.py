@@ -66,7 +66,7 @@ class PinningFileProcessor:
     
     async def fetch_pinning_requests(self) -> List[Dict[str, Any]]:
         """Fetch unprocessed pinning requests from the database"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT pr.request_hash, pr.owner, pr.file_hash, pr.file_name
