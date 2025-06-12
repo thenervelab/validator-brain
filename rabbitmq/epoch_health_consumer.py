@@ -70,7 +70,7 @@ def call_update_pin_check_metrics(miners_metrics: List[Dict[str, Any]]) -> bool:
         node_url = os.getenv('NODE_URL', 'wss://rpc.hippius.network')
         substrate = SubstrateInterface(
             url=node_url,
-            type_registry=TYPE_REGISTRY,
+            # type_registry=TYPE_REGISTRY,
             use_remote_preset=True
         )
         logger.info(f"Connected to Substrate node at {node_url}")
