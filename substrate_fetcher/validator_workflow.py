@@ -273,7 +273,7 @@ class ValidatorWorkflow:
 
         # Check if we have a large number of requests
         total_requests = sum(len(reqs) for reqs in user_requests.values())
-        use_bulk_processing = total_requests > 1000
+        use_bulk_processing = total_requests > 5000
 
         if use_bulk_processing:
             logger.info(f"Using bulk processing for {total_requests} storage requests")
