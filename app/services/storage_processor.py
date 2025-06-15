@@ -80,7 +80,7 @@ def select_miners_for_request(scored_miners: List[Dict], _file_size: int) -> Lis
         List of selected miner IDs
     """
     # Take top 15 miners by score
-    top_miners = scored_miners[:15]
+    top_miners = scored_miners
 
     # Pick 5 randomly from top 15 to distribute load
     selected_miners = random.sample(top_miners, min(5, len(top_miners)))
