@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: health-score-processor
-  namespace: validator-1
+  namespace: ipfs-validator
 spec:
   template:
     spec:
