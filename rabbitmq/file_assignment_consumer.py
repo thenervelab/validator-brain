@@ -150,9 +150,10 @@ class FileAssignmentConsumer:
                             WHERE id = $1
                         """, pending_file_id)
                     
-                    # 5. Update miner stats for assigned miners
-                    for miner_id in valid_miners:
-                        await conn.execute("""
+                    # 5. Batch update miner stats for assigned miners
+                    if valid_miners:
+                        batch_data = [(miner_id, file_size_bytes) for miner_id in valid_miners]
+                        await conn.executemany("""
                             INSERT INTO miner_stats (
                                 node_id, total_files_pinned, total_files_size_bytes, updated_at
                             )
@@ -161,7 +162,7 @@ class FileAssignmentConsumer:
                                 total_files_pinned = miner_stats.total_files_pinned + 1,
                                 total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
                                 updated_at = NOW()
-                        """, miner_id, file_size_bytes)
+                        """, batch_data)
                     
                     logger.info(f"✅ Successfully assigned file {cid[:16]}... to {len(valid_miners)} miners: {', '.join(valid_miners)}")
                     return True
@@ -260,19 +261,20 @@ class FileAssignmentConsumer:
                         logger.warning(f"Race condition detected for file {cid} - assignment was modified by another process")
                         return False
                     
-                    # 5. Update miner stats for newly assigned miners
-                    for miner_id in new_miners:
-                        if miner_id:  # Skip None values
-                            await conn.execute("""
-                                INSERT INTO miner_stats (
-                                    node_id, total_files_pinned, total_files_size_bytes, updated_at
-                                )
-                                VALUES ($1, 1, $2, NOW())
-                                ON CONFLICT (node_id) DO UPDATE SET
-                                    total_files_pinned = miner_stats.total_files_pinned + 1,
-                                    total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
-                                    updated_at = NOW()
-                            """, miner_id, file_size_bytes)
+                    # 5. Batch update miner stats for newly assigned miners
+                    valid_new_miners = [miner_id for miner_id in new_miners if miner_id]
+                    if valid_new_miners:
+                        batch_data = [(miner_id, file_size_bytes) for miner_id in valid_new_miners]
+                        await conn.executemany("""
+                            INSERT INTO miner_stats (
+                                node_id, total_files_pinned, total_files_size_bytes, updated_at
+                            )
+                            VALUES ($1, 1, $2, NOW())
+                            ON CONFLICT (node_id) DO UPDATE SET
+                                total_files_pinned = miner_stats.total_files_pinned + 1,
+                                total_files_size_bytes = miner_stats.total_files_size_bytes + $2,
+                                updated_at = NOW()
+                        """, batch_data)
                     
                     # Enhanced success logging
                     final_null_count = sum(1 for m in updated_miners if m is None)
@@ -587,7 +589,7 @@ async def main():
     try:
         # Initialize database pool
         await init_db_pool()
-        consumer.db_pool = await get_db_pool()
+        consumer.db_pool = get_db_pool()
         logger.info("Database connection pool initialized")
         
         # Connect to RabbitMQ

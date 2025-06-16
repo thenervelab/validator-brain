@@ -48,7 +48,7 @@ class MinerProfileReconstructionConsumer:
         """Get the owner of a file from file_assignments table"""
         try:
             from app.db.connection import get_db_pool
-            pool = await get_db_pool()
+            pool = get_db_pool()
             async with pool.acquire() as conn:
                 row = await conn.fetchrow(
                     "SELECT owner FROM file_assignments WHERE cid = $1",
@@ -176,7 +176,7 @@ class MinerProfileReconstructionConsumer:
                     if existing:
                         # Update the existing record with the actual IPFS CID
                         from app.db.connection import get_db_pool
-                        pool = await get_db_pool()
+                        pool = get_db_pool()
                         async with pool.acquire() as conn:
                             await conn.execute(
                                 "UPDATE pending_miner_profile SET cid = $1 WHERE id = $2",

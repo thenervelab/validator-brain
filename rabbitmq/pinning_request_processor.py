@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from substrateinterface import SubstrateInterface
 
 from app.utils.config import NODE_URL
+from app.services.substrate_client import substrate_client
 
 # Load environment variables
 load_dotenv()
@@ -107,20 +108,37 @@ class PinningRequestProcessor:
                             'miner_ids': value_data.get('miner_ids', value_data.get('minerIds', [])),
                             'timestamp': asyncio.get_event_loop().time()
                         }
-                        
+
                         parsed_requests.append(request)
                         logger.debug(f"Parsed storage request: {owner} -> {request_hash}")
                     else:
                         logger.warning(f"Invalid value format for key {key_data}")
                 else:
                     logger.warning(f"Invalid key format: {key_data}")
-        
+
         return parsed_requests
-    
+
+    async def check_user_has_credits(self, account_id: str) -> bool:
+        """
+        Check if user has non-zero account balance.
+
+        Args:
+            account_id: The account ID to check
+
+        Returns:
+            True if user has credits (balance > 0), False otherwise
+        """
+        try:
+            balance = await substrate_client.check_user_balance(account_id)
+            return balance > 0
+        except Exception as e:
+            logger.error(f"Error checking balance for {account_id}: {e}")
+            return False
+
     async def fetch_and_queue_requests(self, run_once: bool = True):
         """
         Fetch storage requests from substrate and queue them.
-        
+
         Args:
             run_once: If True, fetch once and exit. If False, run continuously.
         """
@@ -131,9 +149,10 @@ class PinningRequestProcessor:
                     module='IpfsPallet',
                     storage_function='UserStorageRequests'
                 )
-                
-                # Convert to list format
-                storage_data = []
+
+                # First pass: collect all unique users and raw data
+                raw_storage_data = []
+                unique_users = set()
                 total_entries = 0
                 null_entries = 0
                 
@@ -150,8 +169,11 @@ class PinningRequestProcessor:
                                 account = str(account.value)
                             else:
                                 account = str(account)
-                            
-                            # Handle scale_info wrapped request_hash  
+
+                            # Add user to set for batch credit checking
+                            unique_users.add(account)
+
+                            # Handle scale_info wrapped request_hash
                             request_hash = key[1]
                             if hasattr(request_hash, 'value'):
                                 request_hash = str(request_hash.value)
@@ -163,13 +185,14 @@ class PinningRequestProcessor:
                                 actual_value = value
                                 if hasattr(value, 'value'):
                                     actual_value = value.value
-                                
+
                                 if actual_value is not None:
-                                    storage_data.append([
-                                        [account, request_hash],
-                                        actual_value
-                                    ])
-                                    logger.debug(f"Added storage request: {account} -> {request_hash[:16]}...")
+                                    raw_storage_data.append({
+                                        'account': account,
+                                        'request_hash': request_hash,
+                                        'value': actual_value
+                                    })
+                                    logger.debug(f"Collected storage request: {account} -> {request_hash[:16]}...")
                                 else:
                                     null_entries += 1
                                     logger.debug(f"Found null value for {account} -> {request_hash}")
@@ -182,26 +205,78 @@ class PinningRequestProcessor:
                     except Exception as e:
                         logger.error(f"Error parsing entry {key}: {e}")
                         continue
+
+                logger.info(f"🔍 DEBUG: Found {total_entries} total entries, {null_entries} null values")
+                logger.info(f"🔍 DEBUG: Collected {len(raw_storage_data)} storage requests from {len(unique_users)} unique users")
                 
-                logger.info(f"Found {total_entries} total entries, {null_entries} with null values")
-                logger.info(f"Fetched {len(storage_data)} active storage requests from substrate")
+                # DEBUG: Log all raw storage data
+                if raw_storage_data:
+                    logger.info(f"🔍 DEBUG: Raw storage requests found:")
+                    for i, data in enumerate(raw_storage_data[:10]):  # Log first 10
+                        logger.info(f"  [{i+1}] Account: {data['account'][:20]}...")
+                        logger.info(f"      Request Hash: {data['request_hash'][:20]}...")
+                        logger.info(f"      Value: {str(data['value'])[:100]}...")
+                    if len(raw_storage_data) > 10:
+                        logger.info(f"  ... and {len(raw_storage_data) - 10} more")
+                else:
+                    logger.info(f"🔍 DEBUG: No raw storage requests found")
+
+                # Fetch all user credits in parallel
+                logger.info(f"Fetching credits for {len(unique_users)} users in parallel...")
+                user_balances = await substrate_client.check_multiple_user_balances(list(unique_users))
+
+                # Filter requests based on user credits
+                storage_data = []
+                zero_credit_users = set()
+
+                for request_data in raw_storage_data:
+                    account = request_data['account']
+                    balance = user_balances.get(account, 0)
+                    
+                    if balance > 0:
+                        # User has credits, include the request
+                        storage_data.append([
+                            [account, request_data['request_hash']], 
+                            request_data['value']
+                        ])
+                    else:
+                        # User has no credits, filter out
+                        zero_credit_users.add(account)
+
+                filtered_by_credits = len(zero_credit_users)
+                if filtered_by_credits > 0:
+                    logger.info(f"🔍 DEBUG: Filtered out storage requests from {filtered_by_credits} users with zero credits")
+                    logger.info(f"🔍 DEBUG: Zero credit users: {list(zero_credit_users)[:5]}...")
                 
+                logger.info(f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering")
+                
+                # DEBUG: Log final storage data before parsing
+                if storage_data:
+                    logger.info(f"🔍 DEBUG: Final storage data to be parsed:")
+                    for i, data in enumerate(storage_data[:5]):  # Log first 5
+                        logger.info(f"  [{i+1}] Key: {data[0]}")
+                        logger.info(f"      Value: {str(data[1])[:150]}...")
+                else:
+                    logger.info(f"🔍 DEBUG: No storage data after credit filtering")
+
                 # Parse the data
                 parsed_requests = self.parse_storage_request_data(storage_data)
                 
-                # Send each request to the queue
-                for request in parsed_requests:
-                    message_body = json.dumps(request).encode()
-                    
-                    await self.rabbitmq_channel.default_exchange.publish(
-                        aio_pika.Message(
-                            body=message_body,
-                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                        ),
-                        routing_key=self.queue_name
-                    )
-                    
-                    logger.info(f"Sent request to queue: {request['owner']} -> {request['request_hash'][:16]}...")
+                # DEBUG: Log parsed requests
+                if parsed_requests:
+                    logger.info(f"🔍 DEBUG: Parsed {len(parsed_requests)} requests:")
+                    for i, req in enumerate(parsed_requests[:3]):  # Log first 3
+                        logger.info(f"  [{i+1}] Owner: {req['owner'][:20]}...")
+                        logger.info(f"      File Hash: {req.get('file_hash', 'N/A')[:30]}...")
+                        logger.info(f"      Is Assigned: {req.get('is_assigned', 'N/A')}")
+                        logger.info(f"      Selected Validator: {req.get('selected_validator', 'N/A')[:20]}...")
+                else:
+                    logger.info(f"🔍 DEBUG: No requests parsed from storage data")
+                
+                # Send all requests to queue in parallel
+                if parsed_requests:
+                    await self._publish_requests_parallel(parsed_requests)
+                    logger.info(f"📦 Batch published {len(parsed_requests)} requests to queue")
                 
                 logger.info(f"Successfully processed {len(parsed_requests)} storage requests")
                 
@@ -216,6 +291,35 @@ class PinningRequestProcessor:
                 if run_once:
                     raise
                 await asyncio.sleep(10)  # Wait before retry
+    
+    async def _publish_requests_parallel(self, requests: List[Dict[str, Any]]) -> None:
+        semaphore = asyncio.Semaphore(50)
+        
+        async def _publish_single_request(request: Dict[str, Any]) -> None:
+            async with semaphore:
+                try:
+                    message_body = json.dumps(request).encode()
+                    await self.rabbitmq_channel.default_exchange.publish(
+                        aio_pika.Message(
+                            body=message_body,
+                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                        ),
+                        routing_key=self.queue_name
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to publish request {request['request_hash'][:16]}...: {e}")
+                    raise
+        
+        tasks = [_publish_single_request(request) for request in requests]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        successful = sum(1 for r in results if not isinstance(r, Exception))
+        failed = len(results) - successful
+        
+        if failed > 0:
+            logger.warning(f"Parallel publishing: {successful} succeeded, {failed} failed")
+        else:
+            logger.info(f"Parallel publishing: {successful}/{len(requests)} requests published successfully")
     
     async def close(self):
         """Close all connections."""
@@ -248,4 +352,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

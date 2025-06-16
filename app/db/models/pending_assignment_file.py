@@ -27,7 +27,7 @@ class PendingAssignmentFile:
     @classmethod
     async def create(cls, cid: str, owner: str, filename: Optional[str] = None) -> 'PendingAssignmentFile':
         """Create a new pending assignment file record."""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
                 INSERT INTO pending_assignment_file (cid, owner, filename)
@@ -40,7 +40,7 @@ class PendingAssignmentFile:
     @classmethod
     async def get_by_cid(cls, cid: str) -> Optional['PendingAssignmentFile']:
         """Get a pending assignment file by CID."""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status, error_message
@@ -55,7 +55,7 @@ class PendingAssignmentFile:
     @classmethod
     async def get_pending_files(cls, limit: int = 100) -> List['PendingAssignmentFile']:
         """Get pending files that need size processing."""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status, error_message
@@ -69,7 +69,7 @@ class PendingAssignmentFile:
 
     async def update_size(self, file_size_bytes: int) -> None:
         """Update the file size and mark as processed. Also updates the main files table."""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():
                 # 1. Update the pending assignment file record
@@ -94,7 +94,7 @@ class PendingAssignmentFile:
 
     async def mark_failed(self, error_message: str) -> None:
         """Mark the file as failed with an error message."""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute("""
                 UPDATE pending_assignment_file

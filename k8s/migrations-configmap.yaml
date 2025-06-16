@@ -11,40 +11,42 @@ data:
     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n--
     Latest block table: tracks the latest processed block\nCREATE TABLE IF NOT EXISTS
     latest_block (\n    id SERIAL PRIMARY KEY,\n    block_number BIGINT NOT NULL,\n
-    \   block_hash VARCHAR(100),\n    epoch BIGINT GENERATED ALWAYS AS (block_number
-    / 100) STORED,  -- Auto-calculate epoch based on block\n    updated_at TIMESTAMP
-    DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Current epoch validator table: tracks the
-    validator for the current epoch\nCREATE TABLE IF NOT EXISTS current_epoch_validator
-    (\n    epoch BIGINT PRIMARY KEY,\n    validator_account VARCHAR(100) NOT NULL,\n
-    \   selected_at_block BIGINT NOT NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
-    \   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Miner epoch health
-    table: tracks health metrics per miner per epoch\nCREATE TABLE IF NOT EXISTS miner_epoch_health
-    (\n    node_id VARCHAR(100),\n    ipfs_peer_id VARCHAR(100) NOT NULL,\n    epoch
-    BIGINT,\n    ping_successes INTEGER DEFAULT 0,\n    ping_failures INTEGER DEFAULT
-    0,\n    pin_check_successes INTEGER DEFAULT 0,\n    pin_check_failures INTEGER
-    DEFAULT 0,\n    last_ping_attempt TIMESTAMP,\n    last_ping_block BIGINT,\n    last_pin_check_attempt
-    TIMESTAMP,\n    last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY
-    KEY (node_id, epoch),\n    FOREIGN KEY (node_id) REFERENCES registration(node_id)
-    ON DELETE CASCADE\n);\n\n-- Miner profile table: stores miner profile data and
-    file pins\nCREATE TABLE IF NOT EXISTS miner_profile (\n    id SERIAL PRIMARY KEY,\n
-    \   miner_node_id VARCHAR(100) NOT NULL,\n    file_hash VARCHAR(255) NOT NULL,\n
-    \   file_size_bytes BIGINT NOT NULL,\n    created_at BIGINT NOT NULL,\n    selected_validator
-    VARCHAR(100) NOT NULL,\n    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
-    \   UNIQUE(miner_node_id, file_hash),\n    FOREIGN KEY (miner_node_id) REFERENCES
-    registration(node_id) ON DELETE CASCADE\n);\n\n-- User profile table: stores user
-    profile data\nCREATE TABLE IF NOT EXISTS user_profile (\n    id SERIAL PRIMARY
-    KEY,\n    user_id VARCHAR(100) NOT NULL,\n    file_hash VARCHAR(255) NOT NULL,\n
-    \   file_name VARCHAR(255) NOT NULL,\n    file_size_bytes BIGINT NOT NULL,\n    is_assigned
-    BOOLEAN NOT NULL DEFAULT FALSE,\n    last_charged_at BIGINT NOT NULL,\n    created_at
-    BIGINT NOT NULL,\n    main_request_hash VARCHAR(255),\n    miner_ids TEXT[] NOT
-    NULL,\n    owner_account VARCHAR(100) NOT NULL,\n    selected_validator VARCHAR(100)
-    NOT NULL,\n    total_replicas INTEGER NOT NULL DEFAULT 1,\n    updated_at TIMESTAMP
-    DEFAULT CURRENT_TIMESTAMP,\n    UNIQUE(user_id, file_hash)\n);\n\n-- Storage requests
-    table: tracks pending storage requests\nCREATE TABLE IF NOT EXISTS storage_requests
-    (\n    id SERIAL PRIMARY KEY,\n    owner_account VARCHAR(100) NOT NULL,\n    file_hash
-    VARCHAR(255) NOT NULL,\n    file_name VARCHAR(255) NOT NULL,\n    file_size_bytes
-    BIGINT NOT NULL,\n    total_replicas INTEGER NOT NULL DEFAULT 1,\n    last_charged_at
-    BIGINT NOT NULL,\n    created_at BIGINT NOT NULL,\n    miner_ids TEXT[],\n    selected_validator
+    \   block_hash VARCHAR(100),\n    epoch BIGINT GENERATED ALWAYS AS (\n        CASE
+    \n            WHEN block_number < 38 THEN 0\n            ELSE (block_number -
+    38) / 100\n        END\n    ) STORED,  -- Auto-calculate epoch based on block
+    (epochs start at blocks ending in 38)\n    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n--
+    Current epoch validator table: tracks the validator for the current epoch\nCREATE
+    TABLE IF NOT EXISTS current_epoch_validator (\n    epoch BIGINT PRIMARY KEY,\n
+    \   validator_account VARCHAR(100) NOT NULL,\n    selected_at_block BIGINT NOT
+    NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    updated_at TIMESTAMP
+    DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Miner epoch health table: tracks health metrics
+    per miner per epoch\nCREATE TABLE IF NOT EXISTS miner_epoch_health (\n    node_id
+    VARCHAR(100),\n    ipfs_peer_id VARCHAR(100) NOT NULL,\n    epoch BIGINT,\n    ping_successes
+    INTEGER DEFAULT 0,\n    ping_failures INTEGER DEFAULT 0,\n    pin_check_successes
+    INTEGER DEFAULT 0,\n    pin_check_failures INTEGER DEFAULT 0,\n    last_ping_attempt
+    TIMESTAMP,\n    last_ping_block BIGINT,\n    last_pin_check_attempt TIMESTAMP,\n
+    \   last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    PRIMARY KEY (node_id,
+    epoch),\n    FOREIGN KEY (node_id) REFERENCES registration(node_id) ON DELETE
+    CASCADE\n);\n\n-- Miner profile table: stores miner profile data and file pins\nCREATE
+    TABLE IF NOT EXISTS miner_profile (\n    id SERIAL PRIMARY KEY,\n    miner_node_id
+    VARCHAR(100) NOT NULL,\n    file_hash VARCHAR(255) NOT NULL,\n    file_size_bytes
+    BIGINT NOT NULL,\n    created_at BIGINT NOT NULL,\n    selected_validator VARCHAR(100)
+    NOT NULL,\n    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    UNIQUE(miner_node_id,
+    file_hash),\n    FOREIGN KEY (miner_node_id) REFERENCES registration(node_id)
+    ON DELETE CASCADE\n);\n\n-- User profile table: stores user profile data\nCREATE
+    TABLE IF NOT EXISTS user_profile (\n    id SERIAL PRIMARY KEY,\n    user_id VARCHAR(100)
+    NOT NULL,\n    file_hash VARCHAR(255) NOT NULL,\n    file_name VARCHAR(255) NOT
+    NULL,\n    file_size_bytes BIGINT NOT NULL,\n    is_assigned BOOLEAN NOT NULL
+    DEFAULT FALSE,\n    last_charged_at BIGINT NOT NULL,\n    created_at BIGINT NOT
+    NULL,\n    main_request_hash VARCHAR(255),\n    miner_ids TEXT[] NOT NULL,\n    owner_account
+    VARCHAR(100) NOT NULL,\n    selected_validator VARCHAR(100) NOT NULL,\n    total_replicas
+    INTEGER NOT NULL DEFAULT 1,\n    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
+    \   UNIQUE(user_id, file_hash)\n);\n\n-- Storage requests table: tracks pending
+    storage requests\nCREATE TABLE IF NOT EXISTS storage_requests (\n    id SERIAL
+    PRIMARY KEY,\n    owner_account VARCHAR(100) NOT NULL,\n    file_hash VARCHAR(255)
+    NOT NULL,\n    file_name VARCHAR(255) NOT NULL,\n    file_size_bytes BIGINT NOT
+    NULL,\n    total_replicas INTEGER NOT NULL DEFAULT 1,\n    last_charged_at BIGINT
+    NOT NULL,\n    created_at BIGINT NOT NULL,\n    miner_ids TEXT[],\n    selected_validator
     VARCHAR(100) NOT NULL,\n    status VARCHAR(20) NOT NULL DEFAULT 'pending',\n    updated_at
     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    UNIQUE(owner_account, file_hash)\n);\n\n--
     Aggregated miner stats table: stores accumulated metrics about miners\nCREATE
@@ -56,10 +58,49 @@ data:
     \           WHEN total_pin_checks = 0 THEN 0\n            ELSE (successful_pin_checks
     * 100.0 / total_pin_checks)\n        END\n    ) STORED,\n    updated_at TIMESTAMP
     DEFAULT CURRENT_TIMESTAMP,\n    FOREIGN KEY (node_id) REFERENCES registration(node_id)
-    ON DELETE CASCADE\n);\n\n-- Create indexes for frequent query patterns\nCREATE
-    INDEX idx_miner_epoch_health_epoch ON miner_epoch_health(epoch);\nCREATE INDEX
-    idx_miner_profile_miner ON miner_profile(miner_node_id);\nCREATE INDEX idx_storage_requests_status
-    ON storage_requests(status);\nCREATE INDEX idx_registration_node_type ON registration(node_type);\n\n--
+    ON DELETE CASCADE\n);\n\n-- System events table: tracks important system events
+    like rebalancing\nCREATE TABLE IF NOT EXISTS system_events (\n    id SERIAL PRIMARY
+    KEY,\n    event_type VARCHAR(100) NOT NULL,\n    event_data JSONB,\n    created_at
+    TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Files table: stores file metadata\nCREATE
+    TABLE IF NOT EXISTS files (\n    cid VARCHAR(255) PRIMARY KEY,\n    name VARCHAR(500),\n
+    \   size BIGINT,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    updated_at
+    TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- File assignments table: tracks which
+    miners are assigned to which files\nCREATE TABLE IF NOT EXISTS file_assignments
+    (\n    cid VARCHAR(255) PRIMARY KEY,\n    owner VARCHAR(100) NOT NULL,\n    miner1
+    VARCHAR(100),\n    miner2 VARCHAR(100),\n    miner3 VARCHAR(100),\n    miner4
+    VARCHAR(100),\n    miner5 VARCHAR(100),\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
+    \   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    FOREIGN KEY (cid) REFERENCES
+    files(cid) ON DELETE CASCADE,\n    FOREIGN KEY (miner1) REFERENCES registration(node_id)
+    ON DELETE SET NULL,\n    FOREIGN KEY (miner2) REFERENCES registration(node_id)
+    ON DELETE SET NULL,\n    FOREIGN KEY (miner3) REFERENCES registration(node_id)
+    ON DELETE SET NULL,\n    FOREIGN KEY (miner4) REFERENCES registration(node_id)
+    ON DELETE SET NULL,\n    FOREIGN KEY (miner5) REFERENCES registration(node_id)
+    ON DELETE SET NULL\n);\n\n-- Pending assignment file table: temporary storage
+    for files awaiting assignment\nCREATE TABLE IF NOT EXISTS pending_assignment_file
+    (\n    id SERIAL PRIMARY KEY,\n    cid VARCHAR(255) NOT NULL,\n    owner VARCHAR(100)
+    NOT NULL,\n    filename VARCHAR(500),\n    file_size_bytes BIGINT,\n    status
+    VARCHAR(50) DEFAULT 'pending',\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
+    \   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    UNIQUE(cid, owner)\n);\n\n--
+    Pinning requests table: tracks pinning requests\nCREATE TABLE IF NOT EXISTS pinning_requests
+    (\n    id SERIAL PRIMARY KEY,\n    request_hash VARCHAR(255),\n    owner VARCHAR(100)
+    NOT NULL,\n    file_hash VARCHAR(255),\n    file_name VARCHAR(500),\n    created_at
+    TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Epoch submissions table: tracks
+    blockchain submissions per epoch\nCREATE TABLE IF NOT EXISTS epoch_submissions
+    (\n    epoch BIGINT PRIMARY KEY,\n    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
+    \   miner_count INTEGER NOT NULL DEFAULT 0,\n    success BOOLEAN NOT NULL DEFAULT
+    FALSE\n);\n\n-- Create indexes for frequent query patterns\nCREATE INDEX idx_miner_epoch_health_epoch
+    ON miner_epoch_health(epoch);\nCREATE INDEX idx_miner_profile_miner ON miner_profile(miner_node_id);\nCREATE
+    INDEX idx_storage_requests_status ON storage_requests(status);\nCREATE INDEX idx_registration_node_type
+    ON registration(node_type);\n\n-- Create index for system events\nCREATE INDEX
+    idx_system_events_type_time ON system_events(event_type, created_at);\nCREATE
+    INDEX idx_system_events_created_at ON system_events(created_at);\n\n-- Create
+    indexes for new tables\nCREATE INDEX idx_files_cid ON files(cid);\nCREATE INDEX
+    idx_files_size ON files(size);\nCREATE INDEX idx_file_assignments_owner ON file_assignments(owner);\nCREATE
+    INDEX idx_file_assignments_miners ON file_assignments(miner1, miner2, miner3,
+    miner4, miner5);\nCREATE INDEX idx_pending_assignment_file_status ON pending_assignment_file(status);\nCREATE
+    INDEX idx_pending_assignment_file_owner ON pending_assignment_file(owner);\nCREATE
+    INDEX idx_pinning_requests_owner ON pinning_requests(owner);\nCREATE INDEX idx_pinning_requests_file_hash
+    ON pinning_requests(file_hash);\nCREATE INDEX idx_epoch_submissions_epoch ON epoch_submissions(epoch);\n\n--
     Functions to update timestamps automatically\nCREATE OR REPLACE FUNCTION update_timestamp()\nRETURNS
     TRIGGER AS $$\nBEGIN\n    NEW.updated_at = CURRENT_TIMESTAMP;\n    RETURN NEW;\nEND;\n$$
     LANGUAGE plpgsql;\n\n-- Create triggers to automatically update timestamps\nCREATE
@@ -72,6 +113,11 @@ data:
     TRIGGER update_storage_requests_timestamp\nBEFORE UPDATE ON storage_requests\nFOR
     EACH ROW EXECUTE FUNCTION update_timestamp();\n\nCREATE TRIGGER update_current_epoch_validator_timestamp\nBEFORE
     UPDATE ON current_epoch_validator\nFOR EACH ROW EXECUTE FUNCTION update_timestamp();\n\n--
+    Create triggers for new tables\nCREATE TRIGGER update_files_timestamp\nBEFORE
+    UPDATE ON files\nFOR EACH ROW EXECUTE FUNCTION update_timestamp();\n\nCREATE TRIGGER
+    update_file_assignments_timestamp\nBEFORE UPDATE ON file_assignments\nFOR EACH
+    ROW EXECUTE FUNCTION update_timestamp();\n\nCREATE TRIGGER update_pending_assignment_file_timestamp\nBEFORE
+    UPDATE ON pending_assignment_file\nFOR EACH ROW EXECUTE FUNCTION update_timestamp();\n\n--
     Create view for online miners with good health\nCREATE OR REPLACE VIEW healthy_miners
     AS\nSELECT \n    r.node_id,\n    r.ipfs_peer_id,\n    m.storage_capacity_bytes,\n
     \   m.available_space_bytes,\n    m.health_score,\n    m.total_files_pinned,\n
@@ -92,15 +138,20 @@ data:
     ON storage_requests;\nDROP TRIGGER IF EXISTS update_user_profile_timestamp ON
     user_profile;\nDROP TRIGGER IF EXISTS update_miner_profile_timestamp ON miner_profile;\nDROP
     TRIGGER IF EXISTS update_miner_stats_timestamp ON miner_stats;\nDROP TRIGGER IF
-    EXISTS update_registration_timestamp ON registration;\n\n-- Drop functions\nDROP
-    FUNCTION IF EXISTS update_timestamp();\n\n-- Drop indexes\nDROP INDEX IF EXISTS
-    idx_registration_node_type;\nDROP INDEX IF EXISTS idx_storage_requests_status;\nDROP
-    INDEX IF EXISTS idx_miner_profile_miner;\nDROP INDEX IF EXISTS idx_miner_epoch_health_epoch;\n\n--
-    Drop tables in reverse order to avoid foreign key constraints\nDROP TABLE IF EXISTS
-    miner_stats;\nDROP TABLE IF EXISTS storage_requests;\nDROP TABLE IF EXISTS user_profile;\nDROP
-    TABLE IF EXISTS miner_profile;\nDROP TABLE IF EXISTS miner_epoch_health;\nDROP
-    TABLE IF EXISTS current_epoch_validator;\nDROP TABLE IF EXISTS latest_block;\nDROP
-    TABLE IF EXISTS registration;"
+    EXISTS update_registration_timestamp ON registration;\nDROP TRIGGER IF EXISTS
+    update_files_timestamp ON files;\nDROP TRIGGER IF EXISTS update_file_assignments_timestamp
+    ON file_assignments;\nDROP TRIGGER IF EXISTS update_pending_assignment_file_timestamp
+    ON pending_assignment_file;\n\n-- Drop functions\nDROP FUNCTION IF EXISTS update_timestamp();\n\n--
+    Drop indexes\nDROP INDEX IF EXISTS idx_registration_node_type;\nDROP INDEX IF
+    EXISTS idx_storage_requests_status;\nDROP INDEX IF EXISTS idx_miner_profile_miner;\nDROP
+    INDEX IF EXISTS idx_miner_epoch_health_epoch;\n\n-- Drop tables in reverse order
+    to avoid foreign key constraints\nDROP TABLE IF EXISTS epoch_submissions;\nDROP
+    TABLE IF EXISTS pinning_requests;\nDROP TABLE IF EXISTS pending_assignment_file;\nDROP
+    TABLE IF EXISTS file_assignments;\nDROP TABLE IF EXISTS files;\nDROP TABLE IF
+    EXISTS system_events;\nDROP TABLE IF EXISTS miner_stats;\nDROP TABLE IF EXISTS
+    storage_requests;\nDROP TABLE IF EXISTS user_profile;\nDROP TABLE IF EXISTS miner_profile;\nDROP
+    TABLE IF EXISTS miner_epoch_health;\nDROP TABLE IF EXISTS current_epoch_validator;\nDROP
+    TABLE IF EXISTS latest_block;\nDROP TABLE IF EXISTS registration;"
   20250526000000_add_epoch_tracking.sql: |-
     -- migrate:up
     -- Add epoch tracking table for validator submissions
@@ -203,48 +254,6 @@ data:
 
     -- migrate:down
     DROP TABLE IF EXISTS slashing_recommendations;
-  20250527045727_add_files_table.sql: |+
-    -- migrate:up
-    CREATE TABLE IF NOT EXISTS files (
-        id SERIAL PRIMARY KEY,
-        cid VARCHAR(255) NOT NULL UNIQUE,
-        name VARCHAR(255) NOT NULL,
-        size BIGINT NOT NULL,
-        created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    -- Create indexes for better query performance
-    CREATE INDEX idx_files_cid ON files(cid);
-    CREATE INDEX idx_files_created_date ON files(created_date);
-
-    -- migrate:down
-    DROP TABLE IF EXISTS files;
-
-  20250527050000_add_file_assignments_table.sql: "-- migrate:up\nCREATE TABLE IF NOT
-    EXISTS file_assignments (\n    id SERIAL PRIMARY KEY,\n    cid VARCHAR(255) NOT
-    NULL,\n    owner VARCHAR(255) NOT NULL, -- SS58 address of the file owner\n    miner1
-    VARCHAR(255), -- node_id of first assigned miner\n    miner2 VARCHAR(255), --
-    node_id of second assigned miner\n    miner3 VARCHAR(255), -- node_id of third
-    assigned miner\n    miner4 VARCHAR(255), -- node_id of fourth assigned miner\n
-    \   miner5 VARCHAR(255), -- node_id of fifth assigned miner\n    updated_at TIMESTAMP
-    WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,\n    created_at TIMESTAMP WITH TIME
-    ZONE DEFAULT CURRENT_TIMESTAMP,\n    CONSTRAINT fk_file_cid FOREIGN KEY (cid)
-    REFERENCES files(cid) ON DELETE CASCADE\n);\n\n-- Create indexes for better query
-    performance\nCREATE INDEX idx_file_assignments_cid ON file_assignments(cid);\nCREATE
-    INDEX idx_file_assignments_owner ON file_assignments(owner);\nCREATE INDEX idx_file_assignments_miner1
-    ON file_assignments(miner1);\nCREATE INDEX idx_file_assignments_miner2 ON file_assignments(miner2);\nCREATE
-    INDEX idx_file_assignments_miner3 ON file_assignments(miner3);\nCREATE INDEX idx_file_assignments_miner4
-    ON file_assignments(miner4);\nCREATE INDEX idx_file_assignments_miner5 ON file_assignments(miner5);\nCREATE
-    INDEX idx_file_assignments_updated_at ON file_assignments(updated_at);\n\n-- Add
-    unique constraint to ensure one assignment per CID\nCREATE UNIQUE INDEX idx_file_assignments_cid_unique
-    ON file_assignments(cid);\n\n-- Create trigger to update updated_at timestamp\nCREATE
-    OR REPLACE FUNCTION update_file_assignments_updated_at()\nRETURNS TRIGGER AS $$\nBEGIN\n
-    \   NEW.updated_at = CURRENT_TIMESTAMP;\n    RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql;\n\nCREATE
-    TRIGGER update_file_assignments_updated_at_trigger\n    BEFORE UPDATE ON file_assignments\n
-    \   FOR EACH ROW\n    EXECUTE FUNCTION update_file_assignments_updated_at();\n\n--
-    migrate:down\nDROP TRIGGER IF EXISTS update_file_assignments_updated_at_trigger
-    ON file_assignments;\nDROP FUNCTION IF EXISTS update_file_assignments_updated_at();\nDROP
-    TABLE IF EXISTS file_assignments; "
   20250527051000_add_parsed_cids_table.sql: "-- migrate:up\nCREATE TABLE IF NOT EXISTS
     parsed_cids (\n    id SERIAL PRIMARY KEY,\n    cid VARCHAR(255) NOT NULL UNIQUE,\n
     \   profile_type VARCHAR(50) NOT NULL, -- 'user' or 'miner'\n    parsed_at TIMESTAMP
@@ -255,33 +264,6 @@ data:
     ON parsed_cids(cid);\nCREATE INDEX idx_parsed_cids_profile_type ON parsed_cids(profile_type);\nCREATE
     INDEX idx_parsed_cids_parsed_at ON parsed_cids(parsed_at);\n\n-- migrate:down\nDROP
     TABLE IF EXISTS parsed_cids; "
-  20250527052000_add_pinning_requests_table.sql: "-- migrate:up\nCREATE TABLE IF NOT
-    EXISTS pinning_requests (\n    id SERIAL PRIMARY KEY,\n    request_hash VARCHAR(255)
-    NOT NULL UNIQUE, -- The hex hash from the storage key\n    owner VARCHAR(255)
-    NOT NULL, -- SS58 address of the owner\n    file_hash VARCHAR(255) NOT NULL, --
-    The file hash (CID)\n    file_name VARCHAR(255),\n    total_replicas INTEGER DEFAULT
-    0,\n    is_assigned BOOLEAN DEFAULT FALSE,\n    selected_validator VARCHAR(255),\n
-    \   created_at BIGINT, -- Block number when created\n    last_charged_at BIGINT,
-    -- Block number when last charged\n    processed_at TIMESTAMP WITH TIME ZONE DEFAULT
-    CURRENT_TIMESTAMP,\n    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP\n);\n\n--
-    Create indexes for better query performance\nCREATE INDEX idx_pinning_requests_owner
-    ON pinning_requests(owner);\nCREATE INDEX idx_pinning_requests_file_hash ON pinning_requests(file_hash);\nCREATE
-    INDEX idx_pinning_requests_request_hash ON pinning_requests(request_hash);\nCREATE
-    INDEX idx_pinning_requests_is_assigned ON pinning_requests(is_assigned);\nCREATE
-    INDEX idx_pinning_requests_selected_validator ON pinning_requests(selected_validator);\n\n--
-    Create trigger to update updated_at timestamp\nCREATE OR REPLACE FUNCTION update_pinning_requests_updated_at()\nRETURNS
-    TRIGGER AS $$\nBEGIN\n    NEW.updated_at = CURRENT_TIMESTAMP;\n    RETURN NEW;\nEND;\n$$
-    LANGUAGE plpgsql;\n\nCREATE TRIGGER update_pinning_requests_updated_at_trigger\n
-    \   BEFORE UPDATE ON pinning_requests\n    FOR EACH ROW\n    EXECUTE FUNCTION
-    update_pinning_requests_updated_at();\n\n-- Table to track processed request hashes\nCREATE
-    TABLE IF NOT EXISTS processed_pinning_requests (\n    id SERIAL PRIMARY KEY,\n
-    \   request_hash VARCHAR(255) NOT NULL UNIQUE,\n    processed_at TIMESTAMP WITH
-    TIME ZONE DEFAULT CURRENT_TIMESTAMP,\n    miner_count INTEGER DEFAULT 0 -- Number
-    of miners assigned at time of processing\n);\n\nCREATE INDEX idx_processed_pinning_requests_hash
-    ON processed_pinning_requests(request_hash);\n\n-- migrate:down\nDROP TRIGGER
-    IF EXISTS update_pinning_requests_updated_at_trigger ON pinning_requests;\nDROP
-    FUNCTION IF EXISTS update_pinning_requests_updated_at();\nDROP TABLE IF EXISTS
-    processed_pinning_requests;\nDROP TABLE IF EXISTS pinning_requests; "
   20250527053000_add_node_metrics_table.sql: "-- migrate:up\nCREATE TABLE IF NOT EXISTS
     node_metrics (\n    id SERIAL PRIMARY KEY,\n    miner_id VARCHAR(255) NOT NULL,\n
     \   ipfs_repo_size BIGINT NOT NULL,\n    ipfs_storage_max BIGINT NOT NULL,\n    block_number
@@ -321,13 +303,10 @@ data:
     INDEX idx_miner_availability_score ON miner_availability (availability_score);\nCREATE
     INDEX idx_miner_availability_active ON miner_availability (is_active);\nCREATE
     INDEX idx_miner_availability_updated ON miner_availability (updated_at);\n\n--
-    Create function to update updated_at timestamp\nCREATE OR REPLACE FUNCTION update_updated_at_column()\nRETURNS
-    TRIGGER AS $$\nBEGIN\n    NEW.updated_at = NOW();\n    RETURN NEW;\nEND;\n$$ language
-    'plpgsql';\n\n-- Create trigger to update miner_availability.updated_at\nCREATE
-    TRIGGER update_miner_availability_updated_at\n    BEFORE UPDATE ON miner_availability\n
-    \   FOR EACH ROW\n    EXECUTE FUNCTION update_updated_at_column();\n\n-- migrate:down\nDROP
-    TRIGGER IF EXISTS update_miner_availability_updated_at;\nDROP TABLE IF EXISTS
-    miner_availability;\nDROP TABLE IF EXISTS file_failures; "
+    Create trigger to update miner_availability.updated_at\nCREATE TRIGGER update_miner_availability_updated_at\n
+    \   BEFORE UPDATE ON miner_availability\n    FOR EACH ROW\n    EXECUTE FUNCTION
+    update_updated_at_column();\n\n-- migrate:down\nDROP TRIGGER IF EXISTS update_miner_availability_updated_at;\nDROP
+    TABLE IF EXISTS miner_availability;\nDROP TABLE IF EXISTS file_failures; "
   20250527160800_add_pending_miner_profile_table.sql: "-- migrate:up\nCREATE TABLE
     IF NOT EXISTS pending_miner_profile (\n    id SERIAL PRIMARY KEY,\n    cid TEXT
     NOT NULL UNIQUE,\n    node_id TEXT NOT NULL,\n    created_at TIMESTAMP WITH TIME
@@ -360,34 +339,6 @@ data:
     idx_pending_user_profile_status ON pending_user_profile(status);\nCREATE INDEX
     idx_pending_user_profile_created_at ON pending_user_profile(created_at);\n\n--
     migrate:down\nDROP TABLE IF EXISTS pending_user_profile; "
-  20250527200000_add_pending_assignment_file_table.sql: "-- migrate:up\nCREATE TABLE
-    pending_assignment_file (\n    id SERIAL PRIMARY KEY,\n    cid VARCHAR(255) NOT
-    NULL UNIQUE,\n    owner VARCHAR(255) NOT NULL,\n    filename VARCHAR(500),\n    file_size_bytes
-    BIGINT,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    processed_at
-    TIMESTAMP,\n    status VARCHAR(50) DEFAULT 'pending',\n    error_message TEXT\n);\n\n--
-    Create indexes for better query performance\nCREATE INDEX idx_pending_assignment_file_owner
-    ON pending_assignment_file(owner);\nCREATE INDEX idx_pending_assignment_file_status
-    ON pending_assignment_file(status);\nCREATE INDEX idx_pending_assignment_file_created_at
-    ON pending_assignment_file(created_at);\n\n-- migrate:down\nDROP TABLE IF EXISTS
-    pending_assignment_file; "
-  20250528120000_add_epoch_submissions_table.sql: "-- migrate:up\nCREATE TABLE IF
-    NOT EXISTS epoch_submissions (\n    id SERIAL PRIMARY KEY,\n    epoch BIGINT NOT
-    NULL UNIQUE,\n    submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,\n    miner_count
-    INTEGER NOT NULL DEFAULT 0,\n    success BOOLEAN NOT NULL DEFAULT false,\n    created_at
-    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,\n    updated_at TIMESTAMP
-    WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Create indexes for better query
-    performance\nCREATE INDEX idx_epoch_submissions_epoch ON epoch_submissions(epoch);\nCREATE
-    INDEX idx_epoch_submissions_submitted_at ON epoch_submissions(submitted_at);\nCREATE
-    INDEX idx_epoch_submissions_success ON epoch_submissions(success);\n\n-- Create
-    trigger to update updated_at timestamp\nCREATE OR REPLACE FUNCTION update_epoch_submissions_updated_at()\nRETURNS
-    TRIGGER AS $$\nBEGIN\n    NEW.updated_at = CURRENT_TIMESTAMP;\n    RETURN NEW;\nEND;\n$$
-    LANGUAGE plpgsql;\n\nCREATE TRIGGER update_epoch_submissions_updated_at_trigger\n
-    \   BEFORE UPDATE ON epoch_submissions\n    FOR EACH ROW\n    EXECUTE FUNCTION
-    update_epoch_submissions_updated_at();\n\n-- migrate:down\nDROP TRIGGER IF EXISTS
-    update_epoch_submissions_updated_at_trigger ON epoch_submissions;\nDROP FUNCTION
-    IF EXISTS update_epoch_submissions_updated_at();\nDROP INDEX IF EXISTS idx_epoch_submissions_success;\nDROP
-    INDEX IF EXISTS idx_epoch_submissions_submitted_at;\nDROP INDEX IF EXISTS idx_epoch_submissions_epoch;\nDROP
-    TABLE IF EXISTS epoch_submissions; "
   20250528190000_add_submitted_status_to_pending_tables.sql: "-- migrate:up\n-- Add
     'submitted' status to pending profile tables\n\n-- Update pending_miner_profile
     status constraint\nALTER TABLE pending_miner_profile \nDROP CONSTRAINT IF EXISTS

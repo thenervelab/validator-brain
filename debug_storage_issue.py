@@ -32,7 +32,7 @@ async def diagnose_storage_issues():
     try:
         # Initialize database
         await init_db_pool()
-        db_pool = await get_db_pool()
+        db_pool = get_db_pool()
         
         print("1️⃣ CHECKING STORAGE DATA SOURCES:")
         

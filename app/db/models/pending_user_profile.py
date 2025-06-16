@@ -29,7 +29,7 @@ class PendingUserProfile:
     async def create(cls, cid: str, owner: str, files_count: int = 0, 
                      files_size: int = 0, block_number: int = 0) -> 'PendingUserProfile':
         """Create a new pending user profile record"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -44,7 +44,7 @@ class PendingUserProfile:
     @classmethod
     async def get_by_id(cls, profile_id: int) -> Optional['PendingUserProfile']:
         """Get a pending user profile by ID"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM pending_user_profile WHERE id = $1",
@@ -57,7 +57,7 @@ class PendingUserProfile:
     @classmethod
     async def get_by_cid(cls, cid: str) -> Optional['PendingUserProfile']:
         """Get a pending user profile by CID"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM pending_user_profile WHERE cid = $1",
@@ -70,7 +70,7 @@ class PendingUserProfile:
     @classmethod
     async def get_by_owner(cls, owner: str) -> Optional['PendingUserProfile']:
         """Get a pending user profile by owner"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM pending_user_profile WHERE owner = $1 ORDER BY created_at DESC LIMIT 1",
@@ -83,7 +83,7 @@ class PendingUserProfile:
     @classmethod
     async def get_all(cls, status: Optional[str] = None, limit: int = 100) -> List['PendingUserProfile']:
         """Get all pending user profiles, optionally filtered by status"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             if status:
                 rows = await conn.fetch(
@@ -99,7 +99,7 @@ class PendingUserProfile:
     
     async def mark_published(self) -> None:
         """Mark the profile as published"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -114,7 +114,7 @@ class PendingUserProfile:
     
     async def mark_failed(self, error_message: str) -> None:
         """Mark the profile as failed with error message"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 """
@@ -129,7 +129,7 @@ class PendingUserProfile:
     
     async def update_cid(self, new_cid: str) -> None:
         """Update the CID of the profile"""
-        pool = await get_db_pool()
+        pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE pending_user_profile SET cid = $1 WHERE id = $2",

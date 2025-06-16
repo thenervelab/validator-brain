@@ -139,6 +139,47 @@ class UserProfileProcessor:
             logger.error(f"Failed to send message to queue: {e}")
             raise
     
+    async def _send_profiles_parallel(self, profiles: List[Dict[str, str]]) -> None:
+        """
+        Send multiple profiles to RabbitMQ in parallel with rate limiting.
+        
+        Args:
+            profiles: List of profile dictionaries to send
+        """
+        semaphore = asyncio.Semaphore(50)  # Limit concurrent publishing to 50
+        
+        async def _send_single_profile(profile: Dict[str, str]) -> None:
+            """Send a single profile with semaphore protection."""
+            async with semaphore:
+                try:
+                    message_body = json.dumps(profile).encode()
+                    message = aio_pika.Message(
+                        body=message_body,
+                        delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                    )
+                    
+                    await self.rabbitmq_channel.default_exchange.publish(
+                        message,
+                        routing_key=self.queue_name
+                    )
+                    logger.debug(f"✅ Published profile: {profile['account']} -> {profile['cid']}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to publish profile {profile['account']}: {e}")
+                    raise
+        
+        # Execute all publishing tasks in parallel
+        tasks = [_send_single_profile(profile) for profile in profiles]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Count successful vs failed publications
+        successful = sum(1 for r in results if not isinstance(r, Exception))
+        failed = len(results) - successful
+        
+        if failed > 0:
+            logger.warning(f"⚠️ Parallel publishing: {successful} succeeded, {failed} failed")
+        else:
+            logger.info(f"✅ Parallel publishing: {successful}/{len(profiles)} profiles published successfully")
+    
     async def fetch_and_process_profiles(self):
         """Fetch user profiles from substrate and send them to RabbitMQ."""
         try:
@@ -159,11 +200,10 @@ class UserProfileProcessor:
             # Parse the profiles
             parsed_profiles = self.parse_user_profile_data(storage_data)
             
-            # Send each profile to the queue
-            for profile in parsed_profiles:
-                await self.send_to_queue(profile)
-                
-            logger.info(f"Successfully processed {len(parsed_profiles)} profiles")
+            # Send all profiles to queue in parallel
+            if parsed_profiles:
+                await self._send_profiles_parallel(parsed_profiles)
+                logger.info(f"📦 Batch processed {len(parsed_profiles)} profiles")
             
         except Exception as e:
             logger.error(f"Error fetching/processing profiles: {e}")

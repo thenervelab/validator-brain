@@ -15,18 +15,28 @@ from app.utils.logging import logger
 
 
 async def check_miner_health(miners: list):
-    """
-    Check the health of multiple miners in parallel.
+    """Check the health of multiple miners in parallel."""
+    if not miners:
+        return []
+    
+    semaphore = asyncio.Semaphore(20)
+    
+    async def _check_miner_with_semaphore(miner):
+        async with semaphore:
+            return await check_single_miner(miner)
+    
+    tasks = [_check_miner_with_semaphore(miner) for miner in miners]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    successful_results = [r for r in results if not isinstance(r, Exception)]
+    failed_count = len(results) - len(successful_results)
+    
+    if failed_count > 0:
+        logger.warning(f"Health checks: {len(successful_results)} succeeded, {failed_count} failed")
+    else:
+        logger.info(f"Completed health checks for {len(successful_results)}/{len(miners)} miners")
 
-    Returns:
-        List of miner dictionaries with health check results added
-    """
-    results = await asyncio.gather(
-        *[check_single_miner(miner) for miner in miners[:3]],
-    )
-    logger.info(f"Completed health checks for {len(results)} miners")
-
-    return results
+    return successful_results
 
 
 async def check_single_miner(miner) -> Dict:
@@ -55,17 +65,28 @@ async def check_single_miner(miner) -> Dict:
         },
     }
 
-    # Step 1: Check if miner is online with ping
-    ping_result = await ping_ipfs_node(ipfs_peer_id)
+    ping_task = ping_ipfs_node(ipfs_peer_id)
+    profile_task = get_child_cids(profile_cid) if profile_cid else []
+    
+    ping_result, cids_to_check = await asyncio.gather(
+        ping_task, 
+        profile_task if profile_cid else [],
+        return_exceptions=True
+    )
+    
+    if isinstance(ping_result, Exception):
+        logger.error(f"Ping failed for {ipfs_peer_id}: {ping_result}")
+        return health_results
+        
     health_results["ping_success"] = ping_result.success
     health_results["ping_time_ms"] = ping_result.time_ms or 0.0
 
-    # If ping fails, no need to continue with content verification
     if not ping_result.success:
         return health_results
 
-    # Step 2: Verify content availability for CIDs assigned to this miner
-    cids_to_check = await get_child_cids(profile_cid) if profile_cid else []
+    if isinstance(cids_to_check, Exception):
+        logger.error(f"Profile fetching failed for {profile_cid}: {cids_to_check}")
+        cids_to_check = []
 
     # Process each CID in parallel
     verification_tasks = []

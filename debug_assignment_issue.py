@@ -37,7 +37,7 @@ async def check_assignment_bottlenecks():
     try:
         # Initialize database
         await init_db_pool()
-        db_pool = await get_db_pool()
+        db_pool = get_db_pool()
         
         # Get current epoch
         substrate = SubstrateInterface(url=NODE_URL)
