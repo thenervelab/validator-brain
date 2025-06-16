@@ -53,14 +53,22 @@ class MinerHealthConsumer:
         self.ping_failure_threshold = int(os.getenv('PING_FAILURE_THRESHOLD', '1'))  # Remove after 1 ping failure
         self.pin_failure_threshold = int(os.getenv('PIN_FAILURE_THRESHOLD', '2'))   # Remove after 2 pin failures
         
+        # Concurrency control
+        self.max_concurrent_miners = int(os.getenv('MAX_CONCURRENT_MINERS', '5'))
+        self.miner_semaphore = asyncio.Semaphore(self.max_concurrent_miners)
+        
+        # Performance monitoring
+        self.processed_miners = 0
+        self.failed_miners = 0
+        
     async def connect_rabbitmq(self):
         """Connect to RabbitMQ."""
         try:
             self.rabbitmq_connection = await aio_pika.connect_robust(self.rabbitmq_url)
             self.rabbitmq_channel = await self.rabbitmq_connection.channel()
             
-            # Set prefetch count to process one message at a time
-            await self.rabbitmq_channel.set_qos(prefetch_count=1)
+            # Set prefetch count to allow multiple messages for concurrent processing
+            await self.rabbitmq_channel.set_qos(prefetch_count=self.max_concurrent_miners * 2)
             
             logger.info("Connected to RabbitMQ")
         except Exception as e:
@@ -180,12 +188,14 @@ class MinerHealthConsumer:
             if files_to_check:
                 logger.info(f"Performing pin tests for {node_id} on {len(files_to_check)} files")
                 
-                for i, file_cid in enumerate(files_to_check, 1):
+                # Create concurrent pin check tasks
+                async def check_single_file(file_cid: str, file_index: int) -> bool:
+                    """Check a single file and return True if successful."""
                     if self.stop_event.is_set():
-                        logger.warning(f"Stop event detected, stopping file checks for {node_id}")
-                        break
+                        logger.warning(f"Stop event detected, skipping file check for {node_id}")
+                        return False
                     
-                    logger.debug(f"Checking file {i}/{len(files_to_check)} for {node_id}: {file_cid}")
+                    logger.debug(f"Checking file {file_index}/{len(files_to_check)} for {node_id}: {file_cid}")
                     
                     try:
                         await perform_ipfs_pin_check(
@@ -196,12 +206,34 @@ class MinerHealthConsumer:
                             epoch,
                             self.stop_event
                         )
-                        pin_successes += 1
                         logger.debug(f"Pin check successful for file {file_cid} on {node_id}")
+                        return True
                         
                     except Exception as e:
                         logger.error(f"Pin check failed for file {file_cid} on {node_id}: {e}")
-                        pin_failures += 1
+                        return False
+                
+                # Run all pin checks concurrently
+                pin_tasks = [
+                    check_single_file(file_cid, i + 1) 
+                    for i, file_cid in enumerate(files_to_check)
+                ]
+                
+                try:
+                    results = await asyncio.gather(*pin_tasks, return_exceptions=True)
+                    
+                    # Count successes and failures
+                    for result in results:
+                        if isinstance(result, Exception):
+                            pin_failures += 1
+                        elif result is True:
+                            pin_successes += 1
+                        else:
+                            pin_failures += 1
+                            
+                except Exception as e:
+                    logger.error(f"Error during concurrent pin checks for {node_id}: {e}")
+                    pin_failures = len(files_to_check)  # Treat all as failures
                 
                 logger.info(f"Pin test results for {node_id}: {pin_successes} successful, {pin_failures} failed")
                 
@@ -225,25 +257,39 @@ class MinerHealthConsumer:
             return False
     
     async def message_handler(self, message: IncomingMessage):
-        """Handle incoming messages from the queue."""
+        """Handle incoming messages from the queue with concurrency control."""
         async with message.process():
-            try:
-                # Parse message
-                message_data = json.loads(message.body.decode())
-                
-                # Process the health check
-                success = await self.process_health_check(message_data)
-                
-                if success:
-                    logger.debug(f"Successfully processed health check for {message_data.get('node_id', 'unknown')}")
-                else:
-                    logger.error(f"Failed to process health check for {message_data.get('node_id', 'unknown')}")
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode message: {e}")
-            except Exception as e:
-                logger.error(f"Error in message handler: {e}")
-                logger.exception("Full traceback:")
+            # Use semaphore to limit concurrent miner processing
+            async with self.miner_semaphore:
+                try:
+                    # Parse message
+                    message_data = json.loads(message.body.decode())
+                    
+                    # Process the health check
+                    start_time = asyncio.get_event_loop().time()
+                    success = await self.process_health_check(message_data)
+                    processing_time = asyncio.get_event_loop().time() - start_time
+                    
+                    # Update counters
+                    self.processed_miners += 1
+                    if not success:
+                        self.failed_miners += 1
+                    
+                    if success:
+                        logger.debug(f"Successfully processed health check for {message_data.get('node_id', 'unknown')} in {processing_time:.2f}s")
+                    else:
+                        logger.error(f"Failed to process health check for {message_data.get('node_id', 'unknown')} after {processing_time:.2f}s")
+                    
+                    # Log performance stats every 10 miners
+                    if self.processed_miners % 10 == 0:
+                        success_rate = ((self.processed_miners - self.failed_miners) / self.processed_miners) * 100
+                        logger.info(f"Performance stats: {self.processed_miners} processed, {success_rate:.1f}% success rate")
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to decode message: {e}")
+                except Exception as e:
+                    logger.error(f"Error in message handler: {e}")
+                    logger.exception("Full traceback:")
     
     async def start_consuming(self):
         """Start consuming messages from the queue."""
@@ -255,6 +301,7 @@ class MinerHealthConsumer:
             )
             
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
+            logger.info(f"Max concurrent miners: {self.max_concurrent_miners}")
             logger.info(f"Ping failure threshold: {self.ping_failure_threshold}")
             logger.info(f"Pin failure threshold: {self.pin_failure_threshold}")
             
