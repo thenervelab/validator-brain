@@ -14,6 +14,9 @@ spec:
         image: registry.starkleytech.com/library/ipfs-service-validator
         imagePullPolicy: Always  # Use local image
         command: ["python", "rabbitmq/miner_health_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
         envFrom:
         - configMapRef:
             name: ipfs-validator-config
