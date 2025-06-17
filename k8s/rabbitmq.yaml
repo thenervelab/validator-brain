@@ -20,6 +20,10 @@ spec:
           name: amqp
         - containerPort: 15672
           name: management
+        - containerPort: 15692
+          name: prometheus
+        - containerPort: 9796
+          name: metrics
         env:
         - name: RABBITMQ_DEFAULT_USER
           valueFrom:
@@ -77,4 +81,7 @@ spec:
   - port: 15672
     targetPort: 15672
     name: management
+  - port: 15692
+    targetPort: 15692
+    name: prometheus
   type: ClusterIP 

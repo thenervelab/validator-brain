@@ -11,6 +11,9 @@ spec:
         image: registry.starkleytech.com/library/ipfs-service-validator
         imagePullPolicy: Always
         command: ["python", "rabbitmq/pinning_file_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
         envFrom:
         - configMapRef:
             name: ipfs-validator-config
