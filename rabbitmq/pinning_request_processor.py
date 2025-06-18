@@ -311,6 +311,27 @@ class PinningRequestProcessor:
                         logger.info(f"🔄 PARSE_COMPLETE: ... and {len(parsed_requests) - 3} more requests ready for queue")
                 else:
                     logger.info(f"🔄 PARSE_COMPLETE: No requests successfully parsed from storage data")
+
+                # ===== CRITICAL FIX: FILTER FOR UNASSIGNED REQUESTS ONLY =====
+                unassigned_requests = [req for req in parsed_requests if not req.get('is_assigned', False)]
+                assigned_requests_count = len(parsed_requests) - len(unassigned_requests)
+                
+                logger.info(f"🔍 ASSIGNMENT_FILTER: {len(parsed_requests)} total requests -> {len(unassigned_requests)} unassigned, {assigned_requests_count} already assigned")
+                
+                if assigned_requests_count > 0:
+                    logger.info(f"🔍 ASSIGNMENT_FILTER: Skipping {assigned_requests_count} already assigned requests (this is normal)")
+                
+                if unassigned_requests:
+                    logger.info(f"🔍 ASSIGNMENT_FILTER: Found {len(unassigned_requests)} unassigned requests ready for processing")
+                    for i, req in enumerate(unassigned_requests[:3]):  # Log first 3 unassigned
+                        account = req['owner'][:16] + "..."
+                        request_hash = req['request_hash'][:16] + "..."
+                        logger.info(f"🔍 ASSIGNMENT_FILTER[{i+1}]: account={account} request_hash={request_hash} - UNASSIGNED, will process")
+                else:
+                    logger.info(f"🔍 ASSIGNMENT_FILTER: No unassigned requests found - all requests already processed")
+                
+                # Update parsed_requests to only include unassigned ones
+                parsed_requests = unassigned_requests
                 
                 # ===== STORAGE REQUEST TRACING - STEP 4: PUBLISHING TO QUEUE =====
                 if parsed_requests:
