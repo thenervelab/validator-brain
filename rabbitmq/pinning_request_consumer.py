@@ -411,6 +411,23 @@ class PinningRequestConsumer:
             
             # Record that we've processed this storage request
             async with self.db_pool.acquire() as conn:
+                # ===== STORAGE REQUEST TRACING - STEP 8: STORING request_hash IN DATABASE =====
+                logger.info(f"💾 REQUEST_HASH_STORE: Storing request data in pinning_requests table account={account} request_hash={request_hash_short}")
+                
+                # Check if this request_hash already exists in pinning_requests
+                existing_pinning = await conn.fetchrow("SELECT id FROM pinning_requests WHERE request_hash = $1", request_hash)
+                if not existing_pinning:
+                    # Store the request in pinning_requests table for tracking
+                    await conn.execute("""
+                        INSERT INTO pinning_requests (request_hash, owner, file_hash, file_name)
+                        VALUES ($1, $2, $3, $4)
+                    """, request_hash, owner, file_hash_hex, request_data.get('file_name', ''))
+                    
+                    logger.info(f"💾 REQUEST_HASH_STORE: Successfully stored NEW request_hash={request_hash_short} in pinning_requests table")
+                else:
+                    logger.info(f"💾 REQUEST_HASH_STORE: request_hash={request_hash_short} already exists in pinning_requests table (id={existing_pinning['id']})")
+                
+                # Record that we've processed this storage request  
                 await conn.execute("""
                     INSERT INTO processed_pinning_requests (request_hash, miner_count)
                     VALUES ($1, $2) ON CONFLICT DO NOTHING

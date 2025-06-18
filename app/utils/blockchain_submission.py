@@ -421,8 +421,12 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
             
             rows = await conn.fetch(query)
             
+            # ===== STORAGE REQUEST TRACING - STEP 9: RETRIEVING FOR BLOCKCHAIN SUBMISSION =====
+            logger.info(f"📤 REQUEST_HASH_RETRIEVE: Collecting user profiles from database for blockchain submission")
+            logger.info(f"📤 REQUEST_HASH_RETRIEVE: Query returned {len(rows)} rows from pending_user_profile LEFT JOIN pinning_requests")
+            
             requests = []
-            for row in rows:
+            for i, row in enumerate(rows):
                 request = {
                     "storage_request_owner": row['storage_request_owner'],
                     "storage_request_file_hash": row['storage_request_file_hash'] or '',  # Empty if no request
