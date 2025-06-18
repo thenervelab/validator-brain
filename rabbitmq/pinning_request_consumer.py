@@ -413,6 +413,7 @@ class PinningRequestConsumer:
             async with self.db_pool.acquire() as conn:
                 # ===== STORAGE REQUEST TRACING - STEP 8: STORING request_hash IN DATABASE =====
                 logger.info(f"💾 REQUEST_HASH_STORE: Storing request data in pinning_requests table account={account} request_hash={request_hash_short}")
+                logger.info(f"💾 REQUEST_HASH_STORE: Data being stored - owner={owner} file_hash_hex={file_hash_hex[:20]}... file_name={request_data.get('file_name', 'N/A')}")
                 
                 # Check if this request_hash already exists in pinning_requests
                 existing_pinning = await conn.fetchrow("SELECT id FROM pinning_requests WHERE request_hash = $1", request_hash)
@@ -424,6 +425,7 @@ class PinningRequestConsumer:
                     """, request_hash, owner, file_hash_hex, request_data.get('file_name', ''))
                     
                     logger.info(f"💾 REQUEST_HASH_STORE: Successfully stored NEW request_hash={request_hash_short} in pinning_requests table")
+                    logger.info(f"💾 REQUEST_HASH_STORE: Full request_hash={request_hash}")
                 else:
                     logger.info(f"💾 REQUEST_HASH_STORE: request_hash={request_hash_short} already exists in pinning_requests table (id={existing_pinning['id']})")
                 
