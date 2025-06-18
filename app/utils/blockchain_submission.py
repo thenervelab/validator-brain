@@ -393,8 +393,8 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
     """
     Collect storage requests that need to be submitted to the blockchain for closing.
     
-    CRITICAL FIX: ALWAYS submit user profiles to keep chain updated, even if no storage requests.
-    Creates storage requests with empty hashes for users without pinning requests.
+    SURGICAL FIX: Use INNER JOIN to only get users who have BOTH profile AND storage request.
+    This ensures storage_request_file_hash is never empty for actual storage requests.
     
     Args:
         db_pool: Database connection pool
@@ -408,60 +408,48 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
             query = """
             SELECT DISTINCT
                 pup.owner as storage_request_owner,
-                COALESCE(pr.request_hash, '') as storage_request_file_hash,  -- Empty string if no request
+                pr.request_hash as storage_request_file_hash, 
                 pup.files_size as file_size,
                 pup.cid as user_profile_cid
             FROM pending_user_profile pup
-            LEFT JOIN pinning_requests pr ON pup.owner = pr.owner  -- LEFT JOIN to include all users
+            INNER JOIN pinning_requests pr ON pup.owner = pr.owner 
             WHERE pup.status = 'published'
             AND pup.cid IS NOT NULL
             AND pup.files_size IS NOT NULL
+            AND pr.request_hash IS NOT NULL 
+            AND pr.request_hash != ''
             ORDER BY pup.owner
             """
             
             rows = await conn.fetch(query)
             
             # ===== STORAGE REQUEST TRACING - STEP 9: RETRIEVING FOR BLOCKCHAIN SUBMISSION =====
-            logger.info(f"📤 REQUEST_HASH_RETRIEVE: Collecting user profiles from database for blockchain submission")
-            logger.info(f"📤 REQUEST_HASH_RETRIEVE: Query returned {len(rows)} rows from pending_user_profile LEFT JOIN pinning_requests")
+            logger.info(f"📤 REQUEST_HASH_RETRIEVE: Collecting storage requests for blockchain submission")
+            logger.info(f"📤 REQUEST_HASH_RETRIEVE: INNER JOIN returned {len(rows)} users with BOTH profile AND storage request")
             
             # ===== DEBUG: CHECK FOR JOIN MISMATCH =====
             # Check table counts
             pinning_count = await conn.fetchval("SELECT COUNT(*) FROM pinning_requests")
             profile_count = await conn.fetchval("SELECT COUNT(*) FROM pending_user_profile WHERE status = 'published'")
-            unmatched_count = await conn.fetchval("""
-                SELECT COUNT(*) FROM pending_user_profile pup 
-                LEFT JOIN pinning_requests pr ON pup.owner = pr.owner 
-                WHERE pup.status = 'published' AND pr.owner IS NULL
-            """)
             
-            logger.info(f"🔍 DEBUG_JOIN: pinning_requests={pinning_count}, pending_user_profile={profile_count}, unmatched={unmatched_count}")
-            
-            # Sample owners from each table
-            if pinning_count > 0:
-                sample_pinning = await conn.fetchval("SELECT owner FROM pinning_requests LIMIT 1")
-                logger.info(f"🔍 DEBUG_JOIN: Sample pinning_requests owner: {sample_pinning}")
-            
-            if profile_count > 0:
-                sample_profile = await conn.fetchval("SELECT owner FROM pending_user_profile WHERE status = 'published' LIMIT 1")
-                logger.info(f"🔍 DEBUG_JOIN: Sample pending_user_profile owner: {sample_profile}")
+            logger.info(f"🔍 DEBUG_SURGICAL_FIX: pinning_requests={pinning_count}, pending_user_profile={profile_count}, matched={len(rows)}")
             
             requests = []
-            for i, row in enumerate(rows):
+            for row in rows:
                 request = {
                     "storage_request_owner": row['storage_request_owner'],
-                    "storage_request_file_hash": row['storage_request_file_hash'] or '',  # Empty if no request
+                    "storage_request_file_hash": row['storage_request_file_hash'],  # Never empty
                     "file_size": row['file_size'] or 0,
                     "user_profile_cid": row['user_profile_cid']
                 }
                 requests.append(request)
             
-            logger.info(f"Collected {len(requests)} user profiles for blockchain submission")
+            logger.info(f"✅ Collected {len(requests)} storage requests with valid request_hash")
             
             # Count how many have actual storage requests vs. profile-only updates
             actual_requests = sum(1 for r in requests if r['storage_request_file_hash'])
             profile_only = len(requests) - actual_requests
-            
+
             logger.info(f"  - {actual_requests} users with storage requests (closing requests)")
             logger.info(f"  - {profile_only} users with profile-only updates (keeping chain current)")
             
