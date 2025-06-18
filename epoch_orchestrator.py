@@ -877,6 +877,31 @@ class EpochOrchestrator:
             logger.info(f"   📝 Generated {len(user_profiles)} user profile entries")
             logger.info(f"   ⛏️ Generated {len(processed_miner_profiles)} miner profile entries")
             
+            # CRITICAL FIX: Populate pinning_requests and pending_user_profile tables 
+            # that blockchain submission expects
+            logger.info("💾 Step 3b1: Populating pinning_requests table from ValidatorWorkflow results...")
+            async with self.db_pool.acquire() as conn:
+                async with conn.transaction():
+                    pinning_inserts = 0
+                    for profile in user_profiles:
+                        try:
+                            file_hash = profile.get('file_hash', '')
+                            owner = profile.get('user_id', '')
+                            file_name = profile.get('file_name', '')
+                            
+                            if file_hash and owner:
+                                # Insert into pinning_requests table (using file_hash as request_hash)
+                                await conn.execute("""
+                                    INSERT INTO pinning_requests (request_hash, owner, file_hash, file_name)
+                                    VALUES ($1, $2, $3, $4)
+                                    ON CONFLICT (request_hash) DO NOTHING
+                                """, file_hash, owner, file_hash, file_name)
+                                pinning_inserts += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to insert pinning request for {owner}: {e}")
+                    
+                    logger.info(f"💾 Inserted {pinning_inserts} entries into pinning_requests table")
+            
             # Update file_assignments with assigned miners
             logger.info("💾 Step 3c: Updating file assignments in database...")
             async with self.db_pool.acquire() as conn:
