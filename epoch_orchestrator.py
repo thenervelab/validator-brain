@@ -1570,25 +1570,17 @@ class EpochOrchestrator:
             else:
                 logger.warning("⚠️ Non-validator: User profile refresh failed")
         
-        # CRITICAL TIMING: Only start health checks at the very beginning of epochs
+        # NON-VALIDATOR: Can perform health checks at any time (no blockchain submission deadline)
         if not self.health_checks_completed:
-            if block_position <= 10:  # Only start health checks in the first 10 blocks
-                logger.info("🏥 Non-validator: Starting health checks at epoch beginning...")
-                logger.info(f"   TIMING: Starting at block {block_position}/99 (safe epoch start window)")
-                success = await self.perform_health_checks()
-                if success:
-                    self.health_checks_completed = True
-                    logger.info("✅ Non-validator: Health checks completed")
-                else:
-                    logger.error("❌ Non-validator: Health checks failed")
-                    # Non-validators can continue with partial health data
-                    logger.info("   Continuing with existing health data...")
+            logger.info(f"🏥 Non-validator: Starting health checks at block {block_position}/99...")
+            logger.info("   NON-VALIDATORS: No timing restrictions - can run health checks anytime")
+            success = await self.perform_health_checks()
+            if success:
+                self.health_checks_completed = True
+                logger.info("✅ Non-validator: Health checks completed")
             else:
-                # Too late in epoch to start health checks - use previous data
-                logger.info(f"⏰ Non-validator: Too late to start health checks (block {block_position}/99)")
-                logger.info("   Using previous epoch health data and waiting for next epoch")
-                
-                # Check if we have usable previous health data
+                logger.error("❌ Non-validator: Health checks failed")
+                # For non-validators, try to use previous health data if available
                 async with self.db_pool.acquire() as conn:
                     health_data_count = await conn.fetchval("""
                         SELECT COUNT(DISTINCT node_id) 
@@ -1596,14 +1588,13 @@ class EpochOrchestrator:
                         WHERE last_activity_at >= NOW() - INTERVAL '12 hours'
                     """)
                     
-                    if health_data_count >= 100:
+                    if health_data_count >= 50:
                         logger.info(f"✅ Found {health_data_count} miners with recent health data")
                         self.health_checks_completed = True
-                        logger.info("✅ Non-validator: Using previous epoch health data")
+                        logger.info("✅ Non-validator: Using previous epoch health data after failure")
                     else:
                         logger.warning(f"⚠️ Limited health data ({health_data_count} miners)")
-                        logger.warning("   Will wait for next epoch to run fresh health checks")
-                        # Don't mark completed - wait for next epoch
+                        logger.warning("   Will retry health checks in next iteration")
         
         # REMOVED: Non-validators should NOT process storage requests or pinning assignments
         # File assignment processing is VALIDATOR-ONLY work
