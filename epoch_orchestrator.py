@@ -290,14 +290,24 @@ class EpochOrchestrator:
         if cache['last_known_epoch'] is None:
             return False
         
+        # FIXED: Only return True if we haven't already processed recovery for this epoch
+        # Add a flag to prevent repeated recovery detection
+        recovery_key = f"recovery_processed_{current_epoch}"
+        if hasattr(self, recovery_key) and getattr(self, recovery_key):
+            return False
+        
         # If we were validator in the same epoch before connection failure
         if (cache['last_known_validator_status'] and 
             cache['last_known_epoch'] == current_epoch and
             is_validator and
-            cache['validator_epoch_start'] == current_epoch):
+            cache['validator_epoch_start'] == current_epoch and
+            self.waiting_for_next_epoch):  # Only if we're actually waiting
             
             logger.info(f"🔄 Connection recovery detected: Was validator in epoch {current_epoch} before connection failure")
             logger.info(f"   Validator since epoch start, connection failed at block ~{block_position}")
+            
+            # Mark recovery as processed for this epoch
+            setattr(self, recovery_key, True)
             return True
         
         return False

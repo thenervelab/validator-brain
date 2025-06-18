@@ -212,6 +212,7 @@ def _submit_single_batch(
         # Format the requests to match the StorageRequestUpdate structure
         formatted_requests = []
         for req in requests:
+            logger.info(f"{req=}")
             formatted_req = {
                 "storage_request_owner": req["storage_request_owner"],
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
