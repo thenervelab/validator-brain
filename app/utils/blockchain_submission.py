@@ -425,6 +425,27 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
             logger.info(f"📤 REQUEST_HASH_RETRIEVE: Collecting user profiles from database for blockchain submission")
             logger.info(f"📤 REQUEST_HASH_RETRIEVE: Query returned {len(rows)} rows from pending_user_profile LEFT JOIN pinning_requests")
             
+            # ===== DEBUG: CHECK FOR JOIN MISMATCH =====
+            # Check table counts
+            pinning_count = await conn.fetchval("SELECT COUNT(*) FROM pinning_requests")
+            profile_count = await conn.fetchval("SELECT COUNT(*) FROM pending_user_profile WHERE status = 'published'")
+            unmatched_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM pending_user_profile pup 
+                LEFT JOIN pinning_requests pr ON pup.owner = pr.owner 
+                WHERE pup.status = 'published' AND pr.owner IS NULL
+            """)
+            
+            logger.info(f"🔍 DEBUG_JOIN: pinning_requests={pinning_count}, pending_user_profile={profile_count}, unmatched={unmatched_count}")
+            
+            # Sample owners from each table
+            if pinning_count > 0:
+                sample_pinning = await conn.fetchval("SELECT owner FROM pinning_requests LIMIT 1")
+                logger.info(f"🔍 DEBUG_JOIN: Sample pinning_requests owner: {sample_pinning}")
+            
+            if profile_count > 0:
+                sample_profile = await conn.fetchval("SELECT owner FROM pending_user_profile WHERE status = 'published' LIMIT 1")
+                logger.info(f"🔍 DEBUG_JOIN: Sample pending_user_profile owner: {sample_profile}")
+            
             requests = []
             for i, row in enumerate(rows):
                 request = {
