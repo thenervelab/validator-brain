@@ -2061,7 +2061,9 @@ class EpochOrchestrator:
                             logger.info("🔐 Transaction signing: DISABLED")
                     
                     # Execute appropriate workflow
-                    if is_validator:
+                    # TEMPORARY DEBUG: Force validator mode even if not selected
+                    logger.info("🚨 DEBUG MODE: FORCING VALIDATOR WORKFLOW regardless of selection")
+                    if True:  # Force validator mode
                         await self.validator_workflow()
                     else:
                         await self.non_validator_workflow()
