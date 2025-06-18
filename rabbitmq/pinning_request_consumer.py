@@ -198,11 +198,17 @@ class PinningRequestConsumer:
         if not cid or not owner:
             return
         
+        account = owner[:16] + "..."
+        cid_short = cid[:20] + "..."
+        
         # --- FETCH FILE SIZE ---
+        logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - fetching file size")
         file_size = await fetch_ipfs_file_size(cid)
         if file_size is None:
-            logger.warning(f"Using default size 0 for CID {cid} as it could not be fetched.")
+            logger.warning(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - could not fetch size, using 0")
             file_size = 0
+        else:
+            logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - size={file_size:,} bytes")
             
         # Ensure the file exists in the files table first
         file_name_to_use = filename or f"file_{cid[:8]}"
@@ -222,7 +228,7 @@ class PinningRequestConsumer:
                 owner = EXCLUDED.owner,
                 updated_at = CURRENT_TIMESTAMP
         """, cid, owner)
-        logger.info(f"✅ File {cid[:16]}... added to file_assignments for owner {owner[:16]}...")
+        logger.info(f"✅ FILE_ASSIGNMENT_COMPLETE: account={account} CID={cid_short} - added to file_assignments table")
     
     async def _process_manifest_files_parallel(self, manifest_data: List, owner: str) -> int:
         if not manifest_data:
@@ -307,13 +313,32 @@ class PinningRequestConsumer:
             logger.error(f"Invalid request data: missing request_hash or owner. Data: {request_data}")
             return False
         
-        logger.info(f"🔍 Processing storage request: {owner[:20]}... -> {request_hash[:16]}...")
+        # ===== STORAGE REQUEST TRACING - STEP 5: CONSUMED FROM QUEUE =====
+        account = owner[:16] + "..."
+        request_hash_short = request_hash[:16] + "..."
+        logger.info(f"📬 QUEUE_CONSUME: Processing storage request account={account} request_hash={request_hash_short}")
+        
+        # Extract and log CID information early for tracing
+        file_hash_hex = request_data.get('file_hash', '')
+        cid = "N/A"
+        try:
+            if file_hash_hex:
+                if isinstance(file_hash_hex, str):
+                    if file_hash_hex.startswith('0x'):
+                        cid = bytes.fromhex(file_hash_hex[2:]).decode('utf-8')
+                    else:
+                        cid = bytes.fromhex(file_hash_hex).decode('utf-8')
+                    logger.info(f"📬 QUEUE_CONSUME: account={account} CID={cid[:20]}... request_hash={request_hash_short}")
+                else:
+                    logger.warning(f"📬 QUEUE_CONSUME: account={account} file_hash is not string: {type(file_hash_hex)}")
+        except Exception as e:
+            logger.warning(f"📬 QUEUE_CONSUME: account={account} could not parse CID from file_hash: {e}")
         
         async with self.db_pool.acquire() as conn:
             # Check if this request has already been processed to avoid re-work
             existing = await conn.fetchrow("SELECT id FROM processed_pinning_requests WHERE request_hash = $1", request_hash)
             if existing:
-                logger.info(f"✅ Request {request_hash[:16]}... already processed.")
+                logger.info(f"🔄 ALREADY_PROCESSED: account={account} CID={cid[:20] if cid != 'N/A' else 'N/A'}... request_hash={request_hash_short} - skipping")
                 return True
         
         try:
@@ -321,64 +346,67 @@ class PinningRequestConsumer:
             manifest_cid = hex_to_string(file_hash_hex) if file_hash_hex else ''
             
             if not manifest_cid:
-                logger.error(f"❌ No file_hash found in storage request {request_hash[:16]}...")
+                logger.error(f"❌ PIN_REQUEST_ERROR: account={account} request_hash={request_hash_short} - No file_hash found")
                 return False
             
             files_processed = 0
             
-            logger.info(f"📋 Processing manifest CID: {manifest_cid}")
+            # ===== STORAGE REQUEST TRACING - STEP 6: PROCESSING PIN REQUEST =====
+            logger.info(f"📌 PIN_REQUEST_START: account={account} CID={manifest_cid[:20]}... request_hash={request_hash_short}")
             
             # Try to fetch and parse the manifest
+            logger.info(f"📌 PIN_REQUEST_FETCH: account={account} CID={manifest_cid[:20]}... - fetching manifest content")
             manifest_content = await fetch_ipfs_content(manifest_cid)
             
             if manifest_content:
                 # Successfully fetched manifest content
+                logger.info(f"📌 PIN_REQUEST_FETCH_SUCCESS: account={account} CID={manifest_cid[:20]}... - manifest fetched, parsing content")
                 try:
                     manifest_data = json.loads(manifest_content)
                     
                     if isinstance(manifest_data, list):
                         # Valid manifest format - list of files
-                        logger.info(f"✅ Successfully parsed manifest CID {manifest_cid}. Contains {len(manifest_data)} files.")
+                        logger.info(f"📌 PIN_REQUEST_MANIFEST: account={account} CID={manifest_cid[:20]}... - manifest contains {len(manifest_data)} files")
                         
                         # Process all files in parallel - MAJOR PERFORMANCE BOOST!
                         files_processed = await self._process_manifest_files_parallel(manifest_data, owner)
-                        logger.info(f"📦 Batch processed {files_processed} files from manifest")
+                        logger.info(f"📌 PIN_REQUEST_FILES: account={account} CID={manifest_cid[:20]}... - processed {files_processed} files from manifest")
                         
                     elif isinstance(manifest_data, dict):
                         # Single file object format
-                        logger.info(f"📄 Manifest contains single file object")
+                        logger.info(f"📌 PIN_REQUEST_SINGLE: account={account} CID={manifest_cid[:20]}... - manifest contains single file object")
                         file_cid = manifest_data.get('cid')
                         file_name = manifest_data.get('filename') or manifest_data.get('name') or 'manifest_file.bin'
                         
                         if file_cid:
+                            logger.info(f"📌 PIN_REQUEST_SINGLE: account={account} manifest_CID={manifest_cid[:20]}... file_CID={file_cid[:20]}...")
                             async with self.db_pool.acquire() as conn:
                                 await self._assign_file_to_owner(conn, file_cid, owner, file_name)
                             files_processed = 1
                         else:
                             # No CID in manifest, treat manifest itself as the file
-                            logger.info(f"📄 No CID in manifest object, treating manifest CID as file")
+                            logger.info(f"📌 PIN_REQUEST_SINGLE: account={account} CID={manifest_cid[:20]}... - no file CID, treating manifest as file")
                             async with self.db_pool.acquire() as conn:
                                 await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'manifest.json')
                             files_processed = 1
                     else:
                         # Not a JSON object/array, treat as raw file
-                        logger.info(f"📄 Manifest content is not JSON structure, treating as raw file")
+                        logger.info(f"📌 PIN_REQUEST_RAW: account={account} CID={manifest_cid[:20]}... - content is not JSON, treating as raw file")
                         async with self.db_pool.acquire() as conn:
                             await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'data.bin')
                         files_processed = 1
                         
                 except json.JSONDecodeError:
                     # Not a JSON file, treat manifest CID as a single file
-                    logger.info(f"📄 Manifest CID {manifest_cid} is not JSON, treating as single file")
+                    logger.info(f"📌 PIN_REQUEST_BINARY: account={account} CID={manifest_cid[:20]}... - not JSON, treating as binary file")
                     async with self.db_pool.acquire() as conn:
                         await self._assign_file_to_owner(conn, manifest_cid, owner, request_data.get('file_name') or 'data.bin')
                     files_processed = 1
                     
             else:
                 # Could not fetch manifest content from both local IPFS and external gateway
-                logger.error(f"❌ Could not fetch manifest content for CID {manifest_cid} from local IPFS or external gateway")
-                logger.error(f"❌ Cannot process storage request - manifest is not accessible")
-                logger.error(f"❌ Skipping storage request {request_hash[:16]}... - manifest parsing failed")
+                logger.error(f"❌ PIN_REQUEST_FETCH_FAILED: account={account} CID={manifest_cid[:20]}... - could not fetch from IPFS or gateway")
+                logger.error(f"❌ PIN_REQUEST_ERROR: account={account} request_hash={request_hash_short} - manifest not accessible, skipping")
                 return False
             
             # Record that we've processed this storage request
@@ -388,11 +416,14 @@ class PinningRequestConsumer:
                     VALUES ($1, $2) ON CONFLICT DO NOTHING
                 """, request_hash, files_processed)
             
-            logger.info(f"✅ Successfully processed storage request {request_hash[:16]}..., resulting in {files_processed} file assignments.")
+            # ===== STORAGE REQUEST TRACING - STEP 7: PROCESSING COMPLETE =====
+            logger.info(f"✅ PIN_REQUEST_COMPLETE: account={account} CID={manifest_cid[:20] if manifest_cid else 'N/A'}... request_hash={request_hash_short} files_processed={files_processed}")
             return True
                 
         except Exception as e:
-            logger.error(f"❌ Error processing storage request for {owner[:20]}... (hash: {request_hash[:16] if request_hash else 'unknown'}...): {e}")
+            account = owner[:20] + "..." if owner else "unknown"
+            request_hash_short = request_hash[:16] + "..." if request_hash else "unknown"
+            logger.error(f"❌ PIN_REQUEST_ERROR: account={account} request_hash={request_hash_short} error={str(e)}")
             logger.exception("Full traceback:")
             return False
     
@@ -407,23 +438,30 @@ class PinningRequestConsumer:
             try:
                 # Parse message body
                 data = json.loads(message.body.decode())
-                logger.debug(f"Processing message: {json.dumps(data, indent=2)}")
+                
+                # Extract account and request hash for tracing
+                account = data.get('owner', 'unknown')[:16] + "..."
+                request_hash = data.get('request_hash', 'unknown')[:16] + "..."
+                
+                logger.info(f"📬 MESSAGE_RECEIVED: account={account} request_hash={request_hash} - processing message")
+                logger.debug(f"Full message data: {json.dumps(data, indent=2)}")
                 
                 # Process the pinning request
                 success = await self.process_pinning_request(data)
                 
                 if not success:
                     # Reject and requeue if processing failed
-                    request_hash = data.get('request_hash', 'unknown')
-                    owner = data.get('owner', 'unknown')
-                    raise Exception(f"Failed to process pinning request for owner {owner}, hash {request_hash[:16] if request_hash != 'unknown' else 'unknown'}...")
+                    logger.error(f"📬 MESSAGE_FAILED: account={account} request_hash={request_hash} - processing failed, will requeue")
+                    raise Exception(f"Failed to process pinning request for account {account}, request_hash {request_hash}")
+                else:
+                    logger.info(f"📬 MESSAGE_SUCCESS: account={account} request_hash={request_hash} - processing completed successfully")
                 
             except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in message: {e}")
+                logger.error(f"📬 MESSAGE_JSON_ERROR: Invalid JSON in message - {e}")
                 # Don't requeue invalid JSON messages
                 return
             except Exception as e:
-                logger.error(f"Error processing message: {e}")
+                logger.error(f"📬 MESSAGE_ERROR: Error processing message - {e}")
                 # Message will be requeued due to the exception
                 raise
     

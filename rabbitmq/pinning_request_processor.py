@@ -209,17 +209,34 @@ class PinningRequestProcessor:
                 logger.info(f"🔍 DEBUG: Found {total_entries} total entries, {null_entries} null values")
                 logger.info(f"🔍 DEBUG: Collected {len(raw_storage_data)} storage requests from {len(unique_users)} unique users")
                 
-                # DEBUG: Log all raw storage data
+                # ===== STORAGE REQUEST TRACING - STEP 1: FETCHED FROM SUBSTRATE =====
                 if raw_storage_data:
-                    logger.info(f"🔍 DEBUG: Raw storage requests found:")
-                    for i, data in enumerate(raw_storage_data[:10]):  # Log first 10
-                        logger.info(f"  [{i+1}] Account: {data['account'][:20]}...")
-                        logger.info(f"      Request Hash: {data['request_hash'][:20]}...")
-                        logger.info(f"      Value: {str(data['value'])[:100]}...")
-                    if len(raw_storage_data) > 10:
-                        logger.info(f"  ... and {len(raw_storage_data) - 10} more")
+                    logger.info(f"📥 SUBSTRATE_FETCH: Found {len(raw_storage_data)} raw storage requests from blockchain")
+                    for i, data in enumerate(raw_storage_data[:5]):  # Log first 5 in detail
+                        account = data['account'][:16] + "..."
+                        request_hash = data['request_hash'][:16] + "..."
+                        logger.info(f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} request_hash={request_hash}")
+                        
+                        # Extract and log CID if available
+                        try:
+                            value = data['value']
+                            if hasattr(value, 'get'):
+                                file_hash = value.get('file_hash') or value.get('fileHash')
+                                if file_hash:
+                                    # Convert hex to string for logging
+                                    if isinstance(file_hash, str) and file_hash.startswith('0x'):
+                                        try:
+                                            cid = bytes.fromhex(file_hash[2:]).decode('utf-8')
+                                            logger.info(f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} CID={cid[:20]}...")
+                                        except:
+                                            logger.info(f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} file_hash_hex={file_hash[:20]}...")
+                        except Exception as e:
+                            logger.debug(f"Could not extract CID from raw data: {e}")
+                    
+                    if len(raw_storage_data) > 5:
+                        logger.info(f"📥 SUBSTRATE_FETCH: ... and {len(raw_storage_data) - 5} more storage requests fetched")
                 else:
-                    logger.info(f"🔍 DEBUG: No raw storage requests found")
+                    logger.info(f"📥 SUBSTRATE_FETCH: No storage requests found on blockchain")
 
                 # Fetch all user credits in parallel
                 logger.info(f"Fetching credits for {len(unique_users)} users in parallel...")
@@ -250,33 +267,73 @@ class PinningRequestProcessor:
                 
                 logger.info(f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering")
                 
-                # DEBUG: Log final storage data before parsing
+                # ===== STORAGE REQUEST TRACING - STEP 2: AFTER CREDIT FILTERING =====
                 if storage_data:
-                    logger.info(f"🔍 DEBUG: Final storage data to be parsed:")
-                    for i, data in enumerate(storage_data[:5]):  # Log first 5
-                        logger.info(f"  [{i+1}] Key: {data[0]}")
-                        logger.info(f"      Value: {str(data[1])[:150]}...")
+                    logger.info(f"💳 CREDIT_FILTER: {len(storage_data)} storage requests remain after credit filtering")
+                    for i, data in enumerate(storage_data[:3]):  # Log first 3 in detail
+                        key_data = data[0]
+                        value_data = data[1]
+                        if len(key_data) >= 2:
+                            account = str(key_data[0])[:16] + "..."
+                            request_hash = str(key_data[1])[:16] + "..."
+                            logger.info(f"💳 CREDIT_FILTER[{i+1}]: account={account} request_hash={request_hash} - User has credits, proceeding")
+                    if len(storage_data) > 3:
+                        logger.info(f"💳 CREDIT_FILTER: ... and {len(storage_data) - 3} more requests with valid credits")
                 else:
-                    logger.info(f"🔍 DEBUG: No storage data after credit filtering")
+                    logger.info(f"💳 CREDIT_FILTER: No storage requests remain after credit filtering")
 
                 # Parse the data
                 parsed_requests = self.parse_storage_request_data(storage_data)
                 
-                # DEBUG: Log parsed requests
+                # ===== STORAGE REQUEST TRACING - STEP 3: PARSED REQUESTS READY FOR QUEUE =====
                 if parsed_requests:
-                    logger.info(f"🔍 DEBUG: Parsed {len(parsed_requests)} requests:")
-                    for i, req in enumerate(parsed_requests[:3]):  # Log first 3
-                        logger.info(f"  [{i+1}] Owner: {req['owner'][:20]}...")
-                        logger.info(f"      File Hash: {req.get('file_hash', 'N/A')[:30]}...")
-                        logger.info(f"      Is Assigned: {req.get('is_assigned', 'N/A')}")
-                        logger.info(f"      Selected Validator: {req.get('selected_validator', 'N/A')[:20]}...")
+                    logger.info(f"🔄 PARSE_COMPLETE: Successfully parsed {len(parsed_requests)} storage requests for queue publishing")
+                    for i, req in enumerate(parsed_requests[:3]):  # Log first 3 in detail
+                        account = req['owner'][:16] + "..."
+                        request_hash = req['request_hash'][:16] + "..."
+                        file_hash_hex = req.get('file_hash', 'N/A')[:20] + "..."
+                        
+                        # Convert hex file_hash to CID for logging
+                        cid = "N/A"
+                        try:
+                            file_hash = req.get('file_hash', '')
+                            if file_hash and file_hash.startswith('0x'):
+                                cid = bytes.fromhex(file_hash[2:]).decode('utf-8')[:20] + "..."
+                            elif file_hash and not file_hash.startswith('0x'):
+                                cid = bytes.fromhex(file_hash).decode('utf-8')[:20] + "..."
+                        except:
+                            cid = f"hex_{file_hash_hex}"
+                        
+                        is_assigned = req.get('is_assigned', False)
+                        logger.info(f"🔄 PARSE_COMPLETE[{i+1}]: account={account} CID={cid} request_hash={request_hash} assigned={is_assigned}")
+                    
+                    if len(parsed_requests) > 3:
+                        logger.info(f"🔄 PARSE_COMPLETE: ... and {len(parsed_requests) - 3} more requests ready for queue")
                 else:
-                    logger.info(f"🔍 DEBUG: No requests parsed from storage data")
+                    logger.info(f"🔄 PARSE_COMPLETE: No requests successfully parsed from storage data")
                 
-                # Send all requests to queue in parallel
+                # ===== STORAGE REQUEST TRACING - STEP 4: PUBLISHING TO QUEUE =====
                 if parsed_requests:
+                    logger.info(f"📤 QUEUE_PUBLISH: Starting to publish {len(parsed_requests)} storage requests to 'pinning_request' queue")
+                    
+                    # Log a few requests being published for tracing
+                    for i, req in enumerate(parsed_requests[:3]):
+                        account = req['owner'][:16] + "..."
+                        request_hash = req['request_hash'][:16] + "..."
+                        try:
+                            file_hash = req.get('file_hash', '')
+                            if file_hash and file_hash.startswith('0x'):
+                                cid = bytes.fromhex(file_hash[2:]).decode('utf-8')[:20] + "..."
+                            elif file_hash and not file_hash.startswith('0x'):
+                                cid = bytes.fromhex(file_hash).decode('utf-8')[:20] + "..."
+                            else:
+                                cid = "N/A"
+                        except:
+                            cid = "parse_error"
+                        logger.info(f"📤 QUEUE_PUBLISH[{i+1}]: Publishing account={account} CID={cid} request_hash={request_hash}")
+                    
                     await self._publish_requests_parallel(parsed_requests)
-                    logger.info(f"📦 Batch published {len(parsed_requests)} requests to queue")
+                    logger.info(f"📤 QUEUE_PUBLISH: Successfully published {len(parsed_requests)} storage requests to queue")
                 
                 logger.info(f"Successfully processed {len(parsed_requests)} storage requests")
                 
@@ -306,8 +363,14 @@ class PinningRequestProcessor:
                         ),
                         routing_key=self.queue_name
                     )
+                    # Log successful individual publish for key requests
+                    account = request.get('owner', 'unknown')[:16] + "..."
+                    request_hash = request.get('request_hash', 'unknown')[:16] + "..."
+                    logger.debug(f"📤 QUEUE_PUBLISH_SUCCESS: account={account} request_hash={request_hash}")
                 except Exception as e:
-                    logger.error(f"Failed to publish request {request['request_hash'][:16]}...: {e}")
+                    account = request.get('owner', 'unknown')[:16] + "..."
+                    request_hash = request.get('request_hash', 'unknown')[:16] + "..."
+                    logger.error(f"📤 QUEUE_PUBLISH_FAILED: account={account} request_hash={request_hash} error={e}")
                     raise
         
         tasks = [_publish_single_request(request) for request in requests]

@@ -221,7 +221,23 @@ class ValidatorWorkflow:
         Returns:
             Tuple of (user_profiles, miner_profiles)
         """
-        logger.info(f"Processing {len(storage_requests)} storage requests")
+        # ===== STORAGE REQUEST TRACING - VALIDATOR WORKFLOW PROCESSING =====
+        logger.info(f"🎯 VALIDATOR_WORKFLOW: Processing {len(storage_requests)} storage requests from blockchain data")
+        
+        # Log sample storage requests for tracing
+        for i, req in enumerate(storage_requests[:3]):
+            try:
+                if hasattr(req, 'owner_account_id') and hasattr(req, 'file_hash'):
+                    account = req.owner_account_id[:16] + "..."
+                    file_hash = req.file_hash[:20] + "..."
+                    logger.info(f"🎯 VALIDATOR_WORKFLOW[{i+1}]: account={account} file_hash={file_hash}")
+                else:
+                    logger.info(f"🎯 VALIDATOR_WORKFLOW[{i+1}]: storage_request={str(req)[:50]}...")
+            except Exception as e:
+                logger.debug(f"Could not log storage request details: {e}")
+        
+        if len(storage_requests) > 3:
+            logger.info(f"🎯 VALIDATOR_WORKFLOW: ... and {len(storage_requests) - 3} more storage requests to process")
 
         # Process miner profiles from blockchain
         miners = []
@@ -259,7 +275,14 @@ class ValidatorWorkflow:
 
         # Convert storage requests to Pydantic models using our improved model
         storage_requests_models = [StorageRequest.from_substrate(req) for req in storage_requests]
-        logger.info(f"Converted {len(storage_requests_models)} storage requests to models")
+        logger.info(f"🎯 VALIDATOR_WORKFLOW: Converted {len(storage_requests_models)} storage requests to models")
+        
+        # Log converted models for tracing
+        for i, req_model in enumerate(storage_requests_models[:3]):
+            account = req_model.owner_account_id[:16] + "..."
+            file_hash = req_model.file_hash[:20] + "..."
+            file_size = req_model.file_size
+            logger.info(f"🎯 VALIDATOR_WORKFLOW_MODEL[{i+1}]: account={account} file_hash={file_hash} size={file_size:,} bytes")
 
         # Group storage requests by owner for easier profile handling
         user_requests = {}
@@ -269,7 +292,15 @@ class ValidatorWorkflow:
                 user_requests[owner] = []
             user_requests[owner].append(request)
 
-        logger.info(f"Grouped storage requests for {len(user_requests)} users")
+        logger.info(f"🎯 VALIDATOR_WORKFLOW: Grouped storage requests for {len(user_requests)} users")
+        
+        # Log user groupings for tracing
+        for i, (owner, requests) in enumerate(list(user_requests.items())[:3]):
+            account = owner[:16] + "..."
+            logger.info(f"🎯 VALIDATOR_WORKFLOW_GROUP[{i+1}]: account={account} has {len(requests)} storage requests")
+        
+        if len(user_requests) > 3:
+            logger.info(f"🎯 VALIDATOR_WORKFLOW: ... and {len(user_requests) - 3} more users with storage requests")
 
         # Check if we have a large number of requests
         total_requests = sum(len(reqs) for reqs in user_requests.values())
@@ -397,10 +428,14 @@ class ValidatorWorkflow:
                     selected_miners = select_miners_for_request(scored_miners, file_size)
 
                     if not selected_miners:
-                        logger.warning(f"No suitable miners found for request: {file_hash}")
+                        account = owner[:16] + "..."
+                        file_hash_short = file_hash[:20] + "..."
+                        logger.warning(f"🎯 VALIDATOR_WORKFLOW_NO_MINERS: account={account} file_hash={file_hash_short} - no suitable miners found")
                         continue
 
-                    logger.info(f"Selected {len(selected_miners)} miners for file {file_hash}")
+                    account = owner[:16] + "..."
+                    file_hash_short = file_hash[:20] + "..."
+                    logger.info(f"🎯 VALIDATOR_WORKFLOW_MINERS: account={account} file_hash={file_hash_short} - selected {len(selected_miners)} miners: {selected_miners}")
 
                     # Update miner scores to reflect this assignment
                     update_miner_scores(scored_miners, selected_miners, file_size)
@@ -450,9 +485,19 @@ class ValidatorWorkflow:
                 }
                 miner_profiles.append(miner_profile)
 
+        # ===== STORAGE REQUEST TRACING - VALIDATOR WORKFLOW COMPLETE =====
         logger.info(
-            f"Processed {len(storage_requests)} storage requests into {len(user_profiles)} user profile entries and {len(miner_profiles)} miner profile entries",
+            f"🎯 VALIDATOR_WORKFLOW_COMPLETE: Processed {len(storage_requests)} storage requests into {len(user_profiles)} user profiles and {len(miner_profiles)} miner profiles",
         )
+        
+        # Log summary of processed profiles
+        if user_profiles:
+            for i, profile in enumerate(user_profiles[:3]):
+                account = profile.get('user_id', 'unknown')[:16] + "..."
+                file_hash = profile.get('file_hash', 'unknown')[:20] + "..."
+                miners = profile.get('assigned_miners', [])
+                logger.info(f"🎯 VALIDATOR_WORKFLOW_USER[{i+1}]: account={account} file_hash={file_hash} miners={len(miners)}")
+        
         return user_profiles, miner_profiles
 
     async def prepare_pin_requests(self, user_profiles: List[Dict]) -> List[Dict]:
