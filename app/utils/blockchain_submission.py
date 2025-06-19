@@ -392,10 +392,7 @@ def _submit_single_batch(
 async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any]]:
     """
     Collect storage requests that need to be submitted to the blockchain for closing.
-    
-    SURGICAL FIX: Use INNER JOIN to only get users who have BOTH profile AND storage request.
-    This ensures storage_request_file_hash is never empty for actual storage requests.
-    
+
     Args:
         db_pool: Database connection pool
         
@@ -404,51 +401,34 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
     """
     try:
         async with db_pool.acquire() as conn:
-            # Get ALL user profiles that are published (not just those with pinning requests)
             query = """
             SELECT DISTINCT
-                pup.owner as storage_request_owner,
-                pr.request_hash as storage_request_file_hash, 
-                pup.files_size as file_size,
+                pr.owner as storage_request_owner,
+                pr.request_hash as storage_request_file_hash,
+                COALESCE(f.size, 0) as file_size,
                 pup.cid as user_profile_cid
-            FROM pending_user_profile pup
-            LEFT JOIN pinning_requests pr ON pup.owner = pr.owner 
-            WHERE pup.status = 'published'
-            AND pup.cid IS NOT NULL
-            AND pup.files_size IS NOT NULL
-            ORDER BY pup.owner
+            FROM pinning_requests pr
+            JOIN processed_pinning_requests ppr ON pr.request_hash = ppr.request_hash
+            LEFT JOIN pending_user_profile pup ON pr.owner = pup.owner AND pup.status = 'published'
+            LEFT JOIN files f ON pr.file_hash = f.cid
+            WHERE pr.request_hash IS NOT NULL
+            ORDER BY pr.owner
             """
             
             rows = await conn.fetch(query)
-            
-            # ===== STORAGE REQUEST TRACING - STEP 9: RETRIEVING FOR BLOCKCHAIN SUBMISSION =====
-            logger.info(f"📤 REQUEST_HASH_RETRIEVE: Collecting storage requests for blockchain submission")
-            logger.info(f"📤 REQUEST_HASH_RETRIEVE: LEFT JOIN returned {len(rows)} users with published profiles")
-            
-            # ===== DEBUG: CHECK FOR JOIN RESULTS =====
-            pinning_count = await conn.fetchval("SELECT COUNT(*) FROM pinning_requests")
-            profile_count = await conn.fetchval("SELECT COUNT(*) FROM pending_user_profile WHERE status = 'published'")
-            
-            logger.info(f"🔍 DEBUG: pinning_requests={pinning_count}, pending_user_profile={profile_count}, returned={len(rows)}")
-            
+
             requests = []
             for row in rows:
+                logger.info(f">>>>request>>>>{row}")
                 request = {
                     "storage_request_owner": row['storage_request_owner'],
-                    "storage_request_file_hash": row['storage_request_file_hash'],  # May be None for profile-only
+                    "storage_request_file_hash": row['storage_request_file_hash'],
                     "file_size": row['file_size'] or 0,
                     "user_profile_cid": row['user_profile_cid']
                 }
                 requests.append(request)
             
-            logger.info(f"✅ Collected {len(requests)} user profiles for blockchain submission")
-            
-            # Count how many have actual storage requests vs. profile-only updates
-            actual_requests = sum(1 for r in requests if r['storage_request_file_hash'])
-            profile_only = len(requests) - actual_requests
-
-            logger.info(f"  - {actual_requests} users with storage requests (closing requests)")
-            logger.info(f"  - {profile_only} users with profile-only updates (keeping chain current)")
+            logger.info(f"✅ Collected {len(requests)} processed storage requests to close on blockchain")
             
             return requests
             
