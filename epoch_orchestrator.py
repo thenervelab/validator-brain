@@ -78,9 +78,11 @@ based on whether we are the current epoch validator or not.
 
 OPTIMIZED EPOCH WORKFLOW (100 blocks):
 - Phase 1 (0-5): Initialization 
-- Phase 2 (6-35): Health Checks + Self-healing
-- Phase 3 (36-60): File Assignments  
-- Phase 4 (61-75): Profile Reconstruction
+- Phase 2 (6-35): Health Checks
+- Phase 2.5 (sequential): Health Score Processing
+- Phase 2.75 (sequential): Network Self-Healing (fix broken assignments)
+- Phase 3 (sequential): File Assignments (new storage requests)  
+- Phase 4 (sequential): Profile Reconstruction
 - Phase 5 (76-90): Blockchain Submission (EARLY - before block 95 deadline!)
 - Phase 6 (91-99): Cleanup & Summary
 
@@ -157,6 +159,7 @@ class EpochOrchestrator:
         self.assignment_completed = False
         self.health_checks_completed = False
         self.health_scores_processed = False  # CRITICAL: Transfer health data to miner_stats
+        self.network_self_healing_completed = False  # Phase 2.75: Fix broken assignments
         self.health_metrics_submitted = False
         self.availability_completed = False  # Track availability maintenance
         self.profiles_reconstructed = False
@@ -1774,9 +1777,24 @@ class EpochOrchestrator:
                 self.health_scores_processed = True
             return
 
-        # Phase 3: SEQUENTIAL File Assignment (immediately after health score processing complete)
+        # Phase 2.75: CRITICAL - Network Self-Healing (fix broken assignments before new assignments)
+        elif self.health_scores_processed and not self.network_self_healing_completed:
+            logger.info(f"🛠️ SEQUENTIAL: Starting network self-healing at block {block_position}/99")
+            logger.info("   Health scores processed - fixing broken assignments before new file assignments")
+            
+            success = await self.network_self_healing_routine()
+            if success:
+                self.network_self_healing_completed = True
+                logger.info("✅ SEQUENTIAL: Network self-healing completed - starting file assignment next")
+            else:
+                logger.warning("⚠️ Network self-healing failed - proceeding with file assignment anyway")
+                # Proceed to avoid blocking the validator workflow
+                self.network_self_healing_completed = True
+            return
+
+        # Phase 3: SEQUENTIAL File Assignment (immediately after self-healing complete)
         # CRITICAL: ALWAYS run file assignment at epoch start for new storage requests
-        elif self.health_scores_processed and not self.assignment_completed:
+        elif self.network_self_healing_completed and not self.assignment_completed:
             logger.info(f"📋 SEQUENTIAL: Starting file assignment at block {block_position}/99")
             logger.info("   Health checks completed - starting assignment immediately for speed")
             logger.info("   🔄 ENSURING fresh storage request processing for new epoch")
@@ -1787,7 +1805,7 @@ class EpochOrchestrator:
             return
         
         # CRITICAL FIX: Handle case where assignment was already marked complete but we need fresh processing
-        elif self.health_scores_processed and self.assignment_completed and block_position <= 15:
+        elif self.network_self_healing_completed and self.assignment_completed and block_position <= 15:
             logger.info(f"🔄 EPOCH START: Found assignment already complete at block {block_position}/99")
             logger.info("   Forcing fresh file assignment for new storage requests")
             self.assignment_completed = False
@@ -1855,6 +1873,7 @@ class EpochOrchestrator:
         self.initialization_completed = False
         self.health_checks_completed = False
         self.health_scores_processed = False  # CRITICAL: Health score processing
+        self.network_self_healing_completed = False  # Phase 2.75: Reset self-healing
         self.assignment_completed = False  # CRITICAL: Always reset to ensure fresh storage request processing
         self.profiles_completed = False  # NEW
         self.submission_completed = False  # NEW
@@ -2209,7 +2228,14 @@ class EpochOrchestrator:
                 logger.info(f"✅ Found {health_data_count} miners with recent health data for self-healing")
         
         try:
-            # Use RabbitMQ-based network self-healing processor
+            # STEP 1: Check for deregistered miners and reassign their files
+            logger.info("🔍 STEP 1: Checking for deregistered miners on Bittensor network")
+            dereg_success = await self.check_and_handle_deregistered_miners()
+            if not dereg_success:
+                logger.warning("⚠️ Deregistration check failed, continuing with regular self-healing")
+            
+            # STEP 2: Use RabbitMQ-based network self-healing processor for other issues
+            logger.info("🛠️ STEP 2: Running regular network self-healing processor")
             success = self.run_processor(
                 'network_self_healing_processor.py',
                 'Network self-healing'
@@ -2250,6 +2276,7 @@ class EpochOrchestrator:
             logger.info(f"   ✅ Phase 1 - Initialization: {self.initialization_completed}")
             logger.info(f"   ✅ Phase 2 - Health Checks: {self.health_checks_completed}")
             logger.info(f"   ✅ Phase 2.5 - Health Score Processing: {self.health_scores_processed}")
+            logger.info(f"   ✅ Phase 2.75 - Network Self-Healing: {self.network_self_healing_completed}")
             logger.info(f"   ✅ Phase 3 - File Assignment: {self.assignment_completed}")
             logger.info(f"   ✅ Phase 4 - Profile Reconstruction: {self.profiles_completed}")
             logger.info(f"   ✅ Phase 5 - Blockchain Submission: {self.submission_completed}")
