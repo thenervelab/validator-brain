@@ -2206,35 +2206,29 @@ class EpochOrchestrator:
         Uses only the RabbitMQ-based processor system.
         """
         logger.info("🛠️ Starting network self-healing routine")
-        
+
         # CRITICAL VALIDATION: Ensure we have fresh health data
         if not self.health_checks_completed:
             logger.warning("⚠️ Self-healing without fresh health data - using previous epoch data")
         else:
             logger.info("✅ Self-healing with fresh health data from current epoch")
-        
+
         # Verify we have some health data (current or previous epoch)
         async with self.db_pool.acquire() as conn:
             health_data_count = await conn.fetchval("""
                 SELECT COUNT(*) FROM miner_epoch_health 
                 WHERE last_activity_at >= NOW() - INTERVAL '2 hours'
             """)
-            
+
             if health_data_count == 0:
                 logger.error("🚨 CRITICAL: No health data available for self-healing!")
                 logger.error("   Self-healing requires some health data to determine miner availability")
                 return False
             else:
                 logger.info(f"✅ Found {health_data_count} miners with recent health data for self-healing")
-        
+
         try:
-            # STEP 1: Check for deregistered miners and reassign their files
-            logger.info("🔍 STEP 1: Checking for deregistered miners on Bittensor network")
-            dereg_success = await self.check_and_handle_deregistered_miners()
-            if not dereg_success:
-                logger.warning("⚠️ Deregistration check failed, continuing with regular self-healing")
-            
-            # STEP 2: Use RabbitMQ-based network self-healing processor for other issues
+            # Use RabbitMQ-based network self-healing processor
             logger.info("🛠️ STEP 2: Running regular network self-healing processor")
             success = self.run_processor(
                 'network_self_healing_processor.py',
