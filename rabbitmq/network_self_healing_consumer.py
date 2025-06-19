@@ -81,14 +81,14 @@ class NetworkSelfHealingConsumer:
                     r.node_id,
                     COALESCE(ms.total_files_pinned, 0) as file_count,
                     COALESCE(ms.total_files_size_bytes, 0) as total_size
-                FROM registrations r
+                FROM registration r
                 LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
-                WHERE r.active = true
+                WHERE r.status = 'active'
                 AND r.node_id NOT IN (SELECT unnest($1::text[]))
                 ORDER BY 
                     COALESCE(ms.total_files_pinned, 0) ASC,
                     COALESCE(ms.total_files_size_bytes, 0) ASC,
-                    r.registration_date ASC
+                    r.created_at ASC
                 LIMIT $2
             """, exclude_miners, needed_count)
             
