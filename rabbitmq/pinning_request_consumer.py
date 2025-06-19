@@ -269,27 +269,39 @@ class PinningRequestConsumer:
         return await self._batch_process_file_assignments(file_assignments)
     
     async def _batch_process_file_assignments(self, file_assignments: List[Dict]) -> int:
+        # Create semaphore for parallel file size fetching (limit to 20 concurrent)
+        semaphore = asyncio.Semaphore(20)
+        
+        async def fetch_file_size_with_semaphore(assignment: Dict) -> tuple:
+            async with semaphore:
+                file_size = await fetch_ipfs_file_size(assignment['cid'])
+                return (
+                    assignment['cid'],
+                    assignment['filename'],
+                    file_size if file_size is not None else 0,
+                    assignment['owner']
+                )
+        
+        # Fetch all file sizes in parallel
+        logger.info(f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)")
+        tasks = [fetch_file_size_with_semaphore(assignment) for assignment in file_assignments]
+        results = await asyncio.gather(*tasks)
+        
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 files_data = []
                 assignments_data = []
                 
-                for assignment in file_assignments:
-                    files_data.append((
-                        assignment['cid'],
-                        assignment['filename'],
-                        0
-                    ))
-                    assignments_data.append((
-                        assignment['cid'],
-                        assignment['owner']
-                    ))
+                for cid, filename, file_size, owner in results:
+                    files_data.append((cid, filename, file_size))
+                    assignments_data.append((cid, owner))
                 
                 await conn.executemany("""
                     INSERT INTO files (cid, name, size)
                     VALUES ($1, $2, $3)
                     ON CONFLICT (cid) DO UPDATE SET
-                        name = EXCLUDED.name
+                        name = EXCLUDED.name,
+                        size = EXCLUDED.size
                 """, files_data)
                 
                 await conn.executemany("""
