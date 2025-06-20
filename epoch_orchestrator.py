@@ -775,13 +775,13 @@ class EpochOrchestrator:
                     FROM file_assignments fa
                     LEFT JOIN files f ON fa.cid = f.cid
                     LEFT JOIN pinning_requests pr ON fa.owner = pr.owner  -- Join to get original request hash
-                    WHERE fa.miner1 IS NULL AND fa.miner2 IS NULL AND fa.miner3 IS NULL 
-                      AND fa.miner4 IS NULL AND fa.miner5 IS NULL  -- Not yet assigned
+                    WHERE (fa.miner1 IS NULL OR fa.miner2 IS NULL OR fa.miner3 IS NULL 
+                       OR fa.miner4 IS NULL OR fa.miner5 IS NULL)  -- Any missing assignments
                     ORDER BY fa.created_at ASC
                 """)
                 
-                # DEBUG LOGGING: Print raw file assignments from DB
-                logger.info(f"DEBUG: Raw individual files from DB: {len(rows)} files")
+                # DEBUG LOGGING: Print raw file assignments from DB (includes partially assigned files)
+                logger.info(f"DEBUG: Files needing assignment completion: {len(rows)} files")
 
                 for row in rows:
                     # Convert to the format expected by ValidatorWorkflow (using file CID as request_hash)

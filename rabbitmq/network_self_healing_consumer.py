@@ -75,16 +75,17 @@ class NetworkSelfHealingConsumer:
             List of miner node IDs
         """
         async with self.db_pool.acquire() as conn:
-            # Get all active storage miners with stats
+            # Get all online storage miners with stats
             all_miners = await conn.fetch("""
                 SELECT 
                     r.node_id,
+                    r.status,
                     COALESCE(ms.total_files_pinned, 0) as file_count,
                     COALESCE(ms.total_files_size_bytes, 0) as total_size,
                     COALESCE(ms.health_score, 0) as health_score
                 FROM registration r
                 LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
-                WHERE r.status = 'active'
+                WHERE r.status = 'Online'
                 AND r.node_type = 'StorageMiner'
                 ORDER BY 
                     COALESCE(ms.health_score, 0) DESC,
@@ -117,8 +118,13 @@ class NetworkSelfHealingConsumer:
             
             if len(healthy_miners) < needed_count:
                 logger.warning(f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria")
-                logger.warning(f"   Total miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB")
+                logger.warning(f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB")
                 logger.warning(f"   Excluded miners: {len(exclude_set)}")
+                
+                # Additional debugging info
+                offline_count = len([m for m in all_miners if m['health_score'] < 20.0])
+                overloaded_count = len([m for m in all_miners if m['total_size'] >= 10737418240])
+                logger.warning(f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded")
             
             return healthy_miners
     
