@@ -13,18 +13,16 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aio_pika
-import httpx
 from aio_pika import IncomingMessage
 
 from app.db.connection import init_db_pool, close_db_pool
 from app.db.models.pending_assignment_file import PendingAssignmentFile
-from app.utils.config import get_ipfs_node_url, get_ipfs_timeout
 from app.utils.file_utils import fetch_ipfs_file_size
 
 # Setup logging
