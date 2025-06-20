@@ -1682,7 +1682,6 @@ class EpochOrchestrator:
         logger.info("👑 Executing VALIDATOR workflow (SEQUENTIAL)")
 
         # Use the current epoch and block from the main loop
-        current_epoch = self.current_epoch
         current_block = self.current_block
         block_position = get_epoch_block_position(current_block)
 
@@ -2132,10 +2131,8 @@ class EpochOrchestrator:
                         else:
                             logger.info("🔐 Transaction signing: DISABLED")
 
-                    # Execute appropriate workflow
-                    # TEMPORARY DEBUG: Force validator mode even if not selected
-                    logger.info("🚨 DEBUG MODE: FORCING VALIDATOR WORKFLOW regardless of selection")
-                    if True:  # Force validator mode
+                    # Execute appropriate workflow based on validator selection
+                    if is_validator:
                         await self.validator_workflow()
                     else:
                         await self.non_validator_workflow()

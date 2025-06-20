@@ -2,16 +2,12 @@
 File-related utilities, including fetching file sizes from IPFS.
 """
 
-import asyncio
 import json
 import os
 import httpx
 from aiolimiter import AsyncLimiter
-from typing import TYPE_CHECKING
 from app.utils.logging import logger
 
-if TYPE_CHECKING:
-    from app.utils.state import AppState
 
 # Get IPFS node URL from environment, with a default
 IPFS_NODE_URL = os.getenv("IPFS_NODE_URL", "http://127.0.0.1:5001")
