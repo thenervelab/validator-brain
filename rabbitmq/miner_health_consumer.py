@@ -48,6 +48,8 @@ class MinerHealthConsumer:
         self.rabbitmq_channel = None
         self.db_pool = None
         self.stop_event = asyncio.Event()
+        # Limit concurrent IPFS operations to prevent timeouts
+        self.ipfs_semaphore = asyncio.Semaphore(10)  # Max 10 concurrent IPFS requests
         
         # Configuration
         self.ping_failure_threshold = int(os.getenv('PING_FAILURE_THRESHOLD', '1'))  # Remove after 1 ping failure
@@ -162,14 +164,16 @@ class MinerHealthConsumer:
             logger.info(f"Performing ping test for {node_id}")
             ping_successful = True
             try:
-                await perform_ipfs_ping(
-                    self.db_pool, 
-                    node_id, 
-                    ipfs_peer_id, 
-                    epoch, 
-                    block_number, 
-                    self.stop_event
-                )
+                # Use semaphore to limit concurrent IPFS operations
+                async with self.ipfs_semaphore:
+                    await perform_ipfs_ping(
+                        self.db_pool, 
+                        node_id, 
+                        ipfs_peer_id, 
+                        epoch, 
+                        block_number, 
+                        self.stop_event
+                    )
                 logger.info(f"Ping test successful for {node_id}")
             except Exception as e:
                 logger.error(f"Ping test failed for {node_id}: {e}")
@@ -197,21 +201,23 @@ class MinerHealthConsumer:
                     
                     logger.debug(f"Checking file {file_index}/{len(files_to_check)} for {node_id}: {file_cid}")
                     
-                    try:
-                        await perform_ipfs_pin_check(
-                            self.db_pool,
-                            node_id,
-                            ipfs_peer_id,
-                            file_cid,
-                            epoch,
-                            self.stop_event
-                        )
-                        logger.debug(f"Pin check successful for file {file_cid} on {node_id}")
-                        return True
-                        
-                    except Exception as e:
-                        logger.error(f"Pin check failed for file {file_cid} on {node_id}: {e}")
-                        return False
+                    # Use semaphore to limit concurrent IPFS operations
+                    async with self.ipfs_semaphore:
+                        try:
+                            await perform_ipfs_pin_check(
+                                self.db_pool,
+                                node_id,
+                                ipfs_peer_id,
+                                file_cid,
+                                epoch,
+                                self.stop_event
+                            )
+                            logger.debug(f"Pin check successful for file {file_cid} on {node_id}")
+                            return True
+                            
+                        except Exception as e:
+                            logger.error(f"Pin check failed for file {file_cid} on {node_id}: {e}")
+                            return False
                 
                 # Run all pin checks concurrently
                 pin_tasks = [

@@ -3,7 +3,6 @@
 import random
 from typing import Dict, List
 
-from app.services.ipfs_api import ping_ipfs_node
 from app.utils.logging import logger
 
 
@@ -21,16 +20,11 @@ async def score_miners(miners: List[Dict]) -> List[Dict]:
 
     for miner in miners:
         node_id = miner["node_id"]
-        ipfs_peer_id = miner["ipfs_peer_id"]
 
-        # Check if miner is online
-        is_online = miner.get("is_online", False)
-        if not is_online:
-            ping_result = await ping_ipfs_node(ipfs_peer_id)
-            is_online = ping_result["success"]
-
-        if not is_online:
-            logger.warning(f"Miner {node_id} is offline, skipping from assignment")
+        # Use health score from database instead of real-time ping
+        health_score = miner.get("health_score", 0)
+        if health_score is None or health_score < 20.0:  # Skip miners with very low health
+            logger.warning(f"Miner {node_id} has low health score {health_score} (available keys: {list(miner.keys())}), skipping from assignment")
             continue
 
         # Calculate miner's available storage
@@ -64,6 +58,7 @@ async def score_miners(miners: List[Dict]) -> List[Dict]:
 
     # Sort miners by score (highest first)
     scored_miners.sort(key=lambda m: m["score"], reverse=True)
+    logger.info(f"scored_miners=={scored_miners}")
 
     return scored_miners
 
