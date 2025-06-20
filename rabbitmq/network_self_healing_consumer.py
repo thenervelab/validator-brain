@@ -75,24 +75,52 @@ class NetworkSelfHealingConsumer:
             List of miner node IDs
         """
         async with self.db_pool.acquire() as conn:
-            # Get healthy miners sorted by capacity (least loaded first)
-            miners = await conn.fetch("""
+            # Get all active storage miners with stats
+            all_miners = await conn.fetch("""
                 SELECT 
                     r.node_id,
                     COALESCE(ms.total_files_pinned, 0) as file_count,
-                    COALESCE(ms.total_files_size_bytes, 0) as total_size
+                    COALESCE(ms.total_files_size_bytes, 0) as total_size,
+                    COALESCE(ms.health_score, 0) as health_score
                 FROM registration r
                 LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
                 WHERE r.status = 'active'
-                AND r.node_id NOT IN (SELECT unnest($1::text[]))
+                AND r.node_type = 'StorageMiner'
                 ORDER BY 
+                    COALESCE(ms.health_score, 0) DESC,
                     COALESCE(ms.total_files_pinned, 0) ASC,
-                    COALESCE(ms.total_files_size_bytes, 0) ASC,
                     r.created_at ASC
-                LIMIT $2
-            """, exclude_miners, needed_count)
+            """)
             
-            return [miner['node_id'] for miner in miners]
+            # Filter in Python for better readability
+            exclude_set = set(exclude_miners)
+            healthy_miners = []
+            
+            for miner in all_miners:
+                # Skip already assigned miners
+                if miner['node_id'] in exclude_set:
+                    continue
+                    
+                # Check health threshold
+                if miner['health_score'] < 20.0:
+                    continue
+                    
+                # Check capacity limit (10GB)
+                if miner['total_size'] >= 10737418240:
+                    continue
+                    
+                healthy_miners.append(miner['node_id'])
+                
+                # Stop when we have enough
+                if len(healthy_miners) >= needed_count:
+                    break
+            
+            if len(healthy_miners) < needed_count:
+                logger.warning(f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria")
+                logger.warning(f"   Total miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB")
+                logger.warning(f"   Excluded miners: {len(exclude_set)}")
+            
+            return healthy_miners
     
     async def process_file_healing(self, healing_data: Dict[str, Any]) -> bool:
         """
@@ -119,19 +147,26 @@ class NetworkSelfHealingConsumer:
         try:
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
-                    # 1. Get current assignment state (to handle race conditions)
+                    # 1. Acquire advisory lock for this specific file (prevents parallel processing)
+                    cid_hash = hash(cid) % 2147483647  # Convert CID to integer for advisory lock
+                    lock_acquired = await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", cid_hash)
+                    
+                    if not lock_acquired:
+                        logger.info(f"🔒 File {cid[:16]}... is being processed by another consumer, skipping")
+                        return True  # Not an error, just skip
+                    
+                    # 2. Get current assignment state (now protected by advisory lock)
                     current_assignment = await conn.fetchrow("""
                         SELECT miner1, miner2, miner3, miner4, miner5, updated_at
                         FROM file_assignments
                         WHERE cid = $1
-                        FOR UPDATE
                     """, cid)
                     
                     if not current_assignment:
                         logger.error(f"❌ File assignment not found for CID {cid}")
                         return False
                     
-                    # 2. Build current miner list and find empty slots
+                    # 3. Build current miner list and find empty slots
                     current_list = [
                         current_assignment['miner1'], current_assignment['miner2'],
                         current_assignment['miner3'], current_assignment['miner4'],
@@ -154,34 +189,28 @@ class NetworkSelfHealingConsumer:
                     
                     logger.info(f"🔍 File {cid[:16]}... has {len(empty_slots)} empty slots to fill")
                     
-                    # 3. Find healthy miners to fill empty slots
+                    # 4. Find healthy miners to fill empty slots
                     new_miners = await self.find_healthy_miners(assigned_miners, len(empty_slots))
                     
                     if len(new_miners) < len(empty_slots):
                         logger.warning(f"⚠️ Only found {len(new_miners)} healthy miners for {len(empty_slots)} empty slots")
                     
-                    # 4. Fill empty slots with new miners
+                    # 5. Fill empty slots with new miners
                     updated_miners = current_list.copy()
                     for i, slot_index in enumerate(empty_slots):
                         if i < len(new_miners):
                             updated_miners[slot_index] = new_miners[i]
                     
-                    # 5. Update file assignments with race condition protection
-                    result = await conn.execute("""
+                    # 6. Update file assignments (protected by advisory lock)
+                    await conn.execute("""
                         UPDATE file_assignments
                         SET miner1 = $2, miner2 = $3, miner3 = $4, miner4 = $5, miner5 = $6,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE cid = $1
-                        AND updated_at = $7
                     """, cid, updated_miners[0], updated_miners[1], updated_miners[2], 
-                        updated_miners[3], updated_miners[4], current_assignment['updated_at'])
+                        updated_miners[3], updated_miners[4])
                     
-                    # Check if update was successful (no race condition)
-                    if result == "UPDATE 0":
-                        logger.warning(f"⚠️ Race condition detected for file {cid} - assignment was modified by another process")
-                        return False
-                    
-                    # 6. Update miner stats for newly assigned miners
+                    # 7. Update miner stats for newly assigned miners
                     for miner_id in new_miners:
                         if miner_id:  # Skip None values
                             await conn.execute("""
@@ -195,8 +224,14 @@ class NetworkSelfHealingConsumer:
                                     updated_at = NOW()
                             """, miner_id, file_size_bytes)
                     
+                    filled_count = len([m for m in new_miners if m])
+                    miner_list = ', '.join([m[:20] + "..." for m in new_miners if m])
                     logger.info(f"✅ Successfully healed file {cid[:16]}... - "
-                               f"filled {len([m for m in new_miners if m])} empty slots with miners: {', '.join([m for m in new_miners if m])}")
+                               f"filled {filled_count}/{len(empty_slots)} empty slots with miners: {miner_list}")
+                    
+                    # Log final assignment state for debugging
+                    final_assignments = [m[:20] + "..." if m else "NULL" for m in updated_miners]
+                    logger.debug(f"🔍 Final assignment state: [{', '.join(final_assignments)}]")
                     
                     # The updated_at timestamp change will automatically trigger user profile reconstruction
                     logger.info(f"📝 File assignment updated - user profile for {owner} will be reconstructed in next cycle")
