@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-nodeport
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-management-nodeport
+spec:
+  type: ClusterIP
+  selector:
+    app: rabbitmq
+  ports:
+  - port: 15672
+    targetPort: 15672
+    name: management
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ipfs-gateway-nodeport
+spec:
+  type: ClusterIP
+  selector:
+    app: ipfs
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: gateway
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ipfs-api-nodeport
+spec:
+  type: ClusterIP
+  selector:
+    app: ipfs
+  ports:
+  - port: 5001
+    targetPort: 5001
+    name: api 

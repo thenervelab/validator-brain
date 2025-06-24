@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: miner-health-processor
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: processor
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always  # Use local image
+        command: ["python", "rabbitmq/miner_health_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        env:
+        # Health check configuration
+        - name: HEALTH_CHECK_FILES_PER_MINER
+          value: "3"
+        workingDir: /app
+      restartPolicy: Never
+  backoffLimit: 3 

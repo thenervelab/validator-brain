@@ -1,0 +1,21 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: user-profile-reconstruction-processor
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: processor
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/user_profile_reconstruction_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+  backoffLimit: 3 

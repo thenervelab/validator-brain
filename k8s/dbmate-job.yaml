@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dbmate-migrations
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for postgres; sleep 2; done']
+      containers:
+      - name: dbmate
+        image: ghcr.io/amacneil/dbmate
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ipfs-validator-config
+              key: DATABASE_URL
+        - name: DBMATE_MIGRATIONS_DIR
+          value: /db/migrations
+        command: ["dbmate", "up"]
+        volumeMounts:
+        - name: migrations
+          mountPath: /db/migrations
+      volumes:
+      - name: migrations
+        configMap:
+          name: migrations-config 

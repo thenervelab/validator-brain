@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["db", "app", "substrate_fetcher"]
+
+[project]
+name = "ipfs-service-validator"
+version = "0.0.1"
+description = "IPFS Service Validator for Substrate-based blockchain network (Bittensor/Hippius Network)"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+    {name = "dubs", email = "dubs@dubs.rs"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "asyncpg",
+    "httpx",
+    "aiohttp",
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    "aiofiles",
+    "substrate-interface",
+    "websockets",
+    "psutil",
+    "aio-pika",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "pre-commit",
+]

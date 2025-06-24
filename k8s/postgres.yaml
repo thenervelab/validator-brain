@@ -1,0 +1,216 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+      - name: postgres
+        image: postgres:17
+        ports:
+        - containerPort: 5432
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        env:
+        - name: POSTGRES_INITDB_ARGS
+          value: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        # High-scale PostgreSQL configuration via environment variables
+        - name: POSTGRES_CONFIG_max_connections
+          value: "1000"
+        - name: POSTGRES_CONFIG_shared_buffers
+          value: "512MB"
+        - name: POSTGRES_CONFIG_effective_cache_size
+          value: "2GB"
+        - name: POSTGRES_CONFIG_work_mem
+          value: "8MB"
+        - name: POSTGRES_CONFIG_maintenance_work_mem
+          value: "128MB"
+        - name: POSTGRES_CONFIG_checkpoint_completion_target
+          value: "0.9"
+        - name: POSTGRES_CONFIG_wal_buffers
+          value: "32MB"
+        - name: POSTGRES_CONFIG_max_wal_size
+          value: "8GB"
+        - name: POSTGRES_CONFIG_min_wal_size
+          value: "2GB"
+        - name: POSTGRES_CONFIG_max_worker_processes
+          value: "16"
+        - name: POSTGRES_CONFIG_max_parallel_workers
+          value: "16"
+        - name: POSTGRES_CONFIG_max_parallel_workers_per_gather
+          value: "8"
+        - name: POSTGRES_CONFIG_max_parallel_maintenance_workers
+          value: "8"
+        - name: POSTGRES_CONFIG_default_statistics_target
+          value: "100"
+        - name: POSTGRES_CONFIG_random_page_cost
+          value: "1.1"
+        - name: POSTGRES_CONFIG_effective_io_concurrency
+          value: "200"
+        - name: POSTGRES_CONFIG_log_min_duration_statement
+          value: "1000"
+        - name: POSTGRES_CONFIG_log_connections
+          value: "on"
+        - name: POSTGRES_CONFIG_log_disconnections
+          value: "on"
+        - name: POSTGRES_CONFIG_log_lock_waits
+          value: "on"
+        - name: POSTGRES_CONFIG_deadlock_timeout
+          value: "1s"
+        - name: POSTGRES_CONFIG_lock_timeout
+          value: "30s"
+        - name: POSTGRES_CONFIG_idle_in_transaction_session_timeout
+          value: "300s"
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /docker-entrypoint-initdb.d/
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - user
+            - -d
+            - substrate_fetcher
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - user
+            - -d
+            - substrate_fetcher
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: postgres-config
+        configMap:
+          name: postgres-init-config
+          defaultMode: 0755
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-config
+data:
+  01-configure-postgres.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "🔧 Configuring PostgreSQL for high-scale operations..."
+    
+    # Apply configuration settings
+    cat >> "$PGDATA/postgresql.conf" << EOF
+    
+    # High-Scale Configuration for IPFS Service Validator
+    # Applied automatically during container startup
+    
+    # Connection Settings
+    max_connections = 1000
+    
+    # Memory Settings
+    shared_buffers = 512MB
+    effective_cache_size = 2GB
+    work_mem = 8MB
+    maintenance_work_mem = 128MB
+    
+    # WAL Settings
+    wal_buffers = 32MB
+    max_wal_size = 8GB
+    min_wal_size = 2GB
+    checkpoint_completion_target = 0.9
+    
+    # Worker Process Settings
+    max_worker_processes = 16
+    max_parallel_workers = 16
+    max_parallel_workers_per_gather = 8
+    max_parallel_maintenance_workers = 8
+    
+    # Query Planner Settings
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    
+    # Logging Settings
+    log_min_duration_statement = 1000
+    log_connections = on
+    log_disconnections = on
+    log_lock_waits = on
+    
+    # Lock Settings
+    deadlock_timeout = 1s
+    lock_timeout = 30s
+    idle_in_transaction_session_timeout = 300s
+    
+    # Additional Performance Settings
+    synchronous_commit = off
+    wal_compression = on
+    checkpoint_timeout = 15min
+    
+    EOF
+    
+    echo "✅ PostgreSQL high-scale configuration applied"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP 

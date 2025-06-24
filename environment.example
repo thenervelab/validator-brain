@@ -1,0 +1,99 @@
+# IPFS Service Validator Environment Configuration
+# Copy these environment variables to your shell or .env file
+
+# ============================================
+# REQUIRED CONFIGURATION
+# ============================================
+
+# Your validator account ID (REQUIRED)
+export VALIDATOR_ACCOUNT_ID="5G1Qj93Fy22grpiGKq6BEvqqmS2HVRs3jaEdMhq9absQzs6g"
+
+# Blockchain RPC endpoint (REQUIRED)
+export NODE_URL="wss://rpc.hippius.network"
+
+# Database connection (REQUIRED)
+export DATABASE_URL="postgresql://user:password@localhost:5432/substrate_fetcher"
+
+# RabbitMQ connection (REQUIRED)
+export RABBITMQ_URL="amqp://admin:admin@localhost:5672/"
+
+# ============================================
+# OPTIONAL CONFIGURATION
+# ============================================
+
+# Your validator seed phrase for transaction signing (OPTIONAL but recommended)
+# export VALIDATOR_SEED="your twelve word seed phrase here for signing transactions"
+
+# IPFS configuration
+export IPFS_NODE_URL="http://localhost:5001"
+export IPFS_GATEWAY_URL="https://ipfs.io"
+export REMOTE_IPFS_URL="https://store.hippius.network"
+
+# Orchestrator timing configuration
+export BLOCK_CHECK_INTERVAL="6"          # Check blockchain every 6 seconds (every block)
+export QUEUE_CHECK_TIMEOUT="300"         # Queue processing timeout in seconds
+
+# Processing configuration
+export MINER_PROFILE_BATCH_SIZE="0"      # 0 = process all miners, >0 = batch size limit
+export USER_PROFILE_BATCH_SIZE="0"       # 0 = process all users, >0 = batch size limit
+export NODE_METRICS_HISTORY_BLOCKS="10"  # Number of blocks to keep per miner
+
+# Health check configuration
+export HEALTH_CHECK_FILES_PER_MINER="3"  # Number of files to test per miner
+export PING_FAILURE_THRESHOLD="1"        # Remove after 1 ping failure
+export PIN_FAILURE_THRESHOLD="2"         # Remove after 2 pin failures
+export IPFS_TIMEOUT_SECONDS="10"         # Timeout for ping operations
+export IPFS_DHT_TIMEOUT_SECONDS="60"     # Timeout for DHT provider lookups
+
+# File assignment configuration
+export REPLICAS_PER_FILE="5"             # Number of replicas per file
+export MAX_FILES_PER_BATCH="100"         # Files processed per batch
+export MIN_MINER_HEALTH_SCORE="30.0"     # Minimum health score for assignment (30% = very permissive)
+
+# File availability management (AUTOMATIC - runs during epochs)
+export ENABLE_AUTOMATIC_REASSIGNMENTS="true"        # Enable automatic file reassignments
+export MAX_AVAILABILITY_FILES_PER_RUN="50"         # Max files to process per availability run
+export MIN_REPLICAS_PER_FILE="5"                   # Minimum replicas required per file
+export MAX_REPLICAS_PER_FILE="5"                   # Maximum replicas allowed per file
+export MIN_AVAILABILITY_SCORE="0.7"                # Minimum miner availability score (0.0-1.0)
+export MAX_CONSECUTIVE_FAILURES="3"                # Max consecutive failures before reassignment
+export FAILURE_WINDOW_HOURS="24"                   # Time window to check for failures
+export REASSIGNMENT_COOLDOWN_HOURS="6"             # Cooldown between reassignments for same file
+
+# File Assignment Configuration
+MIN_REQUIRED_MINERS=5  # Minimum miners required per file (prevents NULL assignments) - INCREASED from 3 to match REPLICAS_PER_FILE
+MAX_REPLICAS_PER_FILE=5
+MIN_REPLICAS_PER_FILE=5
+
+# Health Score Thresholds:
+# - 90+: Excellent (very restrictive)
+# - 70+: Good (moderately restrictive) 
+# - 50+: Fair (somewhat permissive)
+# - 30+: Poor but functional (very permissive) - RECOMMENDED for network with assignment issues
+# - 10+: Critical (emergency only)
+
+# ============================================
+# USAGE INSTRUCTIONS
+# ============================================
+
+# 1. Source this file to set environment variables:
+#    source environment.example
+
+# 2. Update the REQUIRED values above with your actual configuration
+
+# 3. Optionally set VALIDATOR_SEED for transaction signing capabilities
+
+# 4. Launch the orchestrator:
+#    ./launch_epoch_orchestrator.sh
+
+# 5. Or just check connectivity:
+#    ./launch_epoch_orchestrator.sh --check-only
+
+# 6. Or show current status:
+#    ./launch_epoch_orchestrator.sh --status 
+
+# NOTE: File availability management runs AUTOMATICALLY during each epoch:
+# - Fixes files with empty miner assignments (no manual intervention needed)
+# - Reassigns files from failing miners based on health metrics
+# - Maintains network file availability without manual oversight
+# - Configure behavior with ENABLE_AUTOMATIC_REASSIGNMENTS and related settings above 

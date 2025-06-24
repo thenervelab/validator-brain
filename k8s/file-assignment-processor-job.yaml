@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: file-assignment-processor
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: processor
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always  # Use local image
+        command: ["python", "rabbitmq/file_assignment_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        env:
+        # File assignment configuration
+        - name: REPLICAS_PER_FILE
+          value: "5"
+        - name: MAX_FILES_PER_BATCH
+          value: "100"
+        - name: MAX_REASSIGNMENTS_PER_BATCH
+          value: "50"
+        - name: MIN_MINER_HEALTH_SCORE
+          value: "70.0"
+        - name: NEW_MINER_BOOST_DAYS
+          value: "30"
+        - name: NEW_MINER_BOOST_FACTOR
+          value: "1.5"
+        workingDir: /app
+      restartPolicy: Never
+  backoffLimit: 3 

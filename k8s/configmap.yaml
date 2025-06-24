@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ipfs-validator-config
+data:
+  # Database Configuration
+  POSTGRES_USER: "user"
+  POSTGRES_PASSWORD: "password"
+  POSTGRES_DB: "substrate_fetcher"
+  DATABASE_URL: "postgres://user:password@postgres-service:5432/substrate_fetcher?sslmode=disable"
+  
+  # Database Connection Pool Configuration
+  DB_POOL_MIN_SIZE: "2"          # Minimum connections per consumer
+  DB_POOL_MAX_SIZE: "8"          # Maximum connections per consumer
+  DB_COMMAND_TIMEOUT: "60"       # Command timeout in seconds
+  
+  # RabbitMQ Configuration
+  RABBITMQ_USER: "admin"
+  RABBITMQ_PASSWORD: "admin"
+  RABBITMQ_VHOST: "/"
+  RABBITMQ_URL: "amqp://admin:admin@rabbitmq-service:5672/"
+  
+  # IPFS Configuration
+  IPFS_NODE_URL: "http://ipfs-service:5001"
+  IPFS_GATEWAY_URL: "https://get.hippius.network"
+  REMOTE_IPFS_URL: "https://store.hippius.network"
+  
+  # Blockchain Configuration
+  NODE_URL: "wss://rpc.hippius.network"
+  PINNING_NODE_URL: "ws://192.168.1.107:9944"  # Local IP for pinning operations to avoid DNS issues
+  
+  # Validator Configuration (UPDATE THESE WITH YOUR ACTUAL VALUES)
+  VALIDATOR_ACCOUNT_ID: "YOUR_VALI_SS58"
+  VALIDATOR_SEED: "THIS IS A PROXY SEED MAKE VALIDATOR SAFER"  # Uncomment and set for transaction signing
+  
+  # Epoch Orchestrator Configuration
+  BLOCK_CHECK_INTERVAL: "6"          # Check blockchain every 6 seconds (every block)
+  QUEUE_CHECK_TIMEOUT: "300"         # Queue processing timeout in seconds
+  
+  # Processing Configuration
+  MINER_PROFILE_BATCH_SIZE: "0"      # 0 = process all miners, >0 = batch size limit
+  USER_PROFILE_BATCH_SIZE: "0"       # 0 = process all users, >0 = batch size limit
+  NODE_METRICS_HISTORY_BLOCKS: "10"  # Number of blocks to keep per miner
+  
+  # Health Check Configuration
+  HEALTH_CHECK_FILES_PER_MINER: "1"  # Number of files to test per miner (reduced from 3)
+  PING_FAILURE_THRESHOLD: "1"        # Remove after 1 ping failure
+  PIN_FAILURE_THRESHOLD: "2"         # Remove after 2 pin failures
+  IPFS_TIMEOUT_SECONDS: "60"         # Timeout for ping operations (increased)
+  IPFS_DHT_TIMEOUT_SECONDS: "120"    # Timeout for DHT provider lookups (increased)
+  EPOCH_MAX_FILES_PER_MINER: "10"    # Max files to check per miner in epoch health checks
+  
+  # File Assignment Configuration
+  REPLICAS_PER_FILE: "5"             # Number of replicas per file
+  MAX_FILES_PER_BATCH: "1000"        # Files processed per batch (increased for large pinning volumes)
+  MAX_REASSIGNMENTS_PER_BATCH: "500" # Reassignments processed per batch (increased)
+  MIN_MINER_HEALTH_SCORE: "30.0"     # Minimum health score for assignment (lowered from 70.0 to allow more miners)
+  NEW_MINER_BOOST_DAYS: "30"         # Days for new miner boost
+  NEW_MINER_BOOST_FACTOR: "1.5"      # Boost factor for new miners
+  
+  # Pinning Configuration (for handling large volumes)
+  PINNING_MAX_FILES_PER_BATCH: "2000" # Max files to process in pinning operations
+  PINNING_RETRY_ATTEMPTS: "3"         # Number of retry attempts for pinning
+  
+  # Availability Manager Configuration
+  MIN_REPLICAS: "3"                  # Minimum replicas per file
+  MAX_REPLICAS: "5"                  # Maximum replicas per file
+  MIN_AVAILABILITY_SCORE: "0.7"      # Minimum availability score
+  MAX_CONSECUTIVE_FAILURES: "3"      # Max consecutive failures before action
+  FAILURE_WINDOW_HOURS: "24"         # Window for failure tracking
+  REASSIGNMENT_COOLDOWN_HOURS: "6"   # Cooldown between reassignments
+  ENABLE_AUTO_REASSIGNMENT: "true"   # Enable automatic reassignment
+  
+  # Python Configuration
+  PYTHONUNBUFFERED: "1"
+  WAIT_FOR_IPFS: "true" 

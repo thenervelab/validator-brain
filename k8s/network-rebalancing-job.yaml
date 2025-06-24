@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: network-rebalancing-processor
+  labels:
+    app: network-rebalancing-processor
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: processor
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/network_rebalancing_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        env:
+        # Rebalancing configuration
+        - name: REBALANCE_MAX_FILES_PER_BATCH
+          value: "20"
+        - name: REBALANCE_FILE_COUNT_THRESHOLD
+          value: "2.0"  # Standard deviations for file count imbalance
+        - name: REBALANCE_SIZE_THRESHOLD
+          value: "1.5"  # Standard deviations for size imbalance
+        - name: REBALANCE_MAX_UTILIZATION
+          value: "0.85"  # 85% max storage utilization
+        - name: REBALANCE_MIN_AVAILABLE_MB
+          value: "1000"  # 1GB minimum available space
+        - name: REBALANCE_MAX_MOVES_PER_MINER
+          value: "3"  # Max files to move from one miner per batch
+        - name: REBALANCE_INTERVAL_HOURS
+          value: "6"  # Run every 6 hours
+        - name: MIN_MINER_HEALTH_SCORE
+          value: "70.0"
+        workingDir: /app
+      restartPolicy: Never
+  backoffLimit: 3 

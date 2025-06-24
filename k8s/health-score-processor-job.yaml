@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: health-score-processor
+  namespace: ipfs-validator
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: processor
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/health_score_processor.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+      restartPolicy: Never
+  backoffLimit: 3 

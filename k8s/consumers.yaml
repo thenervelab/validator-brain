@@ -1,0 +1,337 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-profile-consumer
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: user-profile-consumer
+  template:
+    metadata:
+      labels:
+        app: user-profile-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always  # For local development with minikube
+        command: ["python", "rabbitmq/user_profile_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinning-request-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pinning-request-consumer
+  template:
+    metadata:
+      labels:
+        app: pinning-request-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/pinning_request_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-metrics-consumer
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: node-metrics-consumer
+  template:
+    metadata:
+      labels:
+        app: node-metrics-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/node_metrics_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registration-consumer
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: registration-consumer
+  template:
+    metadata:
+      labels:
+        app: registration-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/registration_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miner-profile-reconstruction-consumer
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: miner-profile-reconstruction-consumer
+  template:
+    metadata:
+      labels:
+        app: miner-profile-reconstruction-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/miner_profile_reconstruction_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-profile-reconstruction-consumer
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: user-profile-reconstruction-consumer
+  template:
+    metadata:
+      labels:
+        app: user-profile-reconstruction-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/user_profile_reconstruction_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pinning-file-consumer
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: pinning-file-consumer
+  template:
+    metadata:
+      labels:
+        app: pinning-file-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/pinning_file_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miner-health-consumer
+spec:
+  replicas: 50
+  selector:
+    matchLabels:
+      app: miner-health-consumer
+  template:
+    metadata:
+      labels:
+        app: miner-health-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/miner_health_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: epoch-health-consumer
+spec:
+  replicas: 60
+  selector:
+    matchLabels:
+      app: epoch-health-consumer
+  template:
+    metadata:
+      labels:
+        app: epoch-health-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672 && nc -z ipfs-service 5001; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/epoch_health_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: file-assignment-consumer
+# spec:
+#   replicas: 10
+#   selector:
+#     matchLabels:
+#       app: file-assignment-consumer
+#   template:
+#     metadata:
+#       labels:
+#         app: file-assignment-consumer
+#     spec:
+#       initContainers:
+#       - name: wait-for-services
+#         image: busybox:1.35
+#         command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+#       containers:
+#       - name: consumer
+#         image: registry.starkleytech.com/library/ipfs-service-validator
+#         imagePullPolicy: Always
+#         command: ["python", "rabbitmq/file_assignment_consumer.py"]
+#         envFrom:
+#         - configMapRef:
+#             name: ipfs-validator-config
+#         workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: network-self-healing-consumer
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: network-self-healing-consumer
+  template:
+    metadata:
+      labels:
+        app: network-self-healing-consumer
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: consumer
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "rabbitmq/network_self_healing_consumer.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app

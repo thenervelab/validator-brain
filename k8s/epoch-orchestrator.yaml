@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: epoch-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: epoch-orchestrator
+  template:
+    metadata:
+      labels:
+        app: epoch-orchestrator
+    spec:
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done']
+      containers:
+      - name: orchestrator
+        image: registry.starkleytech.com/library/ipfs-service-validator
+        imagePullPolicy: Always
+        command: ["python", "epoch_orchestrator.py"]
+        ports:
+        - containerPort: 9796
+          name: metrics
+        env:
+        # Override ConfigMap values if needed for this specific deployment
+        # Uncomment and set these if you need different values than the ConfigMap
+        # - name: VALIDATOR_ACCOUNT_ID
+        #   value: "your_actual_validator_account_id_here"
+        # - name: VALIDATOR_SEED
+        #   value: "your_actual_validator_seed_phrase_here"
+        # - name: BLOCK_CHECK_INTERVAL
+        #   value: "6"
+        # - name: QUEUE_CHECK_TIMEOUT
+        #   value: "300"
+        envFrom:
+        - configMapRef:
+            name: ipfs-validator-config
+        workingDir: /app
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: epoch-orchestrator-service
+spec:
+  selector:
+    app: epoch-orchestrator
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP 

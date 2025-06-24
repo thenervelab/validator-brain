@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipfs
+  labels:
+    app: ipfs
+spec:
+  replicas: 20
+  selector:
+    matchLabels:
+      app: ipfs
+  template:
+    metadata:
+      labels:
+        app: ipfs
+    spec:
+      volumes:
+      - name: ipfs-storage
+        emptyDir: {} # Replace with PVC for production
+      containers:
+      - name: ipfs
+        image: ipfs/kubo:v0.35.0
+        ports:
+        - containerPort: 4001
+          name: swarm-tcp
+          protocol: TCP
+        - containerPort: 4001
+          name: swarm-udp
+          protocol: UDP
+        - containerPort: 5001
+          name: api
+          protocol: TCP
+        - containerPort: 8080
+          name: gateway
+          protocol: TCP
+        env:
+        - name: IPFS_PROFILE
+          value: "server"
+        - name: IPFS_LOGGING
+          value: "error"
+        - name: IPFS_FD_MAX
+          value: "8192"
+        - name: IPFS_PATH
+          value: "/data/ipfs"
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          if [ ! -f "$IPFS_PATH/config" ]; then
+            ipfs init --profile server
+          fi &&
+          ipfs config Addresses.API /ip4/0.0.0.0/tcp/5001 &&
+          ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080 &&
+          ipfs daemon
+        volumeMounts:
+        - name: ipfs-storage
+          mountPath: /data/ipfs
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "1500m"
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            add: ["SYS_RESOURCE"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ipfs-service
+  annotations:
+    description: "IPFS service for swarm, API, and gateway"
+spec:
+  selector:
+    app: ipfs
+  ports:
+  - port: 4001
+    targetPort: swarm-tcp
+    name: swarm-tcp
+    protocol: TCP
+  - port: 4001
+    targetPort: swarm-udp
+    name: swarm-udp
+    protocol: UDP
+  - port: 5001
+    targetPort: api
+    name: api
+    protocol: TCP
+  - port: 8080
+    targetPort: gateway
+    name: gateway
+    protocol: TCP
+  type: ClusterIP

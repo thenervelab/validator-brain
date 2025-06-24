@@ -1,0 +1,164 @@
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: ipfs-node
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+      - "8080:8080"
+    volumes:
+      - ipfs_data:/data/ipfs
+    environment:
+      - IPFS_PROFILE=server
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+  postgres:
+    image: postgres:17
+    container_name: postgres-substrate
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-substrate_fetcher}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-substrate_fetcher}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-substrate
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-admin}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-admin}
+      - RABBITMQ_DEFAULT_VHOST=${RABBITMQ_VHOST:-/}
+    ports:
+      - "5672:5672"     # AMQP port
+      - "15672:15672"   # Management UI port
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_logs:/var/log/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+  dbmate:
+    image: ghcr.io/amacneil/dbmate
+    container_name: dbmate-migrations
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - DBMATE_MIGRATIONS_DIR=/db/migrations
+    volumes:
+      - ./db/migrations:/db/migrations
+    networks:
+      - ipfs_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["up"]
+    restart: "no"
+
+  pinning-request-consumer:
+    build: .
+    container_name: pinning-request-consumer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+    working_dir: /app
+    command: ["python", "rabbitmq/pinning_request_consumer.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      dbmate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+  user-profile-consumer:
+    build: .
+    container_name: user-profile-consumer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/
+      - IPFS_NODE_URL=http://ipfs:5001
+      - PYTHONUNBUFFERED=1
+      - WAIT_FOR_IPFS=true
+    volumes:
+      - ./:/app
+    working_dir: /app
+    command: ["python", "rabbitmq/user_profile_consumer.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+      dbmate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+  node-metrics-consumer:
+    build: .
+    container_name: node-metrics-consumer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+    working_dir: /app
+    command: ["python", "rabbitmq/node_metrics_consumer.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      dbmate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - ipfs_network
+
+volumes:
+  ipfs_data:
+    name: ipfs-data
+  postgres_data:
+    name: postgres-data
+  rabbitmq_data:
+    name: rabbitmq-data
+  rabbitmq_logs:
+    name: rabbitmq-logs
+
+networks:
+  ipfs_network:
+    driver: bridge
