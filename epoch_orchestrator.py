@@ -432,7 +432,7 @@ class EpochOrchestrator:
 
         if success:
             # Wait for registration consumer to process
-            await self.wait_for_queues_empty(['registration'], 120)
+            await self.wait_for_queues_empty(['registration_latest'], 120)
 
         return success
 
