@@ -542,13 +542,15 @@ class FileAssignmentConsumer:
                 if success:
                     logger.debug(f"Successfully processed {assignment_data.get('type', 'assignment')} for {assignment_data.get('cid', 'unknown')}")
                 else:
-                    logger.error(f"Failed to process {assignment_data.get('type', 'assignment')} for {assignment_data.get('cid', 'unknown')}")
+                    logger.error(f"Failed to process {assignment_data.get('type', 'assignment')} for {assignment_data.get('cid', 'unknown')}, discarding message")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to decode message: {e}")
+                # Log error and continue processing
             except Exception as e:
                 logger.error(f"Error in message handler: {e}")
                 logger.exception("Full traceback:")
+                # Log error and continue processing
     
     async def start_consuming(self):
         """Start consuming messages from the queue."""

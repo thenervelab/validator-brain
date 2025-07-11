@@ -129,18 +129,15 @@ class NodeMetricsConsumer:
                 success = await self.store_node_metrics(metrics_data)
                 
                 if not success:
-                    # Reject the message to retry later
-                    await message.reject(requeue=True)
-                    logger.warning("Failed to store metrics, message requeued")
+                    # Log error for failed storage but don't requeue
+                    logger.error("Failed to store metrics, discarding message")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")
-                # Don't requeue invalid messages
-                await message.reject(requeue=False)
+                # Log error and continue processing
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                # Requeue on unexpected errors
-                await message.reject(requeue=True)
+                # Log error and continue processing
     
     async def start_consuming(self):
         """Start consuming messages from the queue."""

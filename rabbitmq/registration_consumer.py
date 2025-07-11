@@ -72,6 +72,33 @@ class RegistrationConsumer:
         Returns:
             True if successful, False otherwise
         """
+        # Validate node_id length to prevent "value too long" errors
+        node_id = registration.get('node_id', '')
+        if len(node_id) > 100:
+            logger.warning(f"Node ID too long ({len(node_id)} chars), skipping registration for node {node_id[:50]}...")
+            return False
+            
+        # Validate other VARCHAR fields
+        ipfs_peer_id = registration.get('ipfs_peer_id', '')
+        if len(ipfs_peer_id) > 100:
+            logger.warning(f"IPFS peer ID too long ({len(ipfs_peer_id)} chars), skipping registration for node {node_id}")
+            return False
+            
+        owner_account = registration.get('owner_account', '')
+        if len(owner_account) > 100:
+            logger.warning(f"Owner account too long ({len(owner_account)} chars), skipping registration for node {node_id}")
+            return False
+            
+        node_type = registration.get('node_type', '')
+        if len(node_type) > 50:
+            logger.warning(f"Node type too long ({len(node_type)} chars), skipping registration for node {node_id}")
+            return False
+            
+        status = registration.get('status', '')
+        if len(status) > 20:
+            logger.warning(f"Status too long ({len(status)} chars), skipping registration for node {node_id}")
+            return False
+        
         try:
             async with self.db_pool.acquire() as conn:
                 # Use upsert logic to handle duplicates from both storage sources
@@ -89,19 +116,19 @@ class RegistrationConsumer:
                         status = EXCLUDED.status,
                         updated_at = NOW()
                 """, 
-                    registration['node_id'],
-                    registration['ipfs_peer_id'],
-                    registration['node_type'],
-                    registration['owner_account'],
+                    node_id,
+                    ipfs_peer_id,
+                    node_type,
+                    owner_account,
                     registration['registered_at'],
-                    registration['status']
+                    status
                 )
                 
-                logger.info(f"Stored registration for node {registration['node_id']} (source: {registration.get('source', 'unknown')})")
+                logger.info(f"Stored registration for node {node_id} (source: {registration.get('source', 'unknown')})")
                 return True
                 
         except Exception as e:
-            logger.error(f"Error storing registration: {e}")
+            logger.error(f"Error storing registration for node {node_id}: {e}")
             return False
     
     async def process_message(self, message: aio_pika.IncomingMessage):
@@ -121,18 +148,15 @@ class RegistrationConsumer:
                 success = await self.store_registration(registration_data)
                 
                 if not success:
-                    # Reject the message to retry later
-                    await message.reject(requeue=True)
-                    logger.warning("Failed to store registration, message requeued")
+                    # Log error for failed storage but don't requeue
+                    logger.error(f"Failed to store registration for node {node_id}, discarding message")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")
-                # Don't requeue invalid messages
-                await message.reject(requeue=False)
+                # Log error and continue processing
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                # Requeue on unexpected errors
-                await message.reject(requeue=True)
+                # Log error and continue processing
     
     async def start_consuming(self):
         """Start consuming messages from the queue."""

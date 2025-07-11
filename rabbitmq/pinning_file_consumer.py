@@ -124,16 +124,14 @@ class PinningFileConsumer:
                 if not success:
                     cid = file_data.get('cid', 'unknown')
                     owner = file_data.get('owner', 'unknown')
-                    raise Exception(f"Failed to process file {cid} for owner {owner}")
+                    logger.error(f"Failed to process file {cid} for owner {owner}, discarding message")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")
-                # Don't requeue invalid JSON messages
-                return
+                # Log error and continue processing
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                # Message will be requeued due to the exception
-                raise
+                # Log error and continue processing
     
     async def start_consuming(self):
         """Start consuming messages from the queue"""

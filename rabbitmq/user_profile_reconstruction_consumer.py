@@ -211,8 +211,7 @@ class UserProfileReconstructionConsumer:
                 
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                # Don't acknowledge the message, let it be requeued
-                raise
+                # Log error and continue processing
     
     async def start_consuming(self):
         """Start consuming messages from the queue"""

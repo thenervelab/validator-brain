@@ -481,20 +481,17 @@ class PinningRequestConsumer:
                 success = await self.process_pinning_request(data)
                 
                 if not success:
-                    # Reject and requeue if processing failed
-                    logger.error(f"📬 MESSAGE_FAILED: account={account} request_hash={request_hash} - processing failed, will requeue")
-                    raise Exception(f"Failed to process pinning request for account {account}, request_hash {request_hash}")
+                    # Log error for failed processing but don't requeue
+                    logger.error(f"📬 MESSAGE_FAILED: account={account} request_hash={request_hash} - processing failed, discarding message")
                 else:
                     logger.info(f"📬 MESSAGE_SUCCESS: account={account} request_hash={request_hash} - processing completed successfully")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"📬 MESSAGE_JSON_ERROR: Invalid JSON in message - {e}")
-                # Don't requeue invalid JSON messages
-                return
+                # Log error and continue processing
             except Exception as e:
                 logger.error(f"📬 MESSAGE_ERROR: Error processing message - {e}")
-                # Message will be requeued due to the exception
-                raise
+                # Log error and continue processing
     
     async def start_consuming(self):
         """Start consuming messages from the queue."""
