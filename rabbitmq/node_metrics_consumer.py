@@ -32,6 +32,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Cap values at BIGINT maximum to prevent overflow
+PG_BIGINT_MAX = 9223372036854775807
+
 
 class NodeMetricsConsumer:
     """Consumer for processing node metrics messages."""
@@ -82,14 +85,23 @@ class NodeMetricsConsumer:
                     """, metrics['miner_id'])
                     
                     # Insert the new record
+                    
+                    ipfs_repo_size = min(metrics['ipfs_repo_size'], PG_BIGINT_MAX)
+                    ipfs_storage_max = min(metrics['ipfs_storage_max'], PG_BIGINT_MAX)
+                    
+                    if metrics['ipfs_repo_size'] > PG_BIGINT_MAX:
+                        logger.warning(f"Capped ipfs_repo_size for {metrics['miner_id']}: {metrics['ipfs_repo_size']} -> {PG_BIGINT_MAX}")
+                    if metrics['ipfs_storage_max'] > PG_BIGINT_MAX:
+                        logger.warning(f"Capped ipfs_storage_max for {metrics['miner_id']}: {metrics['ipfs_storage_max']} -> {PG_BIGINT_MAX}")
+                    
                     await conn.execute("""
                         INSERT INTO node_metrics (
                             miner_id, ipfs_repo_size, ipfs_storage_max, block_number
                         ) VALUES ($1, $2, $3, $4)
                     """, 
                         metrics['miner_id'],
-                        metrics['ipfs_repo_size'],
-                        metrics['ipfs_storage_max'],
+                        ipfs_repo_size,
+                        ipfs_storage_max,
                         metrics['block_number']
                     )
                 
