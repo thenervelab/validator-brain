@@ -149,7 +149,7 @@ class RegistrationConsumer:
                 
                 if not success:
                     # Log error for failed storage but don't requeue
-                    logger.error(f"Failed to store registration for node {node_id}, discarding message")
+                    logger.error(f"Failed to store registration for node {registration_data}, discarding message")
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")
