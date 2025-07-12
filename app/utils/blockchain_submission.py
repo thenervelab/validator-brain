@@ -408,10 +408,15 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
                 COALESCE(f.size, 0) as file_size,
                 pup.cid as user_profile_cid
             FROM pinning_requests pr
-            JOIN processed_pinning_requests ppr ON pr.request_hash = ppr.request_hash
             LEFT JOIN pending_user_profile pup ON pr.owner = pup.owner AND pup.status = 'published'
             LEFT JOIN files f ON pr.file_hash = f.cid
             WHERE pr.request_hash IS NOT NULL
+            AND EXISTS (
+                SELECT 1 FROM file_assignments fa 
+                WHERE fa.owner = pr.owner 
+                AND (fa.miner1 IS NOT NULL OR fa.miner2 IS NOT NULL OR fa.miner3 IS NOT NULL 
+                     OR fa.miner4 IS NOT NULL OR fa.miner5 IS NOT NULL)
+            )
             ORDER BY pr.owner
             """
             
