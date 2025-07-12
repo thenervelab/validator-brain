@@ -188,7 +188,7 @@ class UserProfileReconstructionProcessor:
                 miners_padded = (selected_miners + [None] * 5)[:5]
                 
                 await conn.execute("""
-                    INSERT INTO files (cid, name, size, created_date)
+                    INSERT INTO files (cid, name, size, created_at)
                     VALUES ($1, $2, $3, NOW())
                     ON CONFLICT (cid) DO UPDATE SET
                         name = EXCLUDED.name,
@@ -387,7 +387,7 @@ class UserProfileReconstructionProcessor:
                     f.cid,
                     f.name,
                     f.size,
-                    f.created_date,
+                    f.created_at,
                     fa.miner1,
                     fa.miner2,
                     fa.miner3,
@@ -398,7 +398,7 @@ class UserProfileReconstructionProcessor:
                 FROM files f
                 JOIN file_assignments fa ON f.cid = fa.cid
                 WHERE fa.owner = $1
-                ORDER BY f.created_date ASC
+                ORDER BY f.created_at ASC
             """, owner)
             
             # Get files from pending_assignment_file table (new files from storage requests)
@@ -407,7 +407,7 @@ class UserProfileReconstructionProcessor:
                     paf.cid,
                     paf.filename as name,
                     paf.file_size_bytes as size,
-                    paf.created_at as created_date,
+                    paf.created_at,
                     NULL as miner1,
                     NULL as miner2,
                     NULL as miner3,
@@ -453,8 +453,8 @@ class UserProfileReconstructionProcessor:
                 }
                 
                 # Convert datetime to string if present
-                if row['created_date']:
-                    file_data['created_date'] = row['created_date'].isoformat()
+                if row['created_at']:
+                    file_data['created_at'] = row['created_at'].isoformat()
                 if row['updated_at']:
                     file_data['last_charged_at'] = row['updated_at'].isoformat()
                 
