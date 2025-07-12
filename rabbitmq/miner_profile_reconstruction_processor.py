@@ -121,11 +121,11 @@ class MinerProfileReconstructionProcessor:
                     f.cid,
                     f.name,
                     f.size,
-                    f.created_date
+                    f.created_at
                 FROM files f
                 JOIN file_assignments fa ON f.cid = fa.cid
                 WHERE $1 IN (fa.miner1, fa.miner2, fa.miner3, fa.miner4, fa.miner5)
-                ORDER BY f.created_date ASC
+                ORDER BY f.created_at ASC
             """, node_id)
             
             # Convert to proper format and handle datetime serialization
@@ -137,8 +137,8 @@ class MinerProfileReconstructionProcessor:
                     'size': row['size']
                 }
                 # Convert datetime to string if present
-                if row['created_date']:
-                    file_data['created_date'] = row['created_date'].isoformat()
+                if row['created_at']:
+                    file_data['created_at'] = row['created_at'].isoformat()
                 
                 files.append(file_data)
             
@@ -169,12 +169,18 @@ class MinerProfileReconstructionProcessor:
         
         logger.info(f"Found {len(profiles)} miner profiles to reconstruct")
         
+        successful_profiles = 0
+        failed_profiles = 0
+        skipped_profiles = 0
+        
         for profile in profiles:
             try:
                 node_id = profile['node_id']
+                logger.debug(f"Processing miner profile for {node_id}")
                 
                 # Fetch files for this miner
                 files = await self.fetch_miner_profile_files(node_id)
+                logger.debug(f"Fetched {len(files)} files for miner {node_id}")
                 
                 # Calculate file count and total size
                 file_count = len(files)
@@ -183,6 +189,7 @@ class MinerProfileReconstructionProcessor:
                 # Skip miners with no files
                 if file_count == 0:
                     logger.info(f"Skipping miner {node_id} - no files assigned")
+                    skipped_profiles += 1
                     continue
                 
                 # Generate a synthetic CID for the profile (we'll use the node_id as base)
@@ -201,13 +208,37 @@ class MinerProfileReconstructionProcessor:
                 # Send to queue
                 await self.send_to_queue(message_data)
                 
-                logger.info(f"Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
+                logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
+                successful_profiles += 1
                 
             except Exception as e:
-                logger.error(f"Error processing profile for miner {profile['node_id']}: {e}")
+                logger.error(f"❌ Error processing profile for miner {profile['node_id']}: {e}")
+                logger.exception(f"Full traceback for miner {profile['node_id']} error:")
+                failed_profiles += 1
                 continue
         
-        logger.info(f"Successfully queued {len(profiles)} profiles for reconstruction")
+        # Enhanced summary logging
+        logger.info(f"📊 Profile reconstruction summary:")
+        logger.info(f"   ✅ Successfully queued: {successful_profiles}")
+        logger.info(f"   ❌ Failed: {failed_profiles}")
+        logger.info(f"   ⏭️ Skipped (no files): {skipped_profiles}")
+        logger.info(f"   📋 Total processed: {len(profiles)}")
+        
+        # Log warning if no profiles were successfully queued
+        if successful_profiles == 0:
+            if failed_profiles > 0:
+                logger.error(f"🚨 CRITICAL: All {failed_profiles} profile(s) failed to process!")
+                logger.error("   This indicates a systematic issue (database, query, or data problems)")
+            elif skipped_profiles > 0:
+                logger.warning(f"⚠️ All {skipped_profiles} miner(s) have no assigned files")
+                logger.warning("   This may indicate file assignment issues")
+            else:
+                logger.warning("⚠️ No miner profiles found to process")
+        
+        logger.info(f"Successfully queued {successful_profiles} profiles for reconstruction")
+        
+        # Return success count for main function to check
+        return successful_profiles
     
     async def close(self):
         """Close connections"""
@@ -224,21 +255,37 @@ async def main():
     processor = MinerProfileReconstructionProcessor()
     
     try:
+        logger.info("🚀 Starting Miner Profile Reconstruction Processor")
+        
         # Connect to services
+        logger.info("🔌 Connecting to database and RabbitMQ...")
         await processor.connect_database()
         await processor.connect_rabbitmq()
         
         # Fetch current block number
+        logger.info("📡 Fetching current block number...")
         await processor.fetch_current_block()
         
         # Process profiles
-        await processor.process_profiles()
+        logger.info("⛏️ Processing miner profiles...")
+        successful_count = await processor.process_profiles()
+        
+        # Check if processing was successful
+        if successful_count == 0:
+            logger.error("🚨 PROCESSOR FAILED: No profiles were successfully queued!")
+            logger.error("   This indicates a systematic issue that needs investigation")
+            raise RuntimeError("Miner profile reconstruction processor completed but queued 0 profiles")
+        
+        logger.info(f"✅ Processor completed successfully - queued {successful_count} profiles")
         
     except Exception as e:
-        logger.error(f"Error in processor: {e}")
+        logger.error(f"❌ Error in processor: {e}")
+        logger.exception("Full processor error traceback:")
         raise
     finally:
+        logger.info("🔌 Closing connections...")
         await processor.close()
+        logger.info("✅ Processor shutdown complete")
 
 
 if __name__ == "__main__":

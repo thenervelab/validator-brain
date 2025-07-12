@@ -320,7 +320,7 @@ class EpochOrchestrator:
             True if successful, False otherwise
         """
         try:
-            logger.info(f"🚀 Starting {description}")
+            logger.info(f"🚀 Starting {description} (processor: {processor_name})")
 
             # Run the processor
             result = subprocess.run(['python', f'rabbitmq/{processor_name}'], capture_output=True,
@@ -328,18 +328,31 @@ class EpochOrchestrator:
 
             if result.returncode == 0:
                 logger.info(f"✅ {description} completed successfully")
+                # Log processor output for debugging if there are any warnings
+                if result.stdout and ("WARNING" in result.stdout.upper() or "ERROR" in result.stdout.upper()):
+                    logger.warning(f"⚠️ {description} completed but had warnings/errors in output:")
+                    logger.warning(f"STDOUT: {result.stdout}")
                 return True
             else:
                 logger.error(f"❌ {description} failed with return code {result.returncode}")
-                logger.error(f"STDOUT: {result.stdout}")
-                logger.error(f"STDERR: {result.stderr}")
+                logger.error(f"📋 Processor: {processor_name}")
+                if result.stdout:
+                    logger.error(f"📄 STDOUT: {result.stdout}")
+                if result.stderr:
+                    logger.error(f"🚨 STDERR: {result.stderr}")
+                else:
+                    logger.error("🚨 No STDERR output - processor may have failed silently")
                 return False
 
         except subprocess.TimeoutExpired:
             logger.error(f"❌ {description} timed out after 10 minutes")
+            logger.error(f"📋 Processor: {processor_name}")
+            logger.error("⏰ This may indicate the processor is stuck or processing too much data")
             return False
         except Exception as e:
             logger.error(f"❌ Error running {description}: {e}")
+            logger.error(f"📋 Processor: {processor_name}")
+            logger.exception(f"Full traceback for {description} error:")
             return False
 
     async def wait_for_queues_empty(self, queue_names: List[str], timeout: int = 300) -> bool:
