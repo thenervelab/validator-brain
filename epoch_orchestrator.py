@@ -628,16 +628,17 @@ class EpochOrchestrator:
                     WHERE pr.file_hash IS NOT NULL 
                     AND pr.file_hash != ''
                     AND NOT EXISTS (
-                        SELECT 1 FROM pending_assignment_file paf 
-                        WHERE paf.owner = pr.owner 
-                        AND paf.cid = pr.file_hash
+                        SELECT 1 FROM file_assignments fa 
+                        WHERE fa.owner = pr.owner 
+                        AND fa.cid = pr.file_hash
                     )
                 """)
 
-                # Also check for files in the processing queue
+                # Check for files that are in file_assignments but not yet assigned to miners
                 pending_assignments = await conn.fetchval("""
-                    SELECT COUNT(*) FROM pending_assignment_file 
-                    WHERE status = 'pending'
+                    SELECT COUNT(*) FROM file_assignments 
+                    WHERE miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
+                      AND miner4 IS NULL AND miner5 IS NULL
                 """)
 
                 logger.info(
@@ -664,8 +665,9 @@ class EpochOrchestrator:
         # Final verification
         async with self.db_pool.acquire() as conn:
             processed_files = await conn.fetchval("""
-                SELECT COUNT(*) FROM pending_assignment_file 
-                WHERE status = 'processed' AND file_size_bytes IS NOT NULL
+                SELECT COUNT(*) FROM file_assignments 
+                WHERE miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
+                  AND miner4 IS NULL AND miner5 IS NULL
             """)
             failed_files = await conn.fetchval("""
                 SELECT COUNT(*) FROM pending_assignment_file 
