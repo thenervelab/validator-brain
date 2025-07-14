@@ -240,12 +240,13 @@ def _submit_single_batch(
                 files_count = profile.get("files_count", 0)
                 files_size = profile.get("files_size", 0)
                 
-                # Check for valid numeric types and handle potential NaN/infinity
-                if not isinstance(files_count, (int, float)) or files_count < 0 or not str(files_count).replace('.', '').isdigit():
+                # Check for valid numeric types and handle potential NaN/infinity (including decimal.Decimal from PostgreSQL)
+                import decimal
+                if not isinstance(files_count, (int, float, decimal.Decimal)) or files_count < 0:
                     logger.warning(f"Skipping miner profile {i}: invalid files_count {files_count} (type: {type(files_count)})")
                     continue
                 
-                if not isinstance(files_size, (int, float)) or files_size < 0 or not str(files_size).replace('.', '').isdigit():
+                if not isinstance(files_size, (int, float, decimal.Decimal)) or files_size < 0:
                     logger.warning(f"Skipping miner profile {i}: invalid files_size {files_size} (type: {type(files_size)})")
                     continue
                 
