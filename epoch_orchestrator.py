@@ -344,10 +344,19 @@ class EpochOrchestrator:
                     logger.error("🚨 No STDERR output - processor may have failed silently")
                 return False
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             logger.error(f"❌ {description} timed out after 10 minutes")
             logger.error(f"📋 Processor: {processor_name}")
             logger.error("⏰ This may indicate the processor is stuck or processing too much data")
+            
+            # Log any output that was captured before the timeout
+            if hasattr(e, 'stdout') and e.stdout:
+                logger.error(f"📄 STDOUT (before timeout): {e.stdout}")
+            if hasattr(e, 'stderr') and e.stderr:
+                logger.error(f"🚨 STDERR (before timeout): {e.stderr}")
+            else:
+                logger.error("🚨 No STDERR output captured before timeout")
+            
             return False
         except Exception as e:
             logger.error(f"❌ Error running {description}: {e}")
