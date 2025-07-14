@@ -460,17 +460,33 @@ async def collect_miner_profiles_for_submission(db_pool) -> List[Dict[str, Any]]
     """
     try:
         async with db_pool.acquire() as conn:
-            # Get pending miner profiles that are published
+            # Get pending miner profiles with dynamically calculated file counts and sizes
             query = """
             SELECT 
-                node_id as miner_node_id,
-                cid,
-                files_count,
-                files_size
-            FROM pending_miner_profile
-            WHERE status = 'published'
-            AND cid IS NOT NULL
-            ORDER BY node_id
+                pmp.node_id as miner_node_id,
+                pmp.cid,
+                COALESCE(
+                    (SELECT COUNT(*) 
+                     FROM file_assignments fa 
+                     JOIN files f ON fa.cid = f.cid 
+                     WHERE (fa.miner1 = pmp.node_id OR fa.miner2 = pmp.node_id OR fa.miner3 = pmp.node_id 
+                            OR fa.miner4 = pmp.node_id OR fa.miner5 = pmp.node_id)
+                     AND f.size IS NOT NULL), 
+                    0
+                ) as files_count,
+                COALESCE(
+                    (SELECT SUM(f.size) 
+                     FROM file_assignments fa 
+                     JOIN files f ON fa.cid = f.cid 
+                     WHERE (fa.miner1 = pmp.node_id OR fa.miner2 = pmp.node_id OR fa.miner3 = pmp.node_id 
+                            OR fa.miner4 = pmp.node_id OR fa.miner5 = pmp.node_id)
+                     AND f.size IS NOT NULL), 
+                    0
+                ) as files_size
+            FROM pending_miner_profile pmp
+            WHERE pmp.status = 'published'
+            AND pmp.cid IS NOT NULL
+            ORDER BY pmp.node_id
             """
             
             rows = await conn.fetch(query)
