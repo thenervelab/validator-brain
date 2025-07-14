@@ -119,7 +119,7 @@ async def fetch_ipfs_file_size(cid: str, ipfs_node_url: str = None) -> Optional[
             response = await client.post(stat_url, params=params, timeout=10.0)
             response.raise_for_status()
             stats = response.json()
-            size = stats.get("Size") # Use 'Size' from files/stat
+            size = stats.get("CumulativeSize") # Use 'CumulativeSize' for actual IPFS storage size
             if size is not None:
                 logger.info(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
                 return int(size)

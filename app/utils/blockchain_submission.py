@@ -405,11 +405,17 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
             SELECT DISTINCT
                 pr.owner as storage_request_owner,
                 pr.request_hash as storage_request_file_hash,
-                COALESCE(f.size, 0) as file_size,
+                COALESCE(
+                    (SELECT SUM(f.size) 
+                     FROM file_assignments fa 
+                     JOIN files f ON fa.cid = f.cid 
+                     WHERE fa.owner = pr.owner 
+                     AND f.size IS NOT NULL), 
+                    0
+                ) as file_size,
                 pup.cid as user_profile_cid
             FROM pinning_requests pr
             LEFT JOIN pending_user_profile pup ON pr.owner = pup.owner AND pup.status = 'published'
-            LEFT JOIN files f ON pr.file_hash = f.cid
             WHERE pr.request_hash IS NOT NULL
             AND EXISTS (
                 SELECT 1 FROM file_assignments fa 
