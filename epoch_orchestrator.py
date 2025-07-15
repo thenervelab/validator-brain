@@ -106,6 +106,8 @@ import sys
 import time
 from typing import List
 
+from rabbitmq import user_profile_processor
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -474,7 +476,7 @@ class EpochOrchestrator:
         """Refresh user profiles data."""
         logger.info("🔄 Refreshing user profiles")
 
-        success = self.run_processor('user_profile_processor.py', 'User profiles refresh')
+        success = await user_profile_processor.main()
 
         if success:
             # Wait for user profile consumer to process
