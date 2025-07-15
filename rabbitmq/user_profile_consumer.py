@@ -176,9 +176,22 @@ class UserProfileConsumer:
                         ON CONFLICT (cid) DO NOTHING
                     """, file_cid, file_name, file_size, datetime.utcnow())
                     
-                    # Update file_assignments table
-                    # Pad miner_ids to 5 elements
-                    miners_padded = (miner_ids + [None] * 5)[:5]
+                    # Filter out miners that don't exist in registration table
+                    valid_miners = []
+                    for miner_id in miner_ids:
+                        if miner_id:
+                            # Check if miner exists in registration table
+                            exists = await conn.fetchval("""
+                                SELECT 1 FROM registration WHERE node_id = $1 LIMIT 1
+                            """, miner_id)
+                            if exists:
+                                valid_miners.append(miner_id)
+                            else:
+                                logger.warning(f"⚠️ INVALID_MINER: account={account_short} CID={file_cid_short} miner={miner_id} not in registration - skipping for reassignment")
+                    
+                    # Update file_assignments table with only valid miners (empty slots will be reassigned later)
+                    # Pad valid_miners to 5 elements
+                    miners_padded = (valid_miners + [None] * 5)[:5]
                     
                     await conn.execute("""
                         INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
@@ -194,7 +207,7 @@ class UserProfileConsumer:
                         miners_padded[2], miners_padded[3], miners_padded[4])
                     
                     processed_count += 1
-                    logger.info(f"✅ HISTORICAL_FILE_STORED: account={account_short} CID={file_cid_short} miners={len(miner_ids)}")
+                    logger.info(f"✅ HISTORICAL_FILE_STORED: account={account_short} CID={file_cid_short} miners={len(valid_miners)}/{len(miner_ids)} valid")
                     
                 except Exception as e:
                     logger.error(f"Error processing file in profile for {account}: {e}")
