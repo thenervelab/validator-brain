@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 from app.utils.config import IPFS_GATEWAY
-from substrate_fetcher.ipfs_profile_parser import parse_user_profile_files
+from substrate_fetcher.ipfs_profile_parser import parse_user_profile_files, bytes_to_ipfs_cid
 
 # Load environment variables
 load_dotenv()
@@ -150,13 +150,19 @@ class UserProfileConsumer:
             for file_info in files:
                 try:
                     # Extract file details
-                    file_cid = file_info.get('file_hash')  # Changed from 'cid' to 'file_hash'
+                    file_hash_bytes = file_info.get('file_hash')  # This is a byte array
                     file_name = file_info.get('file_name', 'unknown')
                     file_size = file_info.get('file_size_in_bytes', 0)  # Changed from 'size'
                     miner_ids = file_info.get('miner_ids', [])
                     
+                    if not file_hash_bytes:
+                        logger.warning(f"File without file_hash in profile for {account}")
+                        continue
+                    
+                    # Convert byte array to CID string
+                    file_cid = bytes_to_ipfs_cid(file_hash_bytes)
                     if not file_cid:
-                        logger.warning(f"File without CID in profile for {account}")
+                        logger.warning(f"Failed to convert file_hash to CID for {account}")
                         continue
                     
                     # 🔍 DEBUG: Log what CID format we're storing
