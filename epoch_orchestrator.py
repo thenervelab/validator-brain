@@ -472,17 +472,12 @@ class EpochOrchestrator:
 
         return success
 
-    async def refresh_user_profiles(self) -> bool:
+    async def refresh_user_profiles(self):
         """Refresh user profiles data."""
         logger.info("🔄 Refreshing user profiles")
 
-        success = await user_profile_processor.main()
-
-        if success:
-            # Wait for user profile consumer to process
-            await self.wait_for_queues_empty(['user_profile'], 300)
-
-        return success
+        await user_profile_processor.main()
+        await self.wait_for_queues_empty(['user_profile'], 300)
 
     async def perform_health_checks(self) -> bool:
         """Perform miner health checks."""
@@ -1569,17 +1564,7 @@ class EpochOrchestrator:
             logger.info(
                 f"   Current block: {self.current_block}, next refresh in {blocks_until_refresh} blocks")
 
-        # Execute tasks
         results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        success = all(isinstance(r, bool) and r for r in results)
-
-        if success:
-            logger.info("✅ Epoch initialization completed successfully")
-        else:
-            logger.error("❌ Epoch initialization failed")
-
-        return success
 
     async def non_validator_workflow(self):
         """Execute non-validator workflow."""
@@ -1595,23 +1580,14 @@ class EpochOrchestrator:
         # Initialize epoch data if not done
         if not self.initialization_completed:
             logger.info("🚀 Non-validator: Starting epoch initialization...")
-            success = await self.epoch_initialization()
-            if success:
-                self.initialization_completed = True
-                logger.info("✅ Non-validator: Epoch initialization completed")
-            else:
-                logger.error("❌ Non-validator: Failed to initialize epoch data")
-                return
+            await self.epoch_initialization()
+            self.initialization_completed = True
 
         # Periodically refresh user profiles to stay current (every ~20 blocks)
         if block_position % 20 == 0 and block_position > 10:  # Every 20 blocks after initialization
             logger.info(
                 "🔄 Non-validator: Refreshing user profiles to stay current with network changes")
-            profile_success = await self.refresh_user_profiles()
-            if profile_success:
-                logger.info("✅ Non-validator: User profiles refreshed successfully")
-            else:
-                logger.warning("⚠️ Non-validator: User profile refresh failed")
+            await self.refresh_user_profiles()
 
         # NON-VALIDATOR: Can perform health checks at any time (no blockchain submission deadline)
         if not self.health_checks_completed:
@@ -1718,13 +1694,9 @@ class EpochOrchestrator:
         # Phase 1: Initialization (ALWAYS run if not completed)
         if not self.initialization_completed:
             logger.info(f"🚀 Validator starting initialization (block: {block_position}/99)")
-            success = await self.epoch_initialization()
-            if success:
-                self.initialization_completed = True
-                logger.info("✅ Phase 1 complete: Initialization")
-            else:
-                logger.error("❌ Initialization failed, will retry next cycle.")
-            return
+            await self.epoch_initialization()
+            self.initialization_completed = True
+
 
             # Phase 2: CRITICAL TIMING - Health checks ONLY at epoch beginning
         elif self.initialization_completed and not self.health_checks_completed:

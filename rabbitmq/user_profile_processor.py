@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import sys
-from typing import List, Tuple, Dict, Any
+from typing import List, Dict, Any
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -257,12 +257,7 @@ class UserProfileProcessor:
 async def main():
     """Main entry point for the processor."""
     processor = UserProfileProcessor()
-    
-    # For now, just run once as requested
     await processor.run_once()
-    
-    # To run continuously, uncomment:
-    # await processor.run_continuous(interval=60)
 
 
 if __name__ == "__main__":
