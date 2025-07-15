@@ -159,6 +159,16 @@ class UserProfileConsumer:
                         logger.warning(f"File without CID in profile for {account}")
                         continue
                     
+                    # 🔍 DEBUG: Log what CID format we're storing
+                    account_short = account[:16] + "..."
+                    file_cid_short = file_cid[:20] + "..." if len(file_cid) > 20 else file_cid
+                    logger.info(f"💾 STORING_HISTORICAL_FILE: account={account_short} storing CID={file_cid_short}")
+                    
+                    # Check if this looks like a hex string (failed conversion)
+                    if file_cid and all(c in '0123456789abcdefABCDEF' for c in file_cid):
+                        if len(file_cid) > 50:  # Typical hex-encoded CID length
+                            logger.warning(f"⚠️ POTENTIAL_HEX_CID: account={account_short} CID looks like hex: {file_cid[:50]}...")
+                    
                     # Insert into files table (skip if exists)
                     await conn.execute("""
                         INSERT INTO files (cid, name, size, created_date)
@@ -184,7 +194,7 @@ class UserProfileConsumer:
                         miners_padded[2], miners_padded[3], miners_padded[4])
                     
                     processed_count += 1
-                    logger.debug(f"Processed file {file_cid} for {account}")
+                    logger.info(f"✅ HISTORICAL_FILE_STORED: account={account_short} CID={file_cid_short} miners={len(miner_ids)}")
                     
                 except Exception as e:
                     logger.error(f"Error processing file in profile for {account}: {e}")

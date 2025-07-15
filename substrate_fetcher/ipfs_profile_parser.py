@@ -19,8 +19,12 @@ def bytes_to_ipfs_cid(byte_array: List[int]) -> str:
     Returns:
         The IPFS CID as a string
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Convert each byte (ASCII value) to its corresponding character
     hex_string = ''.join(chr(byte) for byte in byte_array)
+    logger.info(f"🔍 CID_CONVERSION: byte_array -> hex_string: {hex_string[:50]}...")
     
     # The hex string appears to be the CID in hex format
     # Try to decode it as hex to bytes, then back to string
@@ -29,10 +33,13 @@ def bytes_to_ipfs_cid(byte_array: List[int]) -> str:
         cid_bytes = bytes.fromhex(hex_string)
         # Convert to string (assuming UTF-8 encoding)
         cid_string = cid_bytes.decode('utf-8')
+        logger.info(f"✅ CID_CONVERSION_SUCCESS: hex_string -> CID: {cid_string}")
         return cid_string
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError) as e:
         # If decoding fails, return the hex string as-is
         # It might already be the CID in a different format
+        logger.warning(f"❌ CID_CONVERSION_FAILED: hex_string={hex_string[:50]}... error={e}")
+        logger.warning(f"❌ CID_CONVERSION_FALLBACK: Returning hex_string as-is: {hex_string}")
         return hex_string
 
 

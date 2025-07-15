@@ -2074,6 +2074,11 @@ class EpochOrchestrator:
                         self.substrate)
                     is_validator, current_validator, epoch_start, self.substrate = is_epoch_validator(
                         self.substrate, self.our_validator_account)
+                    
+                    # 🔍 DEBUG: Temporary hack to always be the chosen validator
+                    logger.info(f"🔍 DEBUG_VALIDATOR_OVERRIDE: Original is_validator={is_validator}, current_validator={current_validator}")
+                    is_validator = True  # Force validator mode for debugging
+                    logger.info(f"🔍 DEBUG_VALIDATOR_OVERRIDE: Forced is_validator=True for debugging CID conversion issues")
 
                     # Record successful connection
                     self.record_connection_success()

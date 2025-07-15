@@ -203,6 +203,15 @@ class PinningRequestConsumer:
         
         # --- FETCH FILE SIZE ---
         logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - fetching file size")
+        
+        # 🔍 DEBUG: Log what CID format we're storing for new storage requests
+        logger.info(f"💾 STORING_NEW_FILE: account={account} storing CID={cid_short}")
+        
+        # Check if this looks like a hex string vs actual CID
+        if cid and all(c in '0123456789abcdefABCDEF' for c in cid):
+            if len(cid) > 50:  # Typical hex-encoded CID length
+                logger.warning(f"⚠️ POTENTIAL_HEX_CID_NEW: account={account} CID looks like hex: {cid[:50]}...")
+        
         file_size = await fetch_ipfs_file_size(cid)
         if file_size is None:
             logger.warning(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - could not fetch size, using 0")

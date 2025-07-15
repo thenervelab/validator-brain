@@ -150,8 +150,29 @@ class UserProfileReconstructionConsumer:
                 # Reconstruct the profile JSON
                 profile_json = await self.reconstruct_profile_json(message_data)
                 
-                # Publish to IPFS
-                published_cid = await self.publish_to_ipfs(profile_json)
+                # 🔍 DEBUG: Log profile contents before publishing
+                logger.info(f"🔍 DEBUG_PROFILE_RECONSTRUCTION: account={owner}")
+                logger.info(f"   Profile contains {len(profile_json)} files")
+                logger.info(f"   Message data files: {message_data.get('file_count', 0)}")
+                logger.info(f"   Message data total size: {message_data.get('total_size', 0)}")
+                
+                # Log sample files
+                for i, file_entry in enumerate(profile_json[:3]):
+                    file_name = file_entry.get('file_name', 'unknown')
+                    file_size = file_entry.get('file_size_in_bytes', 0)
+                    logger.info(f"   File {i+1}: {file_name} ({file_size:,} bytes)")
+                
+                if len(profile_json) > 3:
+                    logger.info(f"   ... and {len(profile_json) - 3} more files")
+                
+                # DEBUG: Comment out IPFS publishing to prevent profile overwrite
+                # published_cid = await self.publish_to_ipfs(profile_json)
+                
+                # Mock successful CID for debugging
+                import hashlib
+                profile_hash = hashlib.md5(str(profile_json).encode()).hexdigest()
+                published_cid = f"Qm{profile_hash[:44]}"  # Mock CID
+                logger.info(f"🔍 DEBUG: Would publish profile to IPFS, using mock CID: {published_cid}")
                 
                 if published_cid:
                     # Update or create the pending profile record with the actual IPFS CID

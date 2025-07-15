@@ -401,6 +401,39 @@ class UserProfileReconstructionProcessor:
                 ORDER BY f.created_at ASC
             """, owner)
             
+            # 🔍 DEBUG: Log what we found in file_assignments
+            account_short = owner[:16] + "..."
+            logger.info(f"📊 RECONSTRUCTION_QUERY: account={account_short} found {len(assigned_rows)} files in file_assignments")
+            
+            # Debug: Check if we have any files vs file_assignments entries
+            total_files = await conn.fetchval("SELECT COUNT(*) FROM files")
+            total_assignments = await conn.fetchval("SELECT COUNT(*) FROM file_assignments WHERE owner = $1", owner)
+            files_for_user = await conn.fetchval("SELECT COUNT(*) FROM files f WHERE EXISTS (SELECT 1 FROM file_assignments fa WHERE fa.cid = f.cid AND fa.owner = $1)", owner)
+            
+            logger.info(f"📊 RECONSTRUCTION_DEBUG: account={account_short}")
+            logger.info(f"   Total files in DB: {total_files}")
+            logger.info(f"   User's file_assignments: {total_assignments}")
+            logger.info(f"   Files with matching CIDs: {files_for_user}")
+            
+            if total_assignments > files_for_user:
+                logger.warning(f"⚠️ JOIN_MISMATCH: account={account_short} has {total_assignments} assignments but only {files_for_user} matching files!")
+                logger.warning(f"   This suggests CID format mismatches between files and file_assignments tables")
+                
+                # Get sample mismatched CIDs
+                mismatched_cids = await conn.fetch("""
+                    SELECT fa.cid as assignment_cid
+                    FROM file_assignments fa
+                    WHERE fa.owner = $1
+                    AND NOT EXISTS (SELECT 1 FROM files f WHERE f.cid = fa.cid)
+                    LIMIT 5
+                """, owner)
+                
+                if mismatched_cids:
+                    logger.warning(f"⚠️ SAMPLE_UNMATCHED_CIDS: account={account_short}")
+                    for row in mismatched_cids:
+                        cid_short = row['assignment_cid'][:20] + "..." if len(row['assignment_cid']) > 20 else row['assignment_cid']
+                        logger.warning(f"   Assignment CID not in files: {cid_short}")
+            
             # Get files from pending_assignment_file table (new files from storage requests)
             pending_rows = await conn.fetch("""
                 SELECT DISTINCT
