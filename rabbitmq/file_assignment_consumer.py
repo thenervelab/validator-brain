@@ -19,8 +19,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -188,7 +187,6 @@ class FileAssignmentConsumer:
         owner = assignment_data.get('owner')
         filename = assignment_data.get('filename', '')
         file_size_bytes = assignment_data.get('file_size_bytes', 0)
-        current_miners = assignment_data.get('current_miners', [])
         new_miners = assignment_data.get('new_miners', [])
         null_miner_count = assignment_data.get('null_miner_count', 0)  # From enhanced processor
         
@@ -305,7 +303,6 @@ class FileAssignmentConsumer:
         owner = assignment_data.get('owner')
         filename = assignment_data.get('filename', '')
         file_size_bytes = assignment_data.get('file_size_bytes', 0)
-        old_miners = assignment_data.get('old_miners', [])
         new_miners = assignment_data.get('new_miners', [])
         failing_miners = assignment_data.get('failing_miners', [])
         replacement_miners = assignment_data.get('replacement_miners', [])
