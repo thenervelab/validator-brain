@@ -604,7 +604,7 @@ class EpochOrchestrator:
         logger.info(
             "   Running pinning_request_processor.py to fetch ALL unassigned requests from chain...")
         from rabbitmq import pinning_request_processor
-        success = pinning_request_processor.main()
+        success = await pinning_request_processor.main()
         if not success:
             logger.error("❌ Pinning request processor script failed to run.")
             return False
