@@ -159,8 +159,17 @@ class UserProfileConsumer:
                         logger.warning(f"File without file_hash in profile for {account}")
                         continue
                     
-                    # Convert byte array to CID string
-                    file_cid = bytes_to_ipfs_cid(file_hash_bytes)
+                    # Convert byte array to CID string, handle both byte arrays and strings
+                    if isinstance(file_hash_bytes, list):
+                        # It's a byte array, convert it
+                        file_cid = bytes_to_ipfs_cid(file_hash_bytes)
+                    elif isinstance(file_hash_bytes, str):
+                        # It's already a string CID
+                        file_cid = file_hash_bytes
+                    else:
+                        logger.warning(f"Unknown file_hash type {type(file_hash_bytes)} for {account}")
+                        continue
+                    
                     if not file_cid:
                         logger.warning(f"Failed to convert file_hash to CID for {account}")
                         continue
