@@ -373,8 +373,11 @@ class SubstrateClient:
             Free balance as integer (0 if account doesn't exist)
         """
         if not self.connected:
+            logger.warning("Attempting to connect to substrate again...")
             await self.connect()
+            logger.info("Connected to substrate")
 
+        logger.info(f"Calling Credits.FreeCredits for {account_id}")
         result = await self._execute_query_async(
             self.substrate.query,
             module="Credits",
@@ -382,7 +385,7 @@ class SubstrateClient:
             params=[account_id],
 
         )
-
+        logger.info(f"Got result back for {account_id}={result}")
         if not result or result.value is None:
             return 0
 
