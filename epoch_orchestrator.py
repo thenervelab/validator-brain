@@ -751,32 +751,36 @@ class EpochOrchestrator:
             # Note: pinning_requests table should now contain original storage request hashes
             # from the consumer processing ALL blockchain requests (assigned + unassigned)
 
-            # Update file_assignments with assigned miners
+            # Update file_assignments with all 5 miners at once using bulk UPDATE
             logger.info("💾 Step 3c: Updating file assignments in database...")
+            logger.info(f"💾 Bulk updating {len(user_profiles)} file assignments with all 5 miners...")
+            
+            # Prepare bulk data for all 5 miners at once
+            bulk_data = []
+            for profile in user_profiles:
+                file_cid = profile['file_hash']
+                owner = profile['user_id']
+                assigned_miners = profile.get('assigned_miners', [])
+                
+                # Assign miners to miner1, miner2, miner3, miner4, miner5 slots
+                miner_slots = [None] * 5
+                for i, miner_id in enumerate(assigned_miners[:5]):  # Max 5 miners
+                    miner_slots[i] = miner_id
+                
+                bulk_data.append((file_cid, owner, miner_slots[0], miner_slots[1], 
+                               miner_slots[2], miner_slots[3], miner_slots[4]))
+            
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
-                    assignments_updated = 0
-
-                    # Process each user profile and update file_assignments
-                    for profile in user_profiles:
-                        file_cid = profile['file_hash']
-                        owner = profile['user_id']
-                        assigned_miners = profile.get('assigned_miners', [])
-
-                        # Update file_assignments with assigned miners
-                        # Assign miners to miner1, miner2, miner3, miner4, miner5 slots
-                        miner_slots = [None] * 5
-                        for i, miner_id in enumerate(assigned_miners[:5]):  # Max 5 miners
-                            miner_slots[i] = miner_id
-
-                        await conn.execute("""
-                            UPDATE file_assignments 
-                            SET miner1 = $3, miner2 = $4, miner3 = $5, miner4 = $6, miner5 = $7,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE cid = $1 AND owner = $2
-                        """, file_cid, owner, miner_slots[0], miner_slots[1], miner_slots[2],
-                                           miner_slots[3], miner_slots[4])
-                        assignments_updated += 1
+                    # Use executemany for bulk updates
+                    assignments_updated = await conn.executemany("""
+                        UPDATE file_assignments 
+                        SET miner1 = $3, miner2 = $4, miner3 = $5, miner4 = $6, miner5 = $7,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE cid = $1 AND owner = $2
+                    """, bulk_data)
+                    
+                    logger.info(f"💾 Bulk update completed - {len(bulk_data)} assignments updated with all 5 miners")
 
                     # Also store in storage_requests table for blockchain submission
                     await conn.execute("DELETE FROM storage_requests")

@@ -305,15 +305,15 @@ class FileAvailabilityManager:
             # Top failing miners
             top_failing_miners = await conn.fetch("""
                 SELECT 
-                    miner_id,
+                    ff.miner_id,
                     COUNT(*) as failure_count,
-                    availability_score,
-                    consecutive_failures,
-                    is_active
+                    ma.availability_score,
+                    ma.consecutive_failures,
+                    ma.is_active
                 FROM file_failures ff
                 JOIN miner_availability ma ON ff.miner_id = ma.miner_id
                 WHERE ff.detected_at > $1 AND ff.resolved_at IS NULL
-                GROUP BY miner_id, availability_score, consecutive_failures, is_active
+                GROUP BY ff.miner_id, ma.availability_score, ma.consecutive_failures, ma.is_active
                 ORDER BY failure_count DESC
                 LIMIT 10
             """, cutoff_time)

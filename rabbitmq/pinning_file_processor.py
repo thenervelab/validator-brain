@@ -88,14 +88,28 @@ class PinningFileProcessor:
         Fetch file content from IPFS and parse as JSON.
         
         Args:
-            file_hash: The IPFS CID of the file to fetch
+            file_hash: The IPFS CID of the file to fetch (may be hex-encoded)
             
         Returns:
             List of file dictionaries or None if failed
         """
         try:
+            # Convert hex file_hash to CID if needed
+            cid = file_hash
+            if isinstance(file_hash, str) and len(file_hash) > 40:
+                try:
+                    # Try to decode as hex to get the actual CID
+                    if file_hash.startswith('0x'):
+                        cid = bytes.fromhex(file_hash[2:]).decode('utf-8')
+                    else:
+                        cid = bytes.fromhex(file_hash).decode('utf-8')
+                    logger.debug(f"Converted hex file_hash to CID: {file_hash[:20]}... -> {cid[:20]}...")
+                except Exception as e:
+                    logger.warning(f"Could not convert hex file_hash to CID: {e}, using as-is")
+                    cid = file_hash
+            
             gateway_url = IPFS_GATEWAY
-            file_url = f"{gateway_url}/ipfs/{file_hash}"
+            file_url = f"{gateway_url}/ipfs/{cid}"
             
             logger.info(f"Fetching file content from: {file_url}")
             
