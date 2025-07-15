@@ -24,7 +24,7 @@ async def get_files_by_offline_miner(
             fa.*,
             f.name as file_name,
             f.size as file_size,
-            f.created_date as file_created_date,
+            f.created_at as file_created_date,
             -- Count how many miners are assigned to this file
             (CASE WHEN fa.miner1 IS NOT NULL THEN 1 ELSE 0 END +
              CASE WHEN fa.miner2 IS NOT NULL THEN 1 ELSE 0 END +

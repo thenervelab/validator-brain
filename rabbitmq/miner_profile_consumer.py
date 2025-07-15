@@ -168,7 +168,7 @@ class MinerProfileConsumer:
                     
                     # Insert into files table (skip if exists)
                     await conn.execute("""
-                        INSERT INTO files (cid, name, size, created_date)
+                        INSERT INTO files (cid, name, size, created_at)
                         VALUES ($1, $2, $3, $4)
                         ON CONFLICT (cid) DO NOTHING
                     """, file_cid, file_name, file_size, datetime.utcnow())

@@ -117,7 +117,7 @@ class FileAssignmentConsumer:
                 async with conn.transaction():
                     # 1. Insert/update the file in the files table
                     await conn.execute("""
-                        INSERT INTO files (cid, name, size, created_date)
+                        INSERT INTO files (cid, name, size, created_at)
                         VALUES ($1, $2, $3, NOW())
                         ON CONFLICT (cid) DO UPDATE SET
                             name = EXCLUDED.name,
