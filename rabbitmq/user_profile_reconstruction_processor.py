@@ -12,6 +12,7 @@ import os
 from typing import Dict, List, Any
 
 import aio_pika
+import aiofiles
 import asyncpg
 from aio_pika import Message
 from substrateinterface import SubstrateInterface
@@ -568,6 +569,14 @@ class UserProfileReconstructionProcessor:
                     'total_size': total_size,
                     'block_number': self.current_block
                 }
+                
+                # Debug logging for specific user ID
+                if owner == '5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55':
+                    debug_filename = f"/tmp/debug_profile_{owner}_{self.current_block}.json"
+                    async with aiofiles.open(debug_filename, 'w') as f:
+                        await f.write(json.dumps(message_data, indent=2))
+                    logger.info(f"DEBUG: Dumped profile JSON for user {owner} to {debug_filename}")
+                    logger.info(f"DEBUG: Profile data - files: {file_count}, total_size: {total_size}, block: {self.current_block}")
                 
                 # Send to queue
                 await self.send_to_queue(message_data)

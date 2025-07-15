@@ -437,23 +437,23 @@ class EpochOrchestrator:
                     successful_pin_checks = pin_successes
 
                     # Update or insert into miner_stats (health_score is auto-calculated)
-                # Note: miner_stats table only has pin check columns, not ping columns
-                await conn.execute("""
-                    INSERT INTO miner_stats (
-                        node_id, 
-                        successful_pin_checks,
-                        total_pin_checks,
-                        updated_at
-                    )
-                    VALUES ($1, $2, $3, NOW())
-                    ON CONFLICT (node_id) 
-                    DO UPDATE SET 
-                        successful_pin_checks = $2,
-                        total_pin_checks = $3,
-                        updated_at = NOW()
-                """, node_id, successful_pin_checks, total_pin_checks)
+                    # Note: miner_stats table only has pin check columns, not ping columns
+                    await conn.execute("""
+                        INSERT INTO miner_stats (
+                            node_id, 
+                            successful_pin_checks,
+                            total_pin_checks,
+                            updated_at
+                        )
+                        VALUES ($1, $2, $3, NOW())
+                        ON CONFLICT (node_id) 
+                        DO UPDATE SET 
+                            successful_pin_checks = $2,
+                            total_pin_checks = $3,
+                            updated_at = NOW()
+                    """, node_id, successful_pin_checks, total_pin_checks)
 
-                updated_count += 1
+                    updated_count += 1
 
                 # Verify health scores were calculated
                 healthy_miners = await conn.fetchval("""
