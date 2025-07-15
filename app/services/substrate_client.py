@@ -378,12 +378,10 @@ class SubstrateClient:
             logger.info("Connected to substrate")
 
         logger.info(f"Calling Credits.FreeCredits for {account_id}")
-        result = await self._execute_query_async(
-            self.substrate.query,
+        result = self.substrate.query(
             module="Credits",
             storage_function="FreeCredits",
             params=[account_id],
-
         )
         logger.info(f"Got result back for {account_id}={result}")
         if not result or result.value is None:
