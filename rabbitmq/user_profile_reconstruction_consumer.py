@@ -165,14 +165,8 @@ class UserProfileReconstructionConsumer:
                 if len(profile_json) > 3:
                     logger.info(f"   ... and {len(profile_json) - 3} more files")
                 
-                # DEBUG: Comment out IPFS publishing to prevent profile overwrite
-                # published_cid = await self.publish_to_ipfs(profile_json)
-                
-                # Mock successful CID for debugging
-                import hashlib
-                profile_hash = hashlib.md5(str(profile_json).encode()).hexdigest()
-                published_cid = f"Qm{profile_hash[:44]}"  # Mock CID
-                logger.info(f"🔍 DEBUG: Would publish profile to IPFS, using mock CID: {published_cid}")
+                # Publish profile to IPFS
+                published_cid = await self.publish_to_ipfs(profile_json)
                 
                 if published_cid:
                     # Update or create the pending profile record with the actual IPFS CID
