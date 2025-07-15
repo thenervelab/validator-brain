@@ -79,23 +79,9 @@ class NodeMetricsProcessor:
             Parsed metrics dictionary or None if data is invalid
         """
         try:
-            # AGGRESSIVE DEBUGGING: Log the raw metrics data to see its structure
-            logger.info(f"DEBUG: Raw metrics data for {miner_id}: {json.dumps(metrics_data, indent=2)}")
-
-            # Handle both camelCase and snake_case field names
-            ipfs_repo_size = metrics_data.get('ipfs_repo_size', metrics_data.get('ipfsRepoSize'))
+            ipfs_repo_size = metrics_data.get('ipfs_repo_size')
+            ipfs_storage_max = metrics_data.get('ipfs_storage_max')
             
-            # Try various keys for storage max
-            ipfs_storage_max = (
-                metrics_data.get('ipfs_storage_max') or
-                metrics_data.get('ipfsStorageMax') or
-                metrics_data.get('storage_capacity') or
-                metrics_data.get('storageCapacity') or
-                metrics_data.get('max_storage') or
-                metrics_data.get('maxStorage')
-            )
-            
-            # Default to 0 if any required field is missing
             if ipfs_repo_size is None:
                 logger.warning(f"Missing ipfs_repo_size for miner {miner_id}, defaulting to 0")
                 ipfs_repo_size = 0
@@ -111,8 +97,8 @@ class NodeMetricsProcessor:
                 'timestamp': asyncio.get_event_loop().time()
             }
             
-        except Exception as e:
-            logger.error(f"Error parsing metrics for miner {miner_id}: {e}")
+        except Exception:
+            logger.exception(f"Error parsing metrics for miner {metrics_data}")
             return None
     
     async def fetch_and_queue_metrics(self):
