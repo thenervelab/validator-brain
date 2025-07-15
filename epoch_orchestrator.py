@@ -1,103 +1,4 @@
 #!/usr/bin/env python3
-"""
-Epoch Orchestrator v2.2.0
-
-CRITICAL TIMING FIX IN v2.2.0:
-- 🚨 FIXED: Blockchain submission timing moved to block ~90 (was happening too early at block 48-60)
-- ✅ REMOVED: Immediate submission after profile reconstruction
-- ✅ ENHANCED: Phase 5 now runs at blocks 88-95 for proper end-of-epoch timing
-- ✅ Submission happens at the END of the epoch cycle, not immediately after profiles
-- ✅ Better timing control prevents premature submissions
-
-CRITICAL FIX IN v2.1.9:
-- 🚨 FIXED: Missing network_self_healing_processor.py causing processor failures
-- ✅ ENHANCED: Flexible phase timing for connection recovery scenarios
-- ✅ RECOVERY MODE: Phases run based on dependencies, not just block timing
-- ✅ Connection resilience: Assignment/reconstruction phases run even after late recovery
-- ✅ Prevents missed profile submissions due to connection disruptions
-- ✅ Extended phase windows for better fault tolerance
-
-CRITICAL CLEANUP IN v2.1.8:
-- 🧹 CLEANED: Removed all standalone script dependencies and fallbacks
-- ✅ Pure RabbitMQ-based processor architecture (no more standalone scripts)
-- ✅ Removed network_self_healing_direct fallback to emergency_manual_assignment
-- ✅ Streamlined self-healing to use only RabbitMQ processor system
-- ✅ Cleaner, more maintainable code without script mixing
-- ✅ Production-ready scalable architecture only
-
-CRITICAL FIX IN v2.1.7:
-- 🚨 FIXED: Integrated proper RabbitMQ-based file assignment system
-- ✅ Replaced standalone SimpleFileAssigner script with scalable file_assignment_processor.py  
-- ✅ Integrated RabbitMQ-based user profile reconstruction (user_profile_reconstruction_processor.py)
-- ✅ Both user and miner profile reconstruction now use scalable RabbitMQ systems
-- ✅ Proper processor/consumer pattern following orchestrator architecture
-- ✅ Enhanced assignment verification after completion
-- ✅ Fills ANY NULL miner columns in file_assignments table
-- ✅ Complete scalable, distributed processing architecture
-
-CRITICAL FIX IN v2.1.6:
-- 🚨 ENHANCED: Transaction hash logging for blockchain submissions
-- ✅ Added detailed debugging for IpfsPallet::UpdatePinAndStorageRequests transactions  
-- ✅ Enhanced validator keypair validation with environment variable checks
-- ✅ Comprehensive data collection logging (storage requests + miner profiles)
-- ✅ Database state diagnostics when miner profiles are missing
-- ✅ Clear transaction success/failure reporting with tx hash
-
-CRITICAL FIX IN v2.1.5:
-- 🚨 FIXED: UnboundLocalError crash with block_position variable referenced before assignment
-- 🚨 FIXED: Corrupted validator_workflow method that prevented phase processing
-- ✅ Restored proper validator phase workflow (Initialization → Health → Assignment → Profiles → Submission → Cleanup)
-- ✅ ENHANCED: Immediate blockchain submission after profile reconstruction (blocks 61-75)
-- ✅ Phase 5 now serves as backup retry if Phase 4 submission fails
-- ✅ Predictable submission timing - profiles submitted immediately when ready
-
-CRITICAL FIX IN v2.1.4:
-- 🚨 FIXED: AttributeError for missing state variables (profiles_completed, submission_completed)
-- ✅ Properly initialize all workflow state variables in __init__ method
-- ✅ Prevents runtime crashes during validator workflow execution
-
-CRITICAL FIX IN v2.1.3:
-- 🚨 FIXED: Validator state confusion during connection recovery
-- ✅ Enhanced role transition detection with proper state persistence
-- ✅ Connection lag tolerance prevents "dropping state" issues
-- ✅ Improved startup safety mechanism for mid-epoch validator detection
-
-CRITICAL FIX IN v2.1.2:
-- 🚨 FIXED: Connection recovery resilience with validator state persistence
-- ✅ Enhanced connection failure handling to prevent processing interruption
-- ✅ Improved role transition detection across connection failures
-- ✅ Better startup timing detection for mid-epoch scenarios
-
-Previous fixes and enhancements in v2.1.0 and v2.1.1 maintained for stability
-and compatibility. This orchestrator now provides a complete, resilient epoch
-processing workflow with proper error handling, connection recovery, and
-comprehensive blockchain submission capabilities.
-
-This is the main orchestrator that manages the entire IPFS Service Validator application
-based on whether we are the current epoch validator or not.
-
-OPTIMIZED EPOCH WORKFLOW (100 blocks):
-- Phase 1 (0-5): Initialization 
-- Phase 2 (6-35): Health Checks
-- Phase 2.5 (sequential): Health Score Processing
-- Phase 2.75 (sequential): Network Self-Healing (fix broken assignments)
-- Phase 3 (sequential): File Assignments (new storage requests)  
-- Phase 4 (sequential): Profile Reconstruction
-- Phase 5 (76-90): Blockchain Submission (EARLY - before block 95 deadline!)
-- Phase 6 (91-99): Cleanup & Summary
-
-Non-Validator Mode:
-- Can start processing immediately (no epoch timing restrictions)
-- Performs health checks and submits to chain
-- Helps maintain network availability
-
-Validator Mode:
-- Follows strict phase timing for epoch processing
-- Enhanced connection resilience prevents state loss during network issues
-- FIXED: Maintains validator state across connection failures
-- Must complete blockchain submission before block 95
-"""
-
 import asyncio
 import logging
 import os
@@ -106,7 +7,11 @@ import sys
 import time
 from typing import List
 
-from rabbitmq import user_profile_processor
+from rabbitmq import pinning_request_processor
+from rabbitmq import user_profile_processor, user_profile_reconstruction_processor, \
+    miner_profile_reconstruction_processor, network_self_healing_processor, \
+    availability_manager_processor, registration_processor, node_metrics_processor, \
+    pinning_file_processor
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -447,30 +352,21 @@ class EpochOrchestrator:
             await asyncio.sleep(wait_time)
             return True
 
-    async def refresh_registration_data(self) -> bool:
+    async def refresh_registration_data(self):
         """Refresh registration table with new data."""
         logger.info("🔄 Refreshing registration data")
 
         # Clear and refill registration table
-        success = self.run_processor('registration_processor.py', 'Registration data refresh')
+        await registration_processor.main()
+        await self.wait_for_queues_empty(['registration_latest'], 120)
 
-        if success:
-            # Wait for registration consumer to process
-            await self.wait_for_queues_empty(['registration_latest'], 120)
-
-        return success
-
-    async def refresh_node_metrics(self) -> bool:
+    async def refresh_node_metrics(self):
         """Refresh node metrics data."""
         logger.info("🔄 Refreshing node metrics")
 
-        success = self.run_processor('node_metrics_processor.py', 'Node metrics refresh')
+        await node_metrics_processor.main()
+        await self.wait_for_queues_empty(['node_metrics_latest'], 120)
 
-        if success:
-            # Wait for node metrics consumer to process
-            await self.wait_for_queues_empty(['node_metrics_latest'], 120)
-
-        return success
 
     async def refresh_user_profiles(self):
         """Refresh user profiles data."""
@@ -600,27 +496,15 @@ class EpochOrchestrator:
         # Step 1: Run the processor to fetch requests from the chain and put them on the queue
         logger.info(
             "   Running pinning_request_processor.py to fetch ALL unassigned requests from chain...")
-        from rabbitmq import pinning_request_processor
-        success = await pinning_request_processor.main()
-        if not success:
-            logger.error("❌ Pinning request processor script failed to run.")
-            return False
+        await pinning_request_processor.main()
         logger.info("   ✅ Pinning request processor completed.")
-
-        # Step 2: Wait for the consumer to process the messages from the queue
         logger.info("   ⏳ Waiting for 'pinning_request' queue to be processed...")
         await self.wait_for_queues_empty(['pinning_request'], 300)
         logger.info("   ✅ 'pinning_request' queue processed.")
 
         # Step 3: Now, run the file processor to get file sizes for the new requests
         logger.info("   📁 Running pinning_file_processor.py to get file sizes...")
-        success = self.run_processor('pinning_file_processor.py', 'Pinning files processing')
-        if not success:
-            logger.error("❌ Pinning file processor script failed to run.")
-            return False
-        logger.info("   ✅ Pinning file processor completed.")
-
-        # Step 4: Wait for the file consumer to process the files and write to the 'files' table
+        await pinning_file_processor.main()
         logger.info("   ⏳ Waiting for 'pinning_file_processing' queue to be processed...")
         await self.wait_for_queues_empty(['pinning_file_processing'], 600)
         logger.info("   ✅ 'pinning_file_processing' queue processed.")
@@ -668,16 +552,8 @@ class EpochOrchestrator:
                     logger.info("✅ ALL pinning files processed successfully!")
                     break
 
-        success = self.run_processor('pinning_file_processor.py',
-                                     f'Pinning files processing (Round {total_rounds})')
-
-        if success:
-            # Wait for pinning file consumer to process
-            await self.wait_for_queues_empty(['pinning_file_processing'], 600)
-            logger.info(f"✅ Pinning files round {total_rounds} completed")
-        else:
-            logger.error(f"❌ Pinning files round {total_rounds} failed")
-            return False
+        await pinning_file_processor.main()
+        await self.wait_for_queues_empty(['pinning_file_processing'], 600)
 
         if total_rounds >= max_rounds:
             logger.warning(f"⚠️ Reached maximum rounds ({max_rounds}) for pinning files processing")
@@ -994,192 +870,12 @@ class EpochOrchestrator:
             logger.exception("Full traceback:")
             return False
 
-    # DISABLED: Network rebalancing functionality
-    # async def run_network_rebalancing(self) -> bool:
-    async def run_network_rebalancing_DISABLED(self) -> bool:
-        """
-        Run network rebalancing ONLY when there are offline/unhealthy miners.
-        This is targeted rebalancing - only when actually needed, not on every validator cycle.
-        """
-        try:
-            # STEP 1: Check if rebalancing is actually needed
-            async with self.db_pool.acquire() as conn:
-                # Check for miners that have gone offline or become unhealthy
-                offline_miners = await conn.fetch("""
-                    SELECT DISTINCT fa.miner1 as miner_id, 'miner1' as position FROM file_assignments fa
-                    WHERE fa.miner1 IS NOT NULL 
-                      AND NOT EXISTS (
-                          SELECT 1 FROM miner_epoch_health meh 
-                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
-                          WHERE meh.node_id = fa.miner1 
-                            AND (
-                                -- Check health score from miner_stats if available
-                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
-                                -- OR check recent activity in miner_epoch_health
-                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
-                                 CASE 
-                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
-                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
-                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
-                                 END >= 70.0)
-                            )
-                      )
-                    UNION
-                    SELECT DISTINCT fa.miner2 as miner_id, 'miner2' as position FROM file_assignments fa
-                    WHERE fa.miner2 IS NOT NULL 
-                      AND NOT EXISTS (
-                          SELECT 1 FROM miner_epoch_health meh 
-                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
-                          WHERE meh.node_id = fa.miner2 
-                            AND (
-                                -- Check health score from miner_stats if available
-                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
-                                -- OR check recent activity in miner_epoch_health
-                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
-                                 CASE 
-                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
-                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
-                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
-                                 END >= 70.0)
-                            )
-                      )
-                    UNION
-                    SELECT DISTINCT fa.miner3 as miner_id, 'miner3' as position FROM file_assignments fa
-                    WHERE fa.miner3 IS NOT NULL 
-                      AND NOT EXISTS (
-                          SELECT 1 FROM miner_epoch_health meh 
-                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
-                          WHERE meh.node_id = fa.miner3 
-                            AND (
-                                -- Check health score from miner_stats if available
-                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
-                                -- OR check recent activity in miner_epoch_health
-                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
-                                 CASE 
-                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
-                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
-                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
-                                 END >= 70.0)
-                            )
-                      )
-                    UNION
-                    SELECT DISTINCT fa.miner4 as miner_id, 'miner4' as position FROM file_assignments fa
-                    WHERE fa.miner4 IS NOT NULL 
-                      AND NOT EXISTS (
-                          SELECT 1 FROM miner_epoch_health meh 
-                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
-                          WHERE meh.node_id = fa.miner4 
-                            AND (
-                                -- Check health score from miner_stats if available
-                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
-                                -- OR check recent activity in miner_epoch_health
-                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
-                                 CASE 
-                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
-                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
-                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
-                                 END >= 70.0)
-                            )
-                      )
-                    UNION
-                    SELECT DISTINCT fa.miner5 as miner_id, 'miner5' as position FROM file_assignments fa
-                    WHERE fa.miner5 IS NOT NULL 
-                      AND NOT EXISTS (
-                          SELECT 1 FROM miner_epoch_health meh 
-                          LEFT JOIN miner_stats ms ON meh.node_id = ms.node_id
-                          WHERE meh.node_id = fa.miner5 
-                            AND (
-                                -- Check health score from miner_stats if available
-                                (ms.health_score IS NOT NULL AND ms.health_score >= 70.0) OR
-                                -- OR check recent activity in miner_epoch_health
-                                (meh.last_activity_at >= NOW() - INTERVAL '4 hours' AND 
-                                 CASE 
-                                   WHEN (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures) = 0 THEN 100
-                                   ELSE ((meh.ping_successes + meh.pin_check_successes) * 100.0 / 
-                                         (meh.ping_successes + meh.ping_failures + meh.pin_check_successes + meh.pin_check_failures))
-                                 END >= 70.0)
-                            )
-                      )
-                """)
-
-                offline_miner_count = len(offline_miners)
-
-                # Check for recent rebalancing to avoid too frequent operations
-                recent_rebalancing = await conn.fetchval("""
-                    SELECT COUNT(*) FROM system_events 
-                    WHERE event_type = 'network_rebalancing' 
-                      AND created_at >= NOW() - INTERVAL '6 hours'
-                """)
-
-                logger.info("🔍 Rebalancing assessment:")
-                logger.info(f"   Offline/unhealthy miners: {offline_miner_count}")
-                logger.info(f"   Recent rebalancing (last 6h): {recent_rebalancing}")
-
-                # DECISION: Only rebalance if there are offline miners AND we haven't rebalanced recently
-                if offline_miner_count == 0:
-                    logger.info("✅ No offline miners detected - skipping rebalancing")
-                    return True  # Success, just nothing to do
-
-                if recent_rebalancing > 0:
-                    logger.info(
-                        f"⏳ Recent rebalancing detected ({recent_rebalancing} in last 6h) - skipping to avoid over-rebalancing")
-                    return True  # Success, just avoiding too frequent rebalancing
-
-                # Log details about offline miners
-                if offline_miners:
-                    offline_miner_ids = list(set([m['miner_id'] for m in offline_miners]))
-                    logger.warning(
-                        f"🚨 Found {len(offline_miner_ids)} offline miners needing rebalancing:")
-                    for miner_id in offline_miner_ids[:5]:  # Show first 5
-                        logger.warning(f"   - {miner_id} (offline/unhealthy)")
-
-                    if len(offline_miner_ids) > 5:
-                        logger.warning(f"   ... and {len(offline_miner_ids) - 5} more")
-
-            # STEP 2: Run targeted rebalancing for offline miners
-            logger.info("🔄 Starting TARGETED network rebalancing for offline miners...")
-
-            # Run the network rebalancing processor (it will handle the targeting)
-            success = self.run_processor('network_rebalancing_processor.py',
-                                         'Targeted network rebalancing (offline miners)')
-
-            if success:
-                logger.info("✅ Targeted network rebalancing processor completed")
-
-                # Wait for rebalancing tasks to be processed by file assignment consumer
-                logger.info("⏳ Waiting for targeted rebalancing tasks to be processed...")
-                await self.wait_for_queues_empty(['file_assignment_processing'],
-                                                 300)  # 5 minute timeout
-                logger.info("✅ Targeted network rebalancing tasks processed")
-
-                # Log rebalancing event for tracking
-                async with self.db_pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO system_events (event_type, event_data, created_at)
-                        VALUES ('network_rebalancing', $1, NOW())
-                    """,
-                                       f'{{"offline_miners": {offline_miner_count}, "trigger": "offline_miners"}}')
-
-                logger.info(
-                    f"📝 Recorded rebalancing event (handled {offline_miner_count} offline miners)")
-                return True
-            else:
-                logger.warning("⚠️ Targeted network rebalancing processor failed")
-                return False
-
-        except Exception as e:
-            logger.error(f"❌ Error during targeted network rebalancing: {e}")
-            return False
 
     async def run_availability_maintenance(self) -> bool:
         """Run file availability maintenance to handle empty assignments and failures."""
         logger.info("🛠️ Running file availability maintenance")
 
-        success = self.run_processor('availability_manager_processor.py',
-                                     'File availability maintenance')
-
-        # No queue to wait for since availability manager runs synchronously
-        return success
+        await availability_manager_processor.main()
 
     async def reconstruct_profiles(self) -> bool:
         """
@@ -1228,45 +924,15 @@ class EpochOrchestrator:
 
             # Step 2: Reconstruct user profiles using RabbitMQ system
             logger.info("👥 Step 2: Starting user profile reconstruction...")
-            user_reconstruction_success = self.run_processor(
-                'user_profile_reconstruction_processor.py', 'User profile reconstruction')
-
-            if user_reconstruction_success:
-                logger.info("✅ User profile reconstruction processor completed")
-
-                # Wait for the consumer to finish processing user profiles
-                logger.info(
-                    "⏳ Step 2a: Waiting for user profile reconstruction queue to be empty...")
-                user_queue_empty = await self.wait_for_queues_empty(['user_profile_reconstruction'],
-                                                                    600)  # 10 minute timeout
-                if user_queue_empty:
-                    logger.info("✅ User profile reconstruction queue is empty")
-                else:
-                    logger.warning("⚠️ User profile reconstruction queue timeout - continuing")
-            else:
-                logger.error("❌ User profile reconstruction processor failed")
-                return False
+            await user_profile_reconstruction_processor.main()
+            await self.wait_for_queues_empty(['user_profile_reconstruction'],
+                                             600, )  # 10 minute timeout
 
             # Step 3: Reconstruct miner profiles using RabbitMQ system
             logger.info("⛏️ Step 3: Starting miner profile reconstruction...")
-            miner_reconstruction_success = self.run_processor(
-                'miner_profile_reconstruction_processor.py', 'Miner profile reconstruction')
-
-            if miner_reconstruction_success:
-                logger.info("✅ Miner profile reconstruction processor completed")
-
-                # Wait for the consumer to finish processing miner profiles
-                logger.info(
-                    "⏳ Step 3a: Waiting for miner profile reconstruction queue to be empty...")
-                miner_queue_empty = await self.wait_for_queues_empty(
+            await miner_profile_reconstruction_processor.main()
+            await self.wait_for_queues_empty(
                     ['miner_profile_reconstruction'], 600)  # 10 minute timeout
-                if miner_queue_empty:
-                    logger.info("✅ Miner profile reconstruction queue is empty")
-                else:
-                    logger.warning("⚠️ Miner profile reconstruction queue timeout - continuing")
-            else:
-                logger.error("❌ Miner profile reconstruction processor failed")
-                return False
 
             # Step 4: CRITICAL VERIFICATION - Check that profiles were actually created
             logger.info("🔍 Step 4: Verifying profiles were reconstructed...")
@@ -1564,7 +1230,7 @@ class EpochOrchestrator:
             logger.info(
                 f"   Current block: {self.current_block}, next refresh in {blocks_until_refresh} blocks")
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def non_validator_workflow(self):
         """Execute non-validator workflow."""
@@ -1623,12 +1289,8 @@ class EpochOrchestrator:
         # Run availability maintenance (non-validators can help maintain the network)
         if self.health_checks_completed and not self.availability_completed:
             logger.info("🛠️ Non-validator: Running availability maintenance to help network...")
-            success = await self.run_availability_maintenance()
-            if success:
-                self.availability_completed = True
-                logger.info("✅ Non-validator: File availability maintenance completed")
-            else:
-                logger.warning("⚠️ Non-validator: File availability maintenance failed")
+            await self.run_availability_maintenance()
+            self.availability_completed = True
 
         # Submit health metrics to blockchain
         if self.health_checks_completed and not self.health_metrics_submitted:
@@ -2283,26 +1945,11 @@ class EpochOrchestrator:
                 logger.info(
                     f"✅ Found {health_data_count} miners with recent health data for self-healing")
 
-        try:
-            # Use RabbitMQ-based network self-healing processor
-            logger.info("🛠️ STEP 2: Running regular network self-healing processor")
-            success = self.run_processor('network_self_healing_processor.py',
-                                         'Network self-healing')
+        # Use RabbitMQ-based network self-healing processor
+        logger.info("🛠️ STEP 2: Running regular network self-healing processor")
+        await network_self_healing_processor.main()
+        await self.wait_for_queues_empty(['network_self_healing'], 300)
 
-            if success:
-                # Wait for self-healing consumer to process (shorter timeout for healing)
-                await self.wait_for_queues_empty(['network_self_healing'], 300)
-                logger.info("✅ Network self-healing completed via RabbitMQ processor")
-                return True
-            else:
-                logger.error("❌ Network self-healing processor failed")
-                logger.error(
-                    "   All self-healing attempts failed - manual intervention may be required")
-                return False
-
-        except Exception as e:
-            logger.error(f"❌ Error during network self-healing: {e}")
-            return False
 
     async def epoch_cleanup(self) -> bool:
         """

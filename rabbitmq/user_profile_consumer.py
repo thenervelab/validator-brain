@@ -156,7 +156,7 @@ class UserProfileConsumer:
                     miner_ids = file_info.get('miner_ids', [])
                     
                     if not file_hash_bytes:
-                        logger.warning(f"File without file_hash in profile for {account}")
+                        logger.warning(f"File without file_hash in profile for {account}: {file_info}")
                         continue
                     
                     # Convert byte array to CID string, handle both byte arrays and strings
