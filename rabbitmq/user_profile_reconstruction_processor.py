@@ -418,7 +418,7 @@ class UserProfileReconstructionProcessor:
             
             if total_assignments > files_for_user:
                 logger.warning(f"⚠️ JOIN_MISMATCH: account={account_short} has {total_assignments} assignments but only {files_for_user} matching files!")
-                logger.warning(f"   This suggests CID format mismatches between files and file_assignments tables")
+                logger.warning("   This suggests CID format mismatches between files and file_assignments tables")
                 
                 # Get sample mismatched CIDs
                 mismatched_cids = await conn.fetch("""
@@ -571,7 +571,7 @@ class UserProfileReconstructionProcessor:
                 }
                 
                 # Debug logging for specific user ID
-                if owner == '5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55':
+                if owner in ('5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55', '5HoreGVb17XhY3wanDvzoAWS7yHYbc5uMteXqRNTiZ6Txkqq'):
                     debug_filename = f"/tmp/debug_profile_{owner}_{self.current_block}.json"
                     async with aiofiles.open(debug_filename, 'w') as f:
                         await f.write(json.dumps(message_data, indent=2))
