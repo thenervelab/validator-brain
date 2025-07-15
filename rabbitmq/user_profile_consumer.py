@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Optional
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -73,7 +73,7 @@ class UserProfileConsumer:
             # Set prefetch count to process one message at a time
             await self.rabbitmq_channel.set_qos(prefetch_count=1)
             
-            logger.info(f"Connected to RabbitMQ")
+            logger.info("Connected to RabbitMQ")
             
         except Exception as e:
             logger.error(f"Failed to connect: {e}")

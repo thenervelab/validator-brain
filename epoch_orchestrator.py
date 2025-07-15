@@ -603,7 +603,8 @@ class EpochOrchestrator:
         # Step 1: Run the processor to fetch requests from the chain and put them on the queue
         logger.info(
             "   Running pinning_request_processor.py to fetch ALL unassigned requests from chain...")
-        success = self.run_processor('pinning_request_processor.py', 'Pinning requests processing')
+        from rabbitmq import pinning_request_processor
+        success = pinning_request_processor.main()
         if not success:
             logger.error("❌ Pinning request processor script failed to run.")
             return False
@@ -2078,7 +2079,7 @@ class EpochOrchestrator:
                     # 🔍 DEBUG: Temporary hack to always be the chosen validator
                     logger.info(f"🔍 DEBUG_VALIDATOR_OVERRIDE: Original is_validator={is_validator}, current_validator={current_validator}")
                     is_validator = True  # Force validator mode for debugging
-                    logger.info(f"🔍 DEBUG_VALIDATOR_OVERRIDE: Forced is_validator=True for debugging CID conversion issues")
+                    logger.info("🔍 DEBUG_VALIDATOR_OVERRIDE: Forced is_validator=True for debugging CID conversion issues")
 
                     # Record successful connection
                     self.record_connection_success()
