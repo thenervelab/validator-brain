@@ -212,7 +212,7 @@ class UserProfileReconstructionProcessor:
                 # Mark as assigned in pending_assignment_file
                 await conn.execute("""
                     UPDATE pending_assignment_file
-                    SET status = 'assigned', updated_at = CURRENT_TIMESTAMP
+                    SET status = 'assigned', processed_at = CURRENT_TIMESTAMP
                     WHERE cid = $1 AND owner = $2
                 """, cid, owner)
                 
