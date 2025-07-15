@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from typing import List
 
 from rabbitmq import pinning_request_processor
@@ -785,67 +786,69 @@ class EpochOrchestrator:
                     # Also store in storage_requests table for blockchain submission
                     await conn.execute("DELETE FROM storage_requests")
 
-                    # Group by owner for storage_requests
-                    user_assignments = {}
+                    # Pre-process storage_requests data for bulk insert
+                    storage_bulk_data = []
                     for profile in user_profiles:
                         owner = profile['user_id']
-                        if owner not in user_assignments:
-                            user_assignments[owner] = []
-                        user_assignments[owner].append(profile)
+                        assigned_miners = profile.get('assigned_miners', [])
 
-                    # Insert storage requests for blockchain submission
-                    for owner, profiles in user_assignments.items():
-                        for profile in profiles:
-                            assigned_miners = profile.get('assigned_miners', [])
+                        # Convert created_at (datetime) to Unix timestamp
+                        created_at_value = profile.get('created_at', 0)
+                        if hasattr(created_at_value, 'timestamp'):
+                            # It's a datetime object, convert to Unix timestamp
+                            timestamp = int(created_at_value.timestamp())
+                        elif isinstance(created_at_value, str):
+                            # It's a datetime string, parse and convert
+                            try:
+                                dt = datetime.fromisoformat(
+                                    created_at_value.replace('Z', '+00:00'))
+                                timestamp = int(dt.timestamp())
+                            except:
+                                timestamp = 0
+                        elif isinstance(created_at_value, (int, float)):
+                            # Already a timestamp
+                            timestamp = int(created_at_value)
+                        else:
+                            # Default to current time
+                            import time
+                            timestamp = int(time.time())
 
-                            # Convert created_at (datetime) to Unix timestamp
-                            created_at_value = profile.get('created_at', 0)
-                            if hasattr(created_at_value, 'timestamp'):
-                                # It's a datetime object, convert to Unix timestamp
-                                timestamp = int(created_at_value.timestamp())
-                            elif isinstance(created_at_value, str):
-                                # It's a datetime string, parse and convert
-                                from datetime import datetime
-                                try:
-                                    dt = datetime.fromisoformat(
-                                        created_at_value.replace('Z', '+00:00'))
-                                    timestamp = int(dt.timestamp())
-                                except:
-                                    timestamp = 0
-                            elif isinstance(created_at_value, (int, float)):
-                                # Already a timestamp
-                                timestamp = int(created_at_value)
-                            else:
-                                # Default to current time
-                                import time
-                                timestamp = int(time.time())
+                        storage_bulk_data.append((
+                            owner,
+                            profile['file_hash'],
+                            profile.get('file_name', ''),
+                            profile['file_size_in_bytes'],
+                            len(assigned_miners),
+                            timestamp,  # last_charged_at
+                            timestamp,  # created_at
+                            assigned_miners,
+                            self.our_validator_account,
+                            'assigned'
+                        ))
 
-                            await conn.execute("""
-                                INSERT INTO storage_requests 
-                                (owner_account, file_hash, file_name, file_size_bytes, 
-                                 total_replicas, last_charged_at, created_at, miner_ids, 
-                                 selected_validator, status)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                                ON CONFLICT (owner_account, file_hash) 
-                                DO UPDATE SET
-                                    file_name = EXCLUDED.file_name,
-                                    file_size_bytes = EXCLUDED.file_size_bytes,
-                                    total_replicas = EXCLUDED.total_replicas,
-                                    last_charged_at = EXCLUDED.last_charged_at,
-                                    miner_ids = EXCLUDED.miner_ids,
-                                    selected_validator = EXCLUDED.selected_validator,
-                                    status = EXCLUDED.status,
-                                    updated_at = CURRENT_TIMESTAMP
-                            """, owner, profile['file_hash'], profile.get('file_name', ''),
-                                               profile['file_size_in_bytes'], len(assigned_miners),
-                                               timestamp,  # Use converted timestamp
-                                               timestamp,  # Use converted timestamp
-                                               assigned_miners, self.our_validator_account,
-                                               'assigned')
+                    # Bulk insert storage requests for blockchain submission
+                    if storage_bulk_data:
+                        await conn.executemany("""
+                            INSERT INTO storage_requests 
+                            (owner_account, file_hash, file_name, file_size_bytes, 
+                             total_replicas, last_charged_at, created_at, miner_ids, 
+                             selected_validator, status)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                            ON CONFLICT (owner_account, file_hash) 
+                            DO UPDATE SET
+                                file_name = EXCLUDED.file_name,
+                                file_size_bytes = EXCLUDED.file_size_bytes,
+                                total_replicas = EXCLUDED.total_replicas,
+                                last_charged_at = EXCLUDED.last_charged_at,
+                                miner_ids = EXCLUDED.miner_ids,
+                                selected_validator = EXCLUDED.selected_validator,
+                                status = EXCLUDED.status,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, storage_bulk_data)
 
-                    logger.info(f"💾 Updated {assignments_updated} individual file assignments")
+                    logger.info(f"💾 Updated {len(bulk_data)} individual file assignments")
                     logger.info(
-                        f"💾 Created {len(user_profiles)} storage request entries for blockchain submission")
+                        f"💾 Created {len(storage_bulk_data)} storage request entries for blockchain submission")
 
             # CRITICAL ENHANCEMENT: Verify no unassigned files remain before declaring success
             logger.info("🔍 Step 4: Verifying assignment completion...")
