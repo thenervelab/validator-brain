@@ -406,12 +406,14 @@ class SubstrateClient:
             Dictionary mapping account_id -> balance (0 if account doesn't exist)
         """
         if not self.connected:
+            logger.info("Not connected to substrate, connecting...")
             await self.connect()
 
         semaphore = asyncio.Semaphore(20)  # Limit concurrent queries
 
         async def _check_single_balance(account_id: str) -> tuple[str, int]:
             async with semaphore:
+                logger.info("Fetching balances for account %s", account_id)
                 balance = await self.check_user_balance(account_id)
                 return account_id, balance
 

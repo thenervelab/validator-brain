@@ -239,6 +239,7 @@ class PinningRequestProcessor:
         # Fetch all user credits in parallel
         logger.info(f"Fetching credits for {len(unique_users)} users in parallel...")
         user_balances = await substrate_client.check_multiple_user_balances(list(unique_users))
+        logger.info(f"Finished fetching credits... {user_balances}")
 
         # Filter requests based on user credits
         storage_data = []
