@@ -1291,10 +1291,10 @@ class EpochOrchestrator:
         # Non-validators only do: health checks, availability maintenance, health metrics submission
 
         # Run availability maintenance (non-validators can help maintain the network)
-        if self.health_checks_completed and not self.availability_completed:
-            logger.info("🛠️ Non-validator: Running availability maintenance to help network...")
-            await self.run_availability_maintenance()
-            self.availability_completed = True
+        # if self.health_checks_completed and not self.availability_completed:
+        #     logger.info("🛠️ Non-validator: Running availability maintenance to help network...")
+        #     await self.run_availability_maintenance()
+        #     self.availability_completed = True
 
         # Submit health metrics to blockchain
         if self.health_checks_completed and not self.health_metrics_submitted:
