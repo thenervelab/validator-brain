@@ -410,13 +410,18 @@ class SubstrateClient:
             logger.info("Not connected to substrate, connecting...")
             await self.connect()
 
-        semaphore = asyncio.Semaphore(20)  # Limit concurrent queries
-
         async def _check_single_balance(account_id: str) -> tuple[str, int]:
-            async with semaphore:
-                logger.info("Fetching balances for account %s", account_id)
+            logger.info("Fetching balances for account %s", account_id)
+            try:
                 balance = await self.check_user_balance(account_id)
-                return account_id, balance
+            except Exception as e:
+                logger.error(f"Failed to check credits for {account_id} because {e}.. reconnecting...")
+                await self.connect()
+                logger.info("Reconnected...")
+                balance = await self.check_user_balance(account_id)
+                logger.info(f"Successfully got back balance for {account_id}")
+
+            return account_id, balance
 
         tasks = [_check_single_balance(account_id) for account_id in account_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
