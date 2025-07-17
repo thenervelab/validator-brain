@@ -416,6 +416,7 @@ class SubstrateClient:
                 balance = await self.check_user_balance(account_id)
             except Exception as e:
                 logger.error(f"Failed to check credits for {account_id} because {e}.. reconnecting...")
+                self.connected = False
                 await self.connect()
                 logger.info("Reconnected...")
                 balance = await self.check_user_balance(account_id)
