@@ -13,10 +13,11 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
 from typing import Dict, List, Any, Optional
 
 import httpx  # Add httpx for IPFS gateway requests
+
+from app.utils.config import get_ipfs_node_url
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -101,16 +102,13 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
     return None
 
 
-async def fetch_ipfs_file_size(cid: str, ipfs_node_url: str = None) -> Optional[int]:
+async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
     """Fetch file size using the local IPFS node's files/stat API."""
     if not cid:
         return None
+
+    ipfs_node_url = get_ipfs_node_url()
     
-    # Use local IPFS service by default, fall back to environment variable
-    if ipfs_node_url is None:
-        ipfs_node_url = os.getenv("IPFS_NODE_URL", "http://ipfs-service:5001")
-    
-    # Use the local IPFS node's /files/stat endpoint
     stat_url = f"{ipfs_node_url}/api/v0/files/stat"
     params = {"arg": f"/ipfs/{cid}"}
     
@@ -119,18 +117,18 @@ async def fetch_ipfs_file_size(cid: str, ipfs_node_url: str = None) -> Optional[
             response = await client.post(stat_url, params=params, timeout=10.0)
             response.raise_for_status()
             stats = response.json()
-            size = stats.get("CumulativeSize") # Use 'CumulativeSize' for actual IPFS storage size
+            # files/stat returns CumulativeSize for total size of the file
+            size = stats.get("CumulativeSize")
+            
             if size is not None:
                 logger.info(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
                 return int(size)
             else:
                 logger.warning(f"Could not determine size from files/stat for CID {cid}. Stats: {stats}")
-                # Try fallback with block/stat
-                return await _fetch_ipfs_file_size_fallback_local(cid, ipfs_node_url)
+                return 0
         except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as e:
             logger.error(f"Error fetching file size for CID {cid} via local files/stat: {e}")
-            # Try fallback with block/stat
-            return await _fetch_ipfs_file_size_fallback_local(cid, ipfs_node_url)
+            return None
 
 
 async def _fetch_ipfs_file_size_fallback_local(cid: str, ipfs_node_url: str) -> Optional[int]:
@@ -214,8 +212,10 @@ class PinningRequestConsumer:
         
         file_size = await fetch_ipfs_file_size(cid)
         if file_size is None:
-            logger.warning(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - could not fetch size, using 0")
-            file_size = 0
+            logger.warning(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - could not fetch size from IPFS, will retry later")
+            # Don't insert files with 0 size - let them be processed later when IPFS is available
+            logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - skipping file with no size")
+            return
         else:
             logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - size={file_size:,} bytes")
             
@@ -284,10 +284,14 @@ class PinningRequestConsumer:
         async def fetch_file_size_with_semaphore(assignment: Dict) -> tuple:
             async with semaphore:
                 file_size = await fetch_ipfs_file_size(assignment['cid'])
+                # Only return valid file sizes - skip files that can't be fetched
+                if file_size is None:
+                    logger.warning(f"📏 Skipping file {assignment['cid'][:16]}... - could not fetch size from IPFS")
+                    return None
                 return (
                     assignment['cid'],
                     assignment['filename'],
-                    file_size if file_size is not None else 0,
+                    file_size,
                     assignment['owner']
                 )
         
@@ -295,33 +299,43 @@ class PinningRequestConsumer:
         logger.info(f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)")
         tasks = [fetch_file_size_with_semaphore(assignment) for assignment in file_assignments]
         results = await asyncio.gather(*tasks)
-        
+
+        # Filter out None results (files that couldn't be fetched)
+        valid_results = [r for r in results if r is not None]
+        skipped_count = len(results) - len(valid_results)
+
+        if skipped_count > 0:
+            logger.warning(f"📏 Skipped {skipped_count} files due to IPFS fetch failures")
+
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 files_data = []
                 assignments_data = []
                 
-                for cid, filename, file_size, owner in results:
+                for cid, filename, file_size, owner in valid_results:
                     files_data.append((cid, filename, file_size))
                     assignments_data.append((cid, owner))
                 
-                await conn.executemany("""
-                    INSERT INTO files (cid, name, size)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (cid) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        size = EXCLUDED.size
-                """, files_data)
+                if files_data:
+                    await conn.executemany("""
+                        INSERT INTO files (cid, name, size)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (cid) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            size = EXCLUDED.size
+                    """, files_data)
+                    
+                    await conn.executemany("""
+                        INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
+                        VALUES ($1, $2, NULL, NULL, NULL, NULL, NULL)
+                        ON CONFLICT (cid) DO UPDATE SET
+                            owner = EXCLUDED.owner,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, assignments_data)
+                    
+                    logger.info(f"📏 Successfully processed {len(valid_results)} files with valid sizes")
                 
-                await conn.executemany("""
-                    INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
-                    VALUES ($1, $2, NULL, NULL, NULL, NULL, NULL)
-                    ON CONFLICT (cid) DO UPDATE SET
-                        owner = EXCLUDED.owner,
-                        updated_at = CURRENT_TIMESTAMP
-                """, assignments_data)
-                
-                return len(file_assignments)
+                return len(valid_results)
     
     async def process_pinning_request(self, request_data: Dict[str, Any]) -> bool:
         """
