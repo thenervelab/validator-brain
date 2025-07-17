@@ -339,7 +339,7 @@ class PinningRequestConsumer:
             async with semaphore:
                 fs = await fetch_ipfs_file_size(assignment["cid"])
                 # Only return valid file sizes - skip files that can't be fetched
-                if file_size is None:
+                if fs is None:
                     logger.warning(f"📏 Failed to fetch size, setting to 0")
                 return (
                     assignment["cid"],
