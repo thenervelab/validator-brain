@@ -16,6 +16,16 @@ def get_ipfs_node_url():
     return os.environ.get("IPFS_NODE_URL", "http://localhost:5001").rstrip("/")
 
 
+def get_dht_node_url():
+    """
+    Get the DHT node URL from environment variables or use default.
+
+    Returns:
+        IPFS node URL as string
+    """
+    return os.environ.get("DHT_NODE_URL", "https://dht.hippius.com").rstrip("/")
+
+
 def get_ipfs_timeout(operation_type="default"):
     """
     Get timeout duration for IPFS operations based on operation type.
