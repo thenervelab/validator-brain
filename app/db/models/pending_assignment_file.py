@@ -9,9 +9,17 @@ from app.db.connection import get_db_pool
 
 
 class PendingAssignmentFile:
-    def __init__(self, id: int, cid: str, owner: str, filename: Optional[str] = None,
-                 file_size_bytes: Optional[int] = None, created_at: datetime = None,
-                 processed_at: Optional[datetime] = None, status: str = 'pending'):
+    def __init__(
+        self,
+        id: int,
+        cid: str,
+        owner: str,
+        filename: Optional[str] = None,
+        file_size_bytes: Optional[int] = None,
+        created_at: datetime = None,
+        processed_at: Optional[datetime] = None,
+        status: str = "pending",
+    ):
         self.id = id
         self.cid = cid
         self.owner = owner
@@ -22,46 +30,58 @@ class PendingAssignmentFile:
         self.status = status
 
     @classmethod
-    async def create(cls, cid: str, owner: str,
-                     filename: Optional[str] = None) -> 'PendingAssignmentFile':
+    async def create(
+        cls, cid: str, owner: str, filename: Optional[str] = None
+    ) -> "PendingAssignmentFile":
         """Create a new pending assignment file record."""
         pool = get_db_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("""
+            row = await conn.fetchrow(
+                """
                 INSERT INTO pending_assignment_file (cid, owner, filename)
                 VALUES ($1, $2, $3)
                 RETURNING id, cid, owner, filename, file_size_bytes, created_at, processed_at, status
-            """, cid, owner, filename)
+            """,
+                cid,
+                owner,
+                filename,
+            )
 
             return cls(**dict(row))
 
     @classmethod
-    async def get_by_cid(cls, cid: str) -> Optional['PendingAssignmentFile']:
+    async def get_by_cid(cls, cid: str) -> Optional["PendingAssignmentFile"]:
         """Get a pending assignment file by CID."""
         pool = get_db_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("""
+            row = await conn.fetchrow(
+                """
                 SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status
                 FROM pending_assignment_file
                 WHERE cid = $1
-            """, cid)
+            """,
+                cid,
+            )
 
             if row:
                 return cls(**dict(row))
             return None
 
     @classmethod
-    async def get_pending_files(cls, limit: int = 100) -> List['PendingAssignmentFile']:
+    async def get_pending_files(cls, limit: int = 100) -> List["PendingAssignmentFile"]:
         """Get pending files that need size processing."""
         pool = get_db_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("""
+            rows = await conn.fetch(
+                """
                 SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status
                 FROM pending_assignment_file
                 WHERE status = 'pending' AND file_size_bytes IS NULL
                 ORDER BY created_at ASC
                 LIMIT $1
-            """, limit)
+            """,
+                limit,
+            )
 
             return [cls(**dict(row)) for row in rows]
 
@@ -71,47 +91,60 @@ class PendingAssignmentFile:
         async with pool.acquire() as conn:
             async with conn.transaction():
                 # 1. Update the pending assignment file record
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE pending_assignment_file
                     SET file_size_bytes = $1, processed_at = CURRENT_TIMESTAMP, status = 'processed'
                     WHERE id = $2
-                """, file_size_bytes, self.id)
+                """,
+                    file_size_bytes,
+                    self.id,
+                )
 
                 # 2. Upsert into the main 'files' table to ensure it has the correct size
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO files (cid, size)
                     VALUES ($1, $2)
                     ON CONFLICT (cid) DO UPDATE SET
                         size = EXCLUDED.size,
                         updated_at = CURRENT_TIMESTAMP
-                """, self.cid, file_size_bytes)
+                """,
+                    self.cid,
+                    file_size_bytes,
+                )
 
             self.file_size_bytes = file_size_bytes
             self.processed_at = datetime.now()
-            self.status = 'processed'
+            self.status = "processed"
 
     async def mark_failed(self, error_message: str = None) -> None:
         """Mark the file as failed."""
         pool = get_db_pool()
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 UPDATE pending_assignment_file
                 SET status = 'failed', processed_at = CURRENT_TIMESTAMP
                 WHERE id = $1
-            """, self.id)
+            """,
+                self.id,
+            )
 
-            self.status = 'failed'
+            self.status = "failed"
             self.processed_at = datetime.now()
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
-            'id': self.id,
-            'cid': self.cid,
-            'owner': self.owner,
-            'filename': self.filename,
-            'file_size_bytes': self.file_size_bytes,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'processed_at': self.processed_at.isoformat() if self.processed_at else None,
-            'status': self.status
-        } 
+            "id": self.id,
+            "cid": self.cid,
+            "owner": self.owner,
+            "filename": self.filename,
+            "file_size_bytes": self.file_size_bytes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "processed_at": (
+                self.processed_at.isoformat() if self.processed_at else None
+            ),
+            "status": self.status,
+        }
