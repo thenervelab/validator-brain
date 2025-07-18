@@ -11,8 +11,7 @@ from app.db.connection import get_db_pool
 class PendingAssignmentFile:
     def __init__(self, id: int, cid: str, owner: str, filename: Optional[str] = None,
                  file_size_bytes: Optional[int] = None, created_at: datetime = None,
-                 processed_at: Optional[datetime] = None, status: str = 'pending',
-                 error_message: Optional[str] = None):
+                 processed_at: Optional[datetime] = None, status: str = 'pending'):
         self.id = id
         self.cid = cid
         self.owner = owner
@@ -21,7 +20,6 @@ class PendingAssignmentFile:
         self.created_at = created_at or datetime.now()
         self.processed_at = processed_at
         self.status = status
-        self.error_message = error_message
 
     @classmethod
     async def create(cls, cid: str, owner: str,
@@ -32,7 +30,7 @@ class PendingAssignmentFile:
             row = await conn.fetchrow("""
                 INSERT INTO pending_assignment_file (cid, owner, filename)
                 VALUES ($1, $2, $3)
-                RETURNING id, cid, owner, filename, file_size_bytes, created_at, processed_at, status, error_message
+                RETURNING id, cid, owner, filename, file_size_bytes, created_at, processed_at, status
             """, cid, owner, filename)
 
             return cls(**dict(row))
@@ -43,7 +41,7 @@ class PendingAssignmentFile:
         pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status, error_message
+                SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status
                 FROM pending_assignment_file
                 WHERE cid = $1
             """, cid)
@@ -58,7 +56,7 @@ class PendingAssignmentFile:
         pool = get_db_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status, error_message
+                SELECT id, cid, owner, filename, file_size_bytes, created_at, processed_at, status
                 FROM pending_assignment_file
                 WHERE status = 'pending' AND file_size_bytes IS NULL
                 ORDER BY created_at ASC
@@ -92,18 +90,17 @@ class PendingAssignmentFile:
             self.processed_at = datetime.now()
             self.status = 'processed'
 
-    async def mark_failed(self, error_message: str) -> None:
-        """Mark the file as failed with an error message."""
+    async def mark_failed(self, error_message: str = None) -> None:
+        """Mark the file as failed."""
         pool = get_db_pool()
         async with pool.acquire() as conn:
             await conn.execute("""
                 UPDATE pending_assignment_file
-                SET status = 'failed', error_message = $1, processed_at = CURRENT_TIMESTAMP
-                WHERE id = $2
-            """, error_message, self.id)
+                SET status = 'failed', processed_at = CURRENT_TIMESTAMP
+                WHERE id = $1
+            """, self.id)
 
             self.status = 'failed'
-            self.error_message = error_message
             self.processed_at = datetime.now()
 
     def to_dict(self) -> dict:
@@ -116,6 +113,5 @@ class PendingAssignmentFile:
             'file_size_bytes': self.file_size_bytes,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'processed_at': self.processed_at.isoformat() if self.processed_at else None,
-            'status': self.status,
-            'error_message': self.error_message
+            'status': self.status
         } 

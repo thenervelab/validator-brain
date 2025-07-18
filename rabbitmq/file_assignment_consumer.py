@@ -96,10 +96,9 @@ class FileAssignmentConsumer:
                             await conn.execute("""
                                 UPDATE pending_assignment_file
                                 SET status = 'failed', 
-                                    error_message = $1,
                                     processed_at = CURRENT_TIMESTAMP
-                                WHERE id = $2
-                            """, f"Insufficient miners: {len(valid_miners)}/{min_required_miners} required", pending_file_id)
+                                WHERE id = $1
+                            """, pending_file_id)
                     except Exception as e:
                         logger.error(f"Error marking pending file as failed: {e}")
                 
