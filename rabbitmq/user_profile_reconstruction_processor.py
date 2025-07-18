@@ -125,6 +125,14 @@ class UserProfileReconstructionProcessor:
                 file_size = file_data['size']
                 filename = file_data['name']
                 
+                # Get existing miners for this file (from file_data)
+                existing_miners = file_data.get('miner_ids', [])
+                needed_miners = 5 - len(existing_miners)
+                
+                if needed_miners <= 0:
+                    # File already has 5 miners, skip
+                    continue
+                
                 # Add 20% safety margin for IPFS overhead, metadata, and growth
                 safety_margin = int(file_size * 0.2)
                 required_space = file_size + safety_margin
@@ -175,18 +183,21 @@ class UserProfileReconstructionProcessor:
                     logger.warning(f"Using {len(selected_miners)} miners as last resort for file {cid}")
                 else:
                     # Use weighted random selection for better distribution
-                    selected_miners = self._fallback_weighted_selection(scored_miners, replicas_per_file)
+                    selected_miners = self._fallback_weighted_selection(scored_miners, needed_miners)
                 
                 # Update fallback assignment tracking
                 for miner_id in selected_miners:
                     fallback_assignments[miner_id] = fallback_assignments.get(miner_id, 0) + 1
                 
-                # Update the file_data with assigned miners
-                file_data['miner_ids'] = selected_miners
-                file_data['total_replicas'] = len(selected_miners)
+                # Combine existing miners with newly selected miners
+                combined_miners = existing_miners + selected_miners
+                
+                # Update the file_data with combined miners
+                file_data['miner_ids'] = combined_miners
+                file_data['total_replicas'] = len(combined_miners)
                 
                 # Insert into file_assignments table
-                miners_padded = (selected_miners + [None] * 5)[:5]
+                miners_padded = (combined_miners + [None] * 5)[:5]
                 
                 await conn.execute("""
                     INSERT INTO files (cid, name, size, created_at)
@@ -217,7 +228,7 @@ class UserProfileReconstructionProcessor:
                     WHERE cid = $1 AND owner = $2
                 """, cid, owner)
                 
-                logger.info(f"Fallback assigned file {filename} ({cid[:16]}...) to {len(selected_miners)} miners: {', '.join(selected_miners[:3])}{'...' if len(selected_miners) > 3 else ''}")
+                logger.info(f"Fallback assigned file {filename} ({cid[:16]}...) - added {len(selected_miners)} new miners (total: {len(combined_miners)}): {', '.join(selected_miners[:3])}{'...' if len(selected_miners) > 3 else ''}")
             
             # Log fallback distribution stats
             if fallback_assignments:
@@ -355,6 +366,14 @@ class UserProfileReconstructionProcessor:
                 OR
                 -- Has new pending files from storage requests
                 cus.new_pending_files > 0
+                OR
+                -- Files with any missing miners need processing (fallback assignment)
+                EXISTS (
+                    SELECT 1 FROM file_assignments fa 
+                    WHERE fa.owner = cus.owner 
+                    AND (fa.miner1 IS NULL OR fa.miner2 IS NULL OR fa.miner3 IS NULL 
+                         OR fa.miner4 IS NULL OR fa.miner5 IS NULL)
+                )
             ORDER BY cus.owner
             """
             
@@ -492,8 +511,8 @@ class UserProfileReconstructionProcessor:
                 if row['updated_at']:
                     file_data['last_charged_at'] = row['updated_at'].isoformat()
                 
-                # Track files that need miner assignment
-                if len(miner_ids) == 0:
+                # Track files that need miner assignment (less than 5 miners)
+                if len(miner_ids) < 5:
                     unassigned_files.append(file_data)
                 
                 files.append(file_data)
