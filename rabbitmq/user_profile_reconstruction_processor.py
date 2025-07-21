@@ -237,7 +237,7 @@ class UserProfileReconstructionProcessor:
                 logger.info(f"Fallback assignment stats for {owner}: {total_fallback} assignments across {unique_miners} miners")
                 
         except Exception as e:
-            logger.error(f"Error in fallback miner assignment for user {owner}: {e}")
+            logger.exception(f"Error in fallback miner assignment for user {owner}")
     
     def _fallback_weighted_selection(self, scored_miners: List[Dict[str, Any]], count: int) -> List[str]:
         """Weighted random selection for fallback assignments."""
