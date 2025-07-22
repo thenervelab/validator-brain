@@ -28,79 +28,78 @@ from app.utils.config import NODE_URL
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger("node-metrics-processor")
 
 
 class NodeMetricsProcessor:
     """Processor for fetching and queuing node metrics."""
-    
+
     def __init__(self):
         """Initialize the processor."""
         self.substrate = None
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
-        self.queue_name = 'node_metrics_latest'
-        
+        self.queue_name = "node_metrics_latest"
+
     def connect_substrate(self):
         """Connect to the substrate chain."""
         logger.info(f"Connecting to substrate at {NODE_URL}")
         self.substrate = SubstrateInterface(url=NODE_URL)
         logger.info("Connected to substrate")
-        
+
     async def connect_rabbitmq(self):
         """Connect to RabbitMQ and declare the queue."""
-        rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://admin:admin@localhost:5672/')
-        
+        rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
+
         self.rabbitmq_connection = await aio_pika.connect_robust(rabbitmq_url)
         self.rabbitmq_channel = await self.rabbitmq_connection.channel()
-        
+
         # Declare the queue
-        await self.rabbitmq_channel.declare_queue(
-            self.queue_name,
-            durable=True
-        )
-        
+        await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
+
         logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
-    
-    def parse_node_metrics(self, miner_id: str, metrics_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+    def parse_node_metrics(
+        self, miner_id: str, metrics_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse node metrics data from substrate.
-        
+
         Args:
             miner_id: The miner's peer ID
             metrics_data: Raw metrics data from substrate
-            
+
         Returns:
             Parsed metrics dictionary or None if data is invalid
         """
         try:
-            ipfs_repo_size = metrics_data.get('ipfs_repo_size')
-            ipfs_storage_max = metrics_data.get('ipfs_storage_max')
-            
+            ipfs_repo_size = metrics_data.get("ipfs_repo_size")
+            ipfs_storage_max = metrics_data.get("ipfs_storage_max")
+
             if ipfs_repo_size is None:
-                logger.warning(f"Missing ipfs_repo_size for miner {miner_id}, defaulting to 0")
+                logger.warning(
+                    f"Missing ipfs_repo_size for miner {miner_id}, defaulting to 0"
+                )
                 ipfs_repo_size = 0
-            
+
             if ipfs_storage_max is None:
-                logger.warning(f"Missing ipfs_storage_max for miner {miner_id}, defaulting to 0")
+                logger.warning(
+                    f"Missing ipfs_storage_max for miner {miner_id}, defaulting to 0"
+                )
                 ipfs_storage_max = 0
-            
+
             return {
-                'miner_id': miner_id,
-                'ipfs_repo_size': int(ipfs_repo_size),
-                'ipfs_storage_max': int(ipfs_storage_max),
-                'timestamp': asyncio.get_event_loop().time()
+                "miner_id": miner_id,
+                "ipfs_repo_size": int(ipfs_repo_size),
+                "ipfs_storage_max": int(ipfs_storage_max),
+                "timestamp": asyncio.get_event_loop().time(),
             }
-            
+
         except Exception:
             logger.exception(f"Error parsing metrics for miner {metrics_data}")
             return None
-    
+
     async def fetch_and_queue_metrics(self):
         """
         Fetch node metrics from substrate at the latest block and queue them.
@@ -110,81 +109,85 @@ class NodeMetricsProcessor:
             block_hash = None
             block_number = self.substrate.get_block_number(block_hash)
             logger.info(f"Fetching metrics at latest block {block_number}")
-            
+
             # Query all node metrics
             result = self.substrate.query_map(
-                module='ExecutionUnit',
-                storage_function='NodeMetrics',
-                block_hash=block_hash
+                module="ExecutionUnit",
+                storage_function="NodeMetrics",
+                block_hash=block_hash,
             )
-            
+
             metrics_count = 0
-            
+
             for key, value in result:
-                if value is None or (hasattr(value, 'value') and value.value is None):
+                if value is None or (hasattr(value, "value") and value.value is None):
                     continue
-                
+
                 # The key is the peer ID - it's either a string or a byte array
-                if hasattr(key, '__str__') and str(key).startswith('12D3Koo'):
+                if hasattr(key, "__str__") and str(key).startswith("12D3Koo"):
                     # Key is already a string representation of the peer ID
                     miner_id = str(key)
-                elif hasattr(key, '__iter__'):
+                elif hasattr(key, "__iter__"):
                     # Key is a byte array - convert ASCII values to string
                     try:
-                        miner_id = ''.join(chr(b) for b in key)
+                        miner_id = "".join(chr(b) for b in key)
                     except:
                         # Fallback to string representation
                         miner_id = str(key)
                 else:
                     miner_id = str(key)
-                
+
                 # Get the actual metrics data
-                if hasattr(value, 'value'):
+                if hasattr(value, "value"):
                     metrics_data = value.value
                 else:
                     metrics_data = value
-                
+
                 # The metrics data may also contain minerId field
                 # Use it if the key extraction didn't work or is empty
                 if isinstance(metrics_data, dict):
-                    data_miner_id = metrics_data.get('miner_id', metrics_data.get('minerId'))
+                    data_miner_id = metrics_data.get(
+                        "miner_id", metrics_data.get("minerId")
+                    )
                     if data_miner_id and data_miner_id.strip():
                         # Use the miner_id from data if it's not empty
                         miner_id = str(data_miner_id)
-                
+
                 # Parse the metrics
                 parsed_metrics = self.parse_node_metrics(miner_id, metrics_data)
-                
+
                 if parsed_metrics:
                     # Add block number to the message
-                    parsed_metrics['block_number'] = block_number
-                    
+                    parsed_metrics["block_number"] = block_number
+
                     # Send to queue
                     message_body = json.dumps(parsed_metrics).encode()
-                    
+
                     await self.rabbitmq_channel.default_exchange.publish(
                         aio_pika.Message(
                             body=message_body,
-                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                         ),
-                        routing_key=self.queue_name
+                        routing_key=self.queue_name,
                     )
-                    
+
                     metrics_count += 1
                     logger.debug(f"Sent metrics for miner {miner_id}")
-            
-            logger.info(f"Successfully processed {metrics_count} node metrics at block {block_number}")
-            
+
+            logger.info(
+                f"Successfully processed {metrics_count} node metrics at block {block_number}"
+            )
+
         except Exception as e:
             logger.error(f"Error fetching/queuing node metrics: {e}")
             raise
-    
+
     async def close(self):
         """Close all connections."""
         if self.rabbitmq_connection:
             await self.rabbitmq_connection.close()
             logger.info("Closed RabbitMQ connection")
-        
+
         if self.substrate:
             self.substrate.close()
             logger.info("Closed substrate connection")
@@ -193,17 +196,17 @@ class NodeMetricsProcessor:
 async def main():
     """Main entry point."""
     processor = NodeMetricsProcessor()
-    
+
     try:
         # Connect to services
         processor.connect_substrate()
         await processor.connect_rabbitmq()
-        
+
         # Fetch and queue metrics from latest block only
         await processor.fetch_and_queue_metrics()
-        
+
         logger.info("Completed processing latest block metrics")
-        
+
     except Exception as e:
         logger.error(f"Error in processor: {e}")
         raise
@@ -212,4 +215,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

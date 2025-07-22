@@ -28,10 +28,8 @@ from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 load_dotenv()
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger("network-self-healing-processor")
 
 
 def connect_to_node(ws_url):

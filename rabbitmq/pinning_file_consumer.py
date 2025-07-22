@@ -15,10 +15,11 @@ import os
 import sys
 from typing import Dict, Any
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
 
 # Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aio_pika
 from aio_pika import IncomingMessage
@@ -27,10 +28,8 @@ from app.db.connection import init_db_pool, close_db_pool
 from app.db.models.pending_assignment_file import PendingAssignmentFile
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger("pinning-file-consumer")
 
 
 class PinningFileConsumer:

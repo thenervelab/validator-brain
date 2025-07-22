@@ -1,0 +1,25 @@
+services:
+  pinning-file-consumer:
+    profiles: [ "consumers" ]
+    build: ..
+    container_name: pinning-file-consumer
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq-substrate:5672/
+      - IPFS_NODE_URL=http://ipfs:5001
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ../:/ipfs-service-validator
+    working_dir: /ipfs-service-validator
+    command: [ "python", "rabbitmq/pinning_file_consumer.py" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - validator-network
+

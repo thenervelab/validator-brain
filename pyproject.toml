@@ -10,9 +10,9 @@ name = "ipfs-service-validator"
 version = "0.0.1"
 description = "IPFS Service Validator for Substrate-based blockchain network (Bittensor/Hippius Network)"
 requires-python = ">=3.9"
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
 authors = [
-    {name = "dubs", email = "dubs@dubs.rs"},
+    { name = "dubs", email = "dubs@dubs.rs" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

@@ -18,10 +18,8 @@ from aio_pika import Message
 from substrateinterface import SubstrateInterface
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger("user-profile-reconstruction-processor")
 
 
 class UserProfileReconstructionProcessor:
@@ -384,14 +382,13 @@ class UserProfileReconstructionProcessor:
                 WHERE COALESCE(ufs.assigned_file_count, 0) + COALESCE(ups.pending_file_count, 0) > 0
             ),
             latest_profiles AS (
-                SELECT DISTINCT ON (owner) 
-                    owner,
-                    files_count,
-                    files_size,
-                    created_at as profile_created_at
-                FROM pending_user_profile 
-                WHERE status = 'published'
-                ORDER BY owner, created_at DESC
+                SELECT 
+                    owner_account as owner,
+                    COUNT(*) as files_count,
+                    SUM(file_size_bytes) as files_size,
+                    MAX(updated_at) as profile_created_at
+                FROM user_profile
+                GROUP BY owner_account
             )
             SELECT DISTINCT
                 cus.owner,
@@ -463,7 +460,7 @@ class UserProfileReconstructionProcessor:
         """Fetch all files owned by a specific user and assign miners to any unassigned files"""
         async with self.db_pool.acquire() as conn:
             # Get files from file_assignments table (already assigned files)
-            assigned_rows = await conn.fetch(
+            assigned_files = await conn.fetch(
                 """
                 SELECT DISTINCT
                     f.cid,
@@ -485,59 +482,8 @@ class UserProfileReconstructionProcessor:
                 owner,
             )
 
-            # 🔍 DEBUG: Log what we found in file_assignments
-            account_short = owner[:16] + "..."
-            logger.info(
-                f"📊 RECONSTRUCTION_QUERY: account={account_short} found {len(assigned_rows)} files in file_assignments"
-            )
-
-            # Debug: Check if we have any files vs file_assignments entries
-            total_files = await conn.fetchval("SELECT COUNT(*) FROM files")
-            total_assignments = await conn.fetchval(
-                "SELECT COUNT(*) FROM file_assignments WHERE owner = $1", owner
-            )
-            files_for_user = await conn.fetchval(
-                "SELECT COUNT(*) FROM files f WHERE EXISTS (SELECT 1 FROM file_assignments fa WHERE fa.cid = f.cid AND fa.owner = $1)",
-                owner,
-            )
-
-            logger.info(f"📊 RECONSTRUCTION_DEBUG: account={account_short}")
-            logger.info(f"   Total files in DB: {total_files}")
-            logger.info(f"   User's file_assignments: {total_assignments}")
-            logger.info(f"   Files with matching CIDs: {files_for_user}")
-
-            if total_assignments > files_for_user:
-                logger.warning(
-                    f"⚠️ JOIN_MISMATCH: account={account_short} has {total_assignments} assignments but only {files_for_user} matching files!"
-                )
-                logger.warning(
-                    "   This suggests CID format mismatches between files and file_assignments tables"
-                )
-
-                # Get sample mismatched CIDs
-                mismatched_cids = await conn.fetch(
-                    """
-                    SELECT fa.cid as assignment_cid
-                    FROM file_assignments fa
-                    WHERE fa.owner = $1
-                    AND NOT EXISTS (SELECT 1 FROM files f WHERE f.cid = fa.cid)
-                    LIMIT 5
-                """,
-                    owner,
-                )
-
-                if mismatched_cids:
-                    logger.warning(f"⚠️ SAMPLE_UNMATCHED_CIDS: account={account_short}")
-                    for row in mismatched_cids:
-                        cid_short = (
-                            row["assignment_cid"][:20] + "..."
-                            if len(row["assignment_cid"]) > 20
-                            else row["assignment_cid"]
-                        )
-                        logger.warning(f"   Assignment CID not in files: {cid_short}")
-
             # Get files from pending_assignment_file table (new files from storage requests)
-            pending_rows = await conn.fetch(
+            pending_files = await conn.fetch(
                 """
                 SELECT DISTINCT
                     paf.cid,
@@ -566,7 +512,7 @@ class UserProfileReconstructionProcessor:
             )
 
             # Combine both sets of files
-            all_rows = list(assigned_rows) + list(pending_rows)
+            all_rows = list(assigned_files) + list(pending_files)
 
             # Convert to proper format and handle datetime serialization
             files = []
@@ -615,21 +561,11 @@ class UserProfileReconstructionProcessor:
                 await self.assign_fallback_miners(owner, unassigned_files, conn)
 
             # Log what we found for debugging
-            assigned_count = len(assigned_rows)
-            pending_count = len(pending_rows)
+            assigned_count = len(assigned_files)
+            pending_count = len(pending_files)
             logger.info(
                 f"User {owner}: Found {assigned_count} assigned files + {pending_count} pending files = {len(files)} total files"
             )
-
-            if pending_count > 0:
-                logger.info(
-                    f"Including {pending_count} files from storage requests in profile for {owner}"
-                )
-                # Log sample pending files
-                for row in pending_rows[:3]:  # Show first 3
-                    logger.info(
-                        f"  - NEW: {row['name']} ({row['cid'][:16]}...) - {row['size']:,} bytes"
-                    )
 
             return files
 

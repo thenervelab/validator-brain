@@ -28,11 +28,8 @@ from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger("pinning-request-consumer")
 
 
 def hex_to_string(hex_string: str) -> str:

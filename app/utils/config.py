@@ -2,9 +2,15 @@
 
 import os
 
+import dotenv
+
+dotenv.load_dotenv()
+
 # Blockchain node URL
 NODE_URL = os.environ.get("NODE_URL", "wss://rpc.hippius.network")
 IPFS_GATEWAY = os.environ.get("IPFS_GATEWAY", "https://get.hippius.network")
+DEBUG_VALIDATOR = os.getenv("DEBUG_IS_CHOSEN_VALI", False)
+
 
 def get_ipfs_node_url():
     """

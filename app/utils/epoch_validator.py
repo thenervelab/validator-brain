@@ -10,8 +10,10 @@ import logging
 import os
 import time
 from typing import Optional, Tuple
+
 from substrateinterface import SubstrateInterface
-from app.utils.config import NODE_URL
+
+from app.utils.config import NODE_URL, DEBUG_VALIDATOR
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,7 @@ def is_epoch_validator(substrate: SubstrateInterface, our_validator_account: str
     """
     max_retries = 3
     current_substrate = substrate
+
     
     for attempt in range(max_retries):
         try:
@@ -165,8 +168,12 @@ def is_epoch_validator(substrate: SubstrateInterface, our_validator_account: str
             logger.info(f"Our validator account: {our_validator_account}")
             
             # Check if we are the validator
-            is_validator = (current_validator == our_validator_account)
-            
+            if DEBUG_VALIDATOR:
+                logger.debug("DEBUG_VALIDATOR detected, forcing current validator status")
+                is_validator = True
+            else:
+                is_validator = (current_validator == our_validator_account)
+
             if is_validator:
                 logger.info("✅ We ARE the current epoch validator")
             else:
