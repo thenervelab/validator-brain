@@ -25,8 +25,9 @@ from app.services.storage_processor import (
 from app.services.substrate_client import fetch_current_block
 from app.services.substrate_fetcher import fetch_and_store_blockchain_data
 from app.utils.config import get_epoch_block_interval
+from app.utils.epoch_validator import get_epoch_block_position, calculate_epoch_from_block, \
+    get_epoch_start_block
 from app.utils.logging import logger
-from app.utils.epoch_validator import get_epoch_block_position, calculate_epoch_from_block, get_epoch_start_block
 
 
 class StorageRequest(BaseModel):
@@ -54,11 +55,7 @@ class StorageRequest(BaseModel):
 
                 # Extract string values
                 owner = str(owner_obj.value) if hasattr(owner_obj, "value") else str(owner_obj)
-                file_hash = (
-                    str(file_hash_obj.value)
-                    if hasattr(file_hash_obj, "value")
-                    else str(file_hash_obj)
-                )
+                file_hash = str(file_hash_obj.value) if hasattr(file_hash_obj, "value") else str(file_hash_obj)
 
                 # Base model with defaults
                 model = cls(owner_account_id=owner, file_hash=file_hash)
@@ -181,8 +178,6 @@ class ValidatorWorkflow:
         Returns:
             String indicating epoch position ('early', 'mid', or 'late')
         """
-        epoch_length = get_epoch_block_interval()
-
         # Calculate position within the epoch (0 to epoch_length-1)
         if epoch_start_block is not None:
             position_in_epoch = block_number - epoch_start_block
@@ -221,24 +216,6 @@ class ValidatorWorkflow:
         Returns:
             Tuple of (user_profiles, miner_profiles)
         """
-        # ===== STORAGE REQUEST TRACING - VALIDATOR WORKFLOW PROCESSING =====
-        logger.info(f"🎯 VALIDATOR_WORKFLOW: Processing {len(storage_requests)} storage requests from blockchain data")
-        
-        # Log sample storage requests for tracing
-        for i, req in enumerate(storage_requests[:3]):
-            try:
-                if hasattr(req, 'owner_account_id') and hasattr(req, 'file_hash'):
-                    account = req.owner_account_id[:16] + "..."
-                    file_hash = req.file_hash[:20] + "..."
-                    logger.info(f"🎯 VALIDATOR_WORKFLOW[{i+1}]: account={account} file_hash={file_hash}")
-                else:
-                    logger.info(f"🎯 VALIDATOR_WORKFLOW[{i+1}]: storage_request={str(req)[:50]}...")
-            except Exception as e:
-                logger.debug(f"Could not log storage request details: {e}")
-        
-        if len(storage_requests) > 3:
-            logger.info(f"🎯 VALIDATOR_WORKFLOW: ... and {len(storage_requests) - 3} more storage requests to process")
-
         # Process miner profiles from blockchain
         miners = []
         if miner_profiles and len(miner_profiles) > 0:
@@ -275,14 +252,6 @@ class ValidatorWorkflow:
 
         # Convert storage requests to Pydantic models using our improved model
         storage_requests_models = [StorageRequest.from_substrate(req) for req in storage_requests]
-        logger.info(f"🎯 VALIDATOR_WORKFLOW: Converted {len(storage_requests_models)} storage requests to models")
-        
-        # Log converted models for tracing
-        for i, req_model in enumerate(storage_requests_models[:3]):
-            account = req_model.owner_account_id[:16] + "..."
-            file_hash = req_model.file_hash[:20] + "..."
-            file_size = req_model.file_size
-            logger.info(f"🎯 VALIDATOR_WORKFLOW_MODEL[{i+1}]: account={account} file_hash={file_hash} size={file_size:,} bytes")
 
         # Group storage requests by owner for easier profile handling
         user_requests = {}
@@ -292,22 +261,12 @@ class ValidatorWorkflow:
                 user_requests[owner] = []
             user_requests[owner].append(request)
 
-        logger.info(f"🎯 VALIDATOR_WORKFLOW: Grouped storage requests for {len(user_requests)} users")
-        
-        # Log user groupings for tracing
-        for i, (owner, requests) in enumerate(list(user_requests.items())[:3]):
-            account = owner[:16] + "..."
-            logger.info(f"🎯 VALIDATOR_WORKFLOW_GROUP[{i+1}]: account={account} has {len(requests)} storage requests")
-        
-        if len(user_requests) > 3:
-            logger.info(f"🎯 VALIDATOR_WORKFLOW: ... and {len(user_requests) - 3} more users with storage requests")
-
         # Check if we have a large number of requests
         total_requests = sum(len(reqs) for reqs in user_requests.values())
         use_bulk_processing = total_requests > 5000
 
         if use_bulk_processing:
-            logger.info(f"Using bulk processing for {total_requests} storage requests")
+            logger.info(f"Processed {total_requests} storage requests")
             # Import bulk processing utilities
             from substrate_fetcher.bulk_processing import process_in_chunks
 
@@ -386,7 +345,9 @@ class ValidatorWorkflow:
 
             # Process in chunks
             chunk_results = await process_in_chunks(
-                all_requests, process_request_chunk, chunk_size=100,
+                all_requests,
+                process_request_chunk,
+                chunk_size=100,
             )
 
             # Convert chunk results back to the expected format
@@ -428,14 +389,7 @@ class ValidatorWorkflow:
                     selected_miners = select_miners_for_request(scored_miners, file_size)
 
                     if not selected_miners:
-                        account = owner[:16] + "..."
-                        file_hash_short = file_hash[:20] + "..."
-                        logger.warning(f"🎯 VALIDATOR_WORKFLOW_NO_MINERS: account={account} file_hash={file_hash_short} - no suitable miners found")
                         continue
-
-                    account = owner[:16] + "..."
-                    file_hash_short = file_hash[:20] + "..."
-                    logger.info(f"🎯 VALIDATOR_WORKFLOW_MINERS: account={account} file_hash={file_hash_short} - selected {len(selected_miners)} miners: {selected_miners}")
 
                     # Update miner scores to reflect this assignment
                     update_miner_scores(scored_miners, selected_miners, file_size)
@@ -485,19 +439,6 @@ class ValidatorWorkflow:
                 }
                 miner_profiles.append(miner_profile)
 
-        # ===== STORAGE REQUEST TRACING - VALIDATOR WORKFLOW COMPLETE =====
-        logger.info(
-            f"🎯 VALIDATOR_WORKFLOW_COMPLETE: Processed {len(storage_requests)} storage requests into {len(user_profiles)} user profiles and {len(miner_profiles)} miner profiles",
-        )
-        
-        # Log summary of processed profiles
-        if user_profiles:
-            for i, profile in enumerate(user_profiles[:3]):
-                account = profile.get('user_id', 'unknown')[:16] + "..."
-                file_hash = profile.get('file_hash', 'unknown')[:20] + "..."
-                miners = profile.get('assigned_miners', [])
-                logger.info(f"🎯 VALIDATOR_WORKFLOW_USER[{i+1}]: account={account} file_hash={file_hash} miners={len(miners)}")
-        
         return user_profiles, miner_profiles
 
     async def prepare_pin_requests(self, user_profiles: List[Dict]) -> List[Dict]:
@@ -643,10 +584,12 @@ class ValidatorWorkflow:
         # Convert all storage maps to dictionaries
         node_metrics = convert_storage_map_to_dict(node_metrics_raw, "ExecutionUnit.NodeMetrics")
         miner_files_size = convert_storage_map_to_dict(
-            miner_files_size_raw, "IpfsPallet.MinerTotalFilesSize",
+            miner_files_size_raw,
+            "IpfsPallet.MinerTotalFilesSize",
         )
         miner_files_pinned = convert_storage_map_to_dict(
-            miner_files_pinned_raw, "IpfsPallet.MinerTotalFilesPinned",
+            miner_files_pinned_raw,
+            "IpfsPallet.MinerTotalFilesPinned",
         )
 
         miner_profiles = []
@@ -694,9 +637,7 @@ class ValidatorWorkflow:
 
         # Process storage requests
         storage_request_data = substrate_data["IpfsPallet.UserStorageRequests"]
-        processed_data["storage_requests"] = [
-            StorageRequest.from_substrate(req) for req in storage_request_data
-        ]
+        processed_data["storage_requests"] = [StorageRequest.from_substrate(req) for req in storage_request_data]
         logger.info(f"Processed {len(processed_data['storage_requests'])} storage requests")
 
         # Process current validator
@@ -704,14 +645,14 @@ class ValidatorWorkflow:
         if isinstance(current_validator_data, dict) and "account_id" in current_validator_data:
             processed_data["current_validator"] = current_validator_data["account_id"]
         elif isinstance(current_validator_data, tuple) and len(current_validator_data) == 2:
-            processed_data["current_validator"] = current_validator_data[
-                0
-            ]  # First element is account_id
+            processed_data["current_validator"] = current_validator_data[0]  # First element is account_id
 
         return processed_data
 
     async def perform_early_epoch_actions(
-        self, substrate_data: Dict, block_position: int = None,
+        self,
+        substrate_data: Dict,
+        block_position: int = None,
     ) -> Dict:
         """
         Perform actions for early epoch position (blocks 0-5).
@@ -784,7 +725,9 @@ class ValidatorWorkflow:
         }
 
     async def perform_mid_epoch_actions(
-        self, substrate_data: Dict, block_position: int = None,
+        self,
+        substrate_data: Dict,
+        block_position: int = None,
     ) -> Dict:
         """
         Perform actions for mid-epoch position (blocks 5-40).
@@ -811,7 +754,10 @@ class ValidatorWorkflow:
         }
 
     async def perform_assignment_epoch_actions(
-        self, substrate_data: Dict, results: Dict, block_position: int = None,
+        self,
+        substrate_data: Dict,
+        results: Dict,
+        block_position: int = None,
     ) -> Dict:
         """
         Perform actions for assignment epoch position (blocks 40-98).
@@ -884,7 +830,8 @@ class ValidatorWorkflow:
 
             # Reconstruct miner profiles completely
             reconstructed_profiles = await reconstruct_miner_profiles(
-                substrate_data["miner_profiles"], health_data,
+                substrate_data["miner_profiles"],
+                health_data,
             )
 
             # Debug: Check reconstructed_profiles structure
@@ -910,15 +857,14 @@ class ValidatorWorkflow:
             )
 
             # Identify offline miners
-            offline_miners = [
-                profile for profile in reconstructed_profiles if not profile["is_online"]
-            ]
+            offline_miners = [profile for profile in reconstructed_profiles if not profile["is_online"]]
 
             # Only redistribute files if we have offline miners
             if offline_miners:
                 # Identify files that need redistribution
                 files_to_redistribute = await identify_files_for_redistribution(
-                    offline_miners, reconstructed_profiles,
+                    offline_miners,
+                    reconstructed_profiles,
                 )
 
                 # Score miners for redistribution (use miner profiles)
@@ -930,7 +876,8 @@ class ValidatorWorkflow:
 
                 # Redistribute files
                 redistribution_results = await redistribute_files(
-                    files_to_redistribute, scored_miners,
+                    files_to_redistribute,
+                    scored_miners,
                 )
 
                 # Update profiles after redistribution
@@ -968,7 +915,9 @@ class ValidatorWorkflow:
                     updated_user_profiles,
                     updated_miner_profiles,
                 ) = await update_profiles_after_redistribution(
-                    redistribution_results, user_profiles_dict, miner_profiles_dict,
+                    redistribution_results,
+                    user_profiles_dict,
+                    miner_profiles_dict,
                 )
 
                 # Convert back to list format
@@ -1025,9 +974,7 @@ class ValidatorWorkflow:
         miner_updates = await prepare_miner_profile_updates(miner_profiles_dict)
 
         # Check for offline miners
-        offline_miners = [
-            profile for profile in substrate_data["miner_profiles"] if not profile.is_online
-        ]
+        offline_miners = [profile for profile in substrate_data["miner_profiles"] if not profile.is_online]
 
         return {
             "user_profiles": user_profiles,
@@ -1041,7 +988,10 @@ class ValidatorWorkflow:
         }
 
     async def perform_cleanup_epoch_actions(
-        self, _substrate_data: Dict, _results: Dict, block_position: int = None,
+        self,
+        _substrate_data: Dict,
+        _results: Dict,
+        block_position: int = None,
     ) -> Dict:
         """
         Perform actions for cleanup epoch position (block 98+).
@@ -1070,7 +1020,10 @@ class ValidatorWorkflow:
         return {"profile_tables_cleared": True, "block_position": block_position}
 
     async def perform_validator_actions(
-        self, substrate_data: Dict, block_number: int, epoch_start_block: int = None,
+        self,
+        substrate_data: Dict,
+        block_number: int,
+        epoch_start_block: int = None,
     ) -> Dict:
         """
         Perform validator actions based on position in epoch (Rust-style).
@@ -1157,14 +1110,18 @@ class ValidatorWorkflow:
                 f"Executing assignment epoch actions (blocks 40-98, position {block_position})",
             )
             assignment_results = await self.perform_assignment_epoch_actions(
-                processed_data, results, block_position,
+                processed_data,
+                results,
+                block_position,
             )
             results.update(assignment_results)
 
             # elif epoch_position == "cleanup":
             logger.info(f"Executing cleanup epoch actions (block 98+, position {block_position})")
             cleanup_results = await self.perform_cleanup_epoch_actions(
-                processed_data, results, block_position,
+                processed_data,
+                results,
+                block_position,
             )
             results.update(cleanup_results)
 
@@ -1181,7 +1138,9 @@ class ValidatorWorkflow:
 
             # Submit pending data to blockchain
             submission_result = await submit_pending_data_to_blockchain(
-                db_pool, block_number, current_epoch,
+                db_pool,
+                block_number,
+                current_epoch,
             )
 
             # Add submission result to results
@@ -1381,13 +1340,11 @@ class ValidatorWorkflow:
 
                     # If we haven't submitted in this epoch yet and we're in the assignment phase, submit
                     epoch_position = self.determine_epoch_position(
-                        current_block.number, epoch_start_block,
+                        current_block.number,
+                        epoch_start_block,
                     )
 
-                    if (
-                        last_submission_epoch != current_epoch
-                        and epoch_position == EpochPosition.ASSIGNMENT
-                    ):
+                    if last_submission_epoch != current_epoch and epoch_position == EpochPosition.ASSIGNMENT:
                         logger.info(f"Preparing blockchain submission for epoch {current_epoch}")
 
                         # Get data from DB for submission
@@ -1398,7 +1355,8 @@ class ValidatorWorkflow:
 
                         # Update last submission epoch
                         await conn.execute(
-                            load_query("update_last_submission_epoch"), current_epoch,
+                            load_query("update_last_submission_epoch"),
+                            current_epoch,
                         )
 
                 # Check if we're the current validator (MOCKED - always true for testing)
@@ -1406,10 +1364,7 @@ class ValidatorWorkflow:
                 current_validator = None
 
                 # Handle various formats of CurrentEpochValidator
-                if (
-                    isinstance(current_validator_data, dict)
-                    and "account_id" in current_validator_data
-                ):
+                if isinstance(current_validator_data, dict) and "account_id" in current_validator_data:
                     current_validator = current_validator_data["account_id"]
                 elif isinstance(current_validator_data, tuple) and len(current_validator_data) == 2:
                     current_validator = current_validator_data[0]  # First element is account_id

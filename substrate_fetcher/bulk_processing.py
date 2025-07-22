@@ -11,7 +11,10 @@ from app.utils.logging import logger
 
 
 async def process_in_chunks(
-    items: List[Any], process_func: Callable, chunk_size: int = 100, **kwargs,
+    items: List[Any],
+    process_func: Callable,
+    chunk_size: int = 100,
+    **kwargs,
 ) -> List[Any]:
     """
     Process a large list of items in chunks.
@@ -34,15 +37,15 @@ async def process_in_chunks(
         chunk_result = await process_func(chunk, **kwargs)
         results.extend(chunk_result)
 
-        # Log progress
-        processed = min(i + chunk_size, total_items)
-        logger.info(f"Processed {processed}/{total_items} items ({processed / total_items:.1%})")
-
     return results
 
 
 async def bulk_db_insert(
-    db_pool, table_name: str, records: List[Dict], batch_size: int = 1000, upsert: bool = False,
+    db_pool,
+    table_name: str,
+    records: List[Dict],
+    batch_size: int = 1000,
+    upsert: bool = False,
 ) -> int:
     """
     Insert a large number of records into a database table efficiently.
