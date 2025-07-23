@@ -192,7 +192,7 @@ class MinerProfileReconstructionConsumer:
                         await profile_record.mark_published()
 
                     logger.info(
-                        f"Successfully processed profile {profile_cid} -> {published_cid} for miner {message_data['node_id']} {profile_json['owner']}"
+                        f"Successfully processed profile {profile_cid} -> {published_cid} for miner {message_data['node_id']}"
                     )
                 else:
                     # Mark as failed
