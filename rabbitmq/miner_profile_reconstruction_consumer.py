@@ -130,12 +130,8 @@ class MinerProfileReconstructionConsumer:
             self.process_file_parallel(file_data, node_id, block_number, selected_validator) for file_data in files_data
         ]
 
-        # Execute all file processing in parallel with concurrency limit
-        semaphore = asyncio.Semaphore(100)  # Limit concurrent IPFS requests
-
         async def process_with_semaphore(task):
-            async with semaphore:
-                return await task
+            return await task
 
         # Process files in parallel
         file_results = await asyncio.gather(*[process_with_semaphore(task) for task in tasks])
