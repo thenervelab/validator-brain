@@ -136,8 +136,51 @@ class MinerProfileReconstructionProcessor:
 
         logger.debug(f"Sent profile to queue: {profile_data['node_id']} -> {profile_data['cid']}")
 
+    async def process_single_profile_parallel(self, profile: Dict[str, Any]) -> Dict[str, str]:
+        """Process a single profile in parallel"""
+        try:
+            node_id = profile["node_id"]
+            logger.debug(f"Processing miner profile for {node_id}")
+
+            # Fetch files for this miner
+            files = await self.fetch_miner_profile_files(node_id)
+            logger.debug(f"Fetched {len(files)} files for miner {node_id}")
+
+            # Calculate file count and total size
+            file_count = len(files)
+            total_size = sum(file_data.get("size", 0) for file_data in files)
+
+            # Skip miners with no files
+            if file_count == 0:
+                logger.info(f"Skipping miner {node_id} - no files assigned")
+                return {"status": "skipped", "node_id": node_id, "reason": "no_files"}
+
+            # Generate a synthetic CID for the profile (we'll use the node_id as base)
+            profile_cid = f"profile_{node_id}"
+
+            # Prepare message data
+            message_data = {
+                "cid": profile_cid,
+                "node_id": node_id,
+                "file_count": file_count,
+                "files": files,
+                "total_size": total_size,
+                "block_number": self.current_block,
+            }
+
+            # Send to queue
+            await self.send_to_queue(message_data)
+
+            logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
+            return {"status": "success", "node_id": node_id, "file_count": file_count, "total_size": total_size}
+
+        except Exception as e:
+            logger.error(f"❌ Error processing profile for miner {profile['node_id']}: {e}")
+            logger.exception(f"Full traceback for miner {profile['node_id']} error:")
+            return {"status": "failed", "node_id": profile["node_id"], "error": str(e)}
+
     async def process_profiles(self):
-        """Main processing loop"""
+        """Main processing loop - now with parallel processing"""
         profiles = await self.fetch_miner_profiles_to_reconstruct()
 
         if not profiles:
@@ -146,53 +189,21 @@ class MinerProfileReconstructionProcessor:
 
         logger.info(f"Found {len(profiles)} miner profiles to reconstruct")
 
-        successful_profiles = 0
-        failed_profiles = 0
-        skipped_profiles = 0
+        # Process profiles in parallel with concurrency limit
+        semaphore = asyncio.Semaphore(20)  # Limit concurrent profile processing
+        
+        async def process_with_semaphore(profile):
+            async with semaphore:
+                return await self.process_single_profile_parallel(profile)
 
-        for profile in profiles:
-            try:
-                node_id = profile["node_id"]
-                logger.debug(f"Processing miner profile for {node_id}")
+        # Execute all profile processing in parallel
+        logger.info("🚀 Processing profiles in parallel...")
+        results = await asyncio.gather(*[process_with_semaphore(profile) for profile in profiles])
 
-                # Fetch files for this miner
-                files = await self.fetch_miner_profile_files(node_id)
-                logger.debug(f"Fetched {len(files)} files for miner {node_id}")
-
-                # Calculate file count and total size
-                file_count = len(files)
-                total_size = sum(file_data.get("size", 0) for file_data in files)
-
-                # Skip miners with no files
-                if file_count == 0:
-                    logger.info(f"Skipping miner {node_id} - no files assigned")
-                    skipped_profiles += 1
-                    continue
-
-                # Generate a synthetic CID for the profile (we'll use the node_id as base)
-                profile_cid = f"profile_{node_id}"
-
-                # Prepare message data
-                message_data = {
-                    "cid": profile_cid,
-                    "node_id": node_id,
-                    "file_count": file_count,
-                    "files": files,
-                    "total_size": total_size,
-                    "block_number": self.current_block,
-                }
-
-                # Send to queue
-                await self.send_to_queue(message_data)
-
-                logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
-                successful_profiles += 1
-
-            except Exception as e:
-                logger.error(f"❌ Error processing profile for miner {profile['node_id']}: {e}")
-                logger.exception(f"Full traceback for miner {profile['node_id']} error:")
-                failed_profiles += 1
-                continue
+        # Count results
+        successful_profiles = sum(1 for r in results if r["status"] == "success")
+        failed_profiles = sum(1 for r in results if r["status"] == "failed")
+        skipped_profiles = sum(1 for r in results if r["status"] == "skipped")
 
         # Enhanced summary logging
         logger.info(f"📊 Profile reconstruction summary:")

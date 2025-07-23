@@ -75,7 +75,9 @@ class MinerProfileReconstructionConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def process_file_parallel(self, file_data: Dict[str, Any], node_id: str, block_number: int, selected_validator: str) -> Optional[Dict[str, Any]]:
+    async def process_file_parallel(
+        self, file_data: Dict[str, Any], node_id: str, block_number: int, selected_validator: str
+    ) -> Optional[Dict[str, Any]]:
         """Process a single file with potential IPFS size re-fetching"""
         # Convert CID back to hex-encoded byte array
         cid = file_data["cid"]
@@ -125,13 +127,12 @@ class MinerProfileReconstructionConsumer:
 
         # Create tasks for parallel processing
         tasks = [
-            self.process_file_parallel(file_data, node_id, block_number, selected_validator)
-            for file_data in files_data
+            self.process_file_parallel(file_data, node_id, block_number, selected_validator) for file_data in files_data
         ]
 
         # Execute all file processing in parallel with concurrency limit
         semaphore = asyncio.Semaphore(100)  # Limit concurrent IPFS requests
-        
+
         async def process_with_semaphore(task):
             async with semaphore:
                 return await task
