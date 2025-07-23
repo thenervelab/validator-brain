@@ -16,6 +16,8 @@ import sys
 from datetime import datetime
 from typing import Optional
 
+from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
+
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,9 +50,7 @@ class UserProfileConsumer:
             rabbitmq_url: URL of the RabbitMQ server
             ipfs_gateway: URL of the IPFS gateway
         """
-        self.rabbitmq_url = rabbitmq_url or os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         # Use the centralized config for IPFS URL
         self.ipfs_gateway = IPFS_GATEWAY
         self.queue_name = "user_profile"
@@ -98,9 +98,7 @@ class UserProfileConsumer:
                 if response.status_code == 200:
                     return response.content
                 else:
-                    logger.error(
-                        f"Failed to fetch CID {cid}: HTTP {response.status_code}"
-                    )
+                    logger.error(f"Failed to fetch CID {cid}: HTTP {response.status_code}")
                     return None
             except Exception as e:
                 logger.error(f"Error fetching CID {cid}: {e}")
@@ -131,9 +129,7 @@ class UserProfileConsumer:
             )
 
             if existing:
-                logger.info(
-                    f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files"
-                )
+                logger.info(f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files")
                 return existing["file_count"]
 
         # Fetch profile from IPFS
@@ -160,15 +156,11 @@ class UserProfileConsumer:
                     # Extract file details
                     file_hash_bytes = file_info.get("file_hash")  # This is a byte array
                     file_name = file_info.get("file_name", "unknown")
-                    file_size = file_info.get(
-                        "file_size_in_bytes", 0
-                    )  # Changed from 'size'
+                    file_size = file_info.get("file_size_in_bytes", 0)  # Changed from 'size'
                     miner_ids = file_info.get("miner_ids", [])
 
                     if not file_hash_bytes:
-                        logger.warning(
-                            f"File without file_hash in profile for {account}: {file_info}"
-                        )
+                        logger.warning(f"File without file_hash in profile for {account}: {file_info}")
                         continue
 
                     # Convert byte array to CID string, handle both byte arrays and strings
@@ -179,23 +171,32 @@ class UserProfileConsumer:
                         # It's already a string CID
                         file_cid = file_hash_bytes
                     else:
-                        logger.warning(
-                            f"Unknown file_hash type {type(file_hash_bytes)} for {account}"
-                        )
+                        logger.warning(f"Unknown file_hash type {type(file_hash_bytes)} for {account}")
                         continue
 
                     if not file_cid:
-                        logger.warning(
-                            f"Failed to convert file_hash to CID for {account}"
-                        )
+                        logger.warning(f"Failed to convert file_hash to CID for {account}")
                         continue
 
-                    # Insert into files table (skip if exists)
+                    if file_size == 0:
+                        logger.warning(f"Found {file_cid=} with {file_size=}, re-fetching")
+                        correct_file_size = await fetch_ipfs_file_size(file_cid)
+                        if not correct_file_size:
+                            logger.warning(
+                                f"Got invalid {correct_file_size=} for {file_cid=}, will try again next time"
+                            )
+                        else:
+                            file_size = correct_file_size
+
+                    # Insert into files table (update size if it's 0 or different)
                     await conn.execute(
                         """
                         INSERT INTO files (cid, name, size, created_at)
                         VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (cid) DO NOTHING
+                        ON CONFLICT (cid) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            size = EXCLUDED.size
+                        WHERE files.size = 0 OR (files.size != EXCLUDED.size AND EXCLUDED.size > 0)
                     """,
                         file_cid,
                         file_name,
@@ -245,9 +246,7 @@ class UserProfileConsumer:
                     processed_count += 1
 
                 except Exception:
-                    logger.exception(
-                        f"Error processing file in profile for {account}, {file_info=}"
-                    )
+                    logger.exception(f"Error processing file in profile for {account}, {file_info=}")
                     continue
 
         logger.info(f"Successfully processed {processed_count} files for {account}")
@@ -301,9 +300,7 @@ class UserProfileConsumer:
         """Start consuming messages from the queue."""
         try:
             # Declare the queue
-            queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
 

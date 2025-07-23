@@ -29,13 +29,9 @@ logger = logging.getLogger("miner-profile-reconstruction-consumer")
 
 class MinerProfileReconstructionConsumer:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "miner_profile_reconstruction"
-        self.remote_ipfs_url = os.getenv(
-            "REMOTE_IPFS_URL", "https://store.hippius.network"
-        )
+        self.remote_ipfs_url = os.getenv("REMOTE_IPFS_URL", "https://store.hippius.network")
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
         self.http_client = None
@@ -51,15 +47,11 @@ class MinerProfileReconstructionConsumer:
 
             pool = get_db_pool()
             async with pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    "SELECT owner FROM file_assignments WHERE cid = $1", cid
-                )
+                row = await conn.fetchrow("SELECT owner FROM file_assignments WHERE cid = $1", cid)
                 if row and row["owner"]:
                     return row["owner"]
                 else:
-                    logger.warning(
-                        f"No owner found for CID {cid} in file_assignments table"
-                    )
+                    logger.warning(f"No owner found for CID {cid} in file_assignments table")
                     return None
         except Exception as e:
             logger.error(f"Could not fetch owner for CID {cid}: {e}")
@@ -87,9 +79,7 @@ class MinerProfileReconstructionConsumer:
         # Get validator address from environment - REQUIRED
         selected_validator = os.getenv("VALIDATOR_ACCOUNT_ID")
         if not selected_validator:
-            raise ValueError(
-                "VALIDATOR_ACCOUNT_ID environment variable is required but not set"
-            )
+            raise ValueError("VALIDATOR_ACCOUNT_ID environment variable is required but not set")
 
         # Build the profile as an array of file objects
         profile_files = []
@@ -105,9 +95,7 @@ class MinerProfileReconstructionConsumer:
 
             # Skip files without owners to prevent incorrect charging
             if not owner:
-                logger.warning(
-                    f"Skipping file {cid} - no owner found, cannot include in miner profile"
-                )
+                logger.warning(f"Skipping file {cid} - no owner found, cannot include in miner profile")
                 continue
 
             file_entry = {
@@ -145,9 +133,7 @@ class MinerProfileReconstructionConsumer:
                 logger.info(f"Successfully published profile to IPFS: {cid}")
                 return cid
             else:
-                logger.error(
-                    f"Failed to publish to IPFS: {response.status_code} - {response.text}"
-                )
+                logger.error(f"Failed to publish to IPFS: {response.status_code} - {response.text}")
                 return None
 
         except Exception as e:
@@ -168,9 +154,7 @@ class MinerProfileReconstructionConsumer:
                 # Check if already processed by node_id
                 existing = await PendingMinerProfile.get_by_node_id(node_id)
                 if existing and existing.status == "published":
-                    logger.info(
-                        f"Profile for miner {node_id} already published (CID: {existing.cid}), skipping"
-                    )
+                    logger.info(f"Profile for miner {node_id} already published (CID: {existing.cid}), skipping")
                     return
 
                 # Reconstruct the profile JSON

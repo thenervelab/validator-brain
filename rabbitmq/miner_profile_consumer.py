@@ -16,6 +16,8 @@ import sys
 from datetime import datetime
 from typing import Optional
 
+from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
+
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -45,9 +47,7 @@ class MinerProfileConsumer:
             rabbitmq_url: URL of the RabbitMQ server
             ipfs_gateway: URL of the IPFS gateway
         """
-        self.rabbitmq_url = rabbitmq_url or os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         # Use the centralized config for IPFS URL
         self.ipfs_gateway = ipfs_gateway or get_ipfs_node_url()
         # If it's a local IPFS node, we need to use the gateway endpoint
@@ -99,9 +99,7 @@ class MinerProfileConsumer:
                 if response.status_code == 200:
                     return response.content
                 else:
-                    logger.error(
-                        f"Failed to fetch CID {cid}: HTTP {response.status_code}"
-                    )
+                    logger.error(f"Failed to fetch CID {cid}: HTTP {response.status_code}")
                     return None
             except Exception as e:
                 logger.error(f"Error fetching CID {cid}: {e}")
@@ -132,9 +130,7 @@ class MinerProfileConsumer:
             )
 
             if existing:
-                logger.info(
-                    f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files"
-                )
+                logger.info(f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files")
                 return existing["file_count"]
 
         # Fetch profile from IPFS
@@ -161,8 +157,14 @@ class MinerProfileConsumer:
                     # Extract file details
                     file_cid = file_info.get("file_hash")
                     file_size = file_info.get("file_size_in_bytes", 0)
-                    owner = file_info.get("owner", "unknown")
-                    created_at = file_info.get("created_at", 0)
+
+                    if file_size == 0:
+                        logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+                        correct_file_size = await fetch_ipfs_file_size(cid)
+                        if not correct_file_size:
+                            logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+                        else:
+                            file_size = correct_file_size
 
                     if not file_cid:
                         logger.warning(f"File without CID in profile for {node_id}")
@@ -176,7 +178,9 @@ class MinerProfileConsumer:
                         """
                         INSERT INTO files (cid, name, size, created_at)
                         VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (cid) DO NOTHING
+                        ON CONFLICT (cid) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            size = EXCLUDED.size
                     """,
                         file_cid,
                         file_name,
@@ -242,9 +246,7 @@ class MinerProfileConsumer:
         """Start consuming messages from the queue."""
         try:
             # Declare the queue
-            queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
 

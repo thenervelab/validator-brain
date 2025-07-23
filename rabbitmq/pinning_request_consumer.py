@@ -29,7 +29,7 @@ from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 load_dotenv()
 
 
-logger = logging.getLogger("pinning-request-consumer")
+logger = logging.getLogger(__name__)
 
 
 def hex_to_string(hex_string: str) -> str:
@@ -70,9 +70,7 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
         try:
             response = await client.post(url, timeout=10.0)
             response.raise_for_status()
-            logger.info(
-                f"✅ Successfully fetched content for CID {cid[:16]}... from local IPFS"
-            )
+            logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from local IPFS")
             return response.content
         except httpx.HTTPStatusError as e:
             logger.warning(f"IPFS node returned error for CID {cid}: {e}")
@@ -87,18 +85,14 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
         try:
             response = await client.get(gateway_url, timeout=20.0)
             response.raise_for_status()
-            logger.info(
-                f"✅ Successfully fetched content for CID {cid[:16]}... from external gateway"
-            )
+            logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from external gateway")
             return response.content
         except httpx.HTTPStatusError as e:
             logger.error(f"External gateway returned error for CID {cid}: {e}")
         except httpx.RequestError as e:
             logger.error(f"Error fetching CID {cid} from external gateway: {e}")
 
-    logger.error(
-        f"❌ Failed to fetch content for CID {cid} from both local IPFS and external gateway"
-    )
+    logger.error(f"❌ Failed to fetch content for CID {cid} from both local IPFS and external gateway")
     return None
 
 
@@ -114,6 +108,7 @@ async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
 
     async with httpx.AsyncClient() as client:
         try:
+            logger.critical(f"Stating {cid=} {stat_url=} {params=}")
             response = await client.post(stat_url, params=params, timeout=10.0)
             response.raise_for_status()
             stats = response.json()
@@ -121,25 +116,17 @@ async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
             size = stats.get("CumulativeSize")
 
             if size is not None:
-                logger.info(
-                    f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)"
-                )
+                logger.critical(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
                 return int(size)
             else:
-                logger.warning(
-                    f"Could not determine size from files/stat for CID {cid}. Stats: {stats}"
-                )
+                logger.warning(f"Could not determine size from files/stat for CID {cid}. Stats: {stats}")
                 return 0
-        except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as e:
-            logger.error(
-                f"Error fetching file size for CID {cid} via local files/stat: {e}"
-            )
+        except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError):
+            logger.exception(f"Error fetching file size for CID {cid} via local files/stat")
             return None
 
 
-async def _fetch_ipfs_file_size_fallback_local(
-    cid: str, ipfs_node_url: str
-) -> Optional[int]:
+async def _fetch_ipfs_file_size_fallback_local(cid: str, ipfs_node_url: str) -> Optional[int]:
     """Fallback method using block/stat for local IPFS service."""
     block_url = f"{ipfs_node_url}/api/v0/block/stat"
     params = {"arg": cid}
@@ -151,14 +138,10 @@ async def _fetch_ipfs_file_size_fallback_local(
             stats = response.json()
             size = stats.get("Size")
             if size is not None:
-                logger.info(
-                    f"✅ Fetched block size (fallback) for CID {cid[:16]}...: {size:,} bytes (from local IPFS)"
-                )
+                logger.info(f"✅ Fetched block size (fallback) for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
                 return int(size)
             else:
-                logger.error(
-                    f"Could not determine size from block/stat fallback for CID {cid}. Stats: {stats}"
-                )
+                logger.error(f"Could not determine size from block/stat fallback for CID {cid}. Stats: {stats}")
                 return 0
         except Exception as e:
             logger.error(f"Local IPFS fallback method also failed for CID {cid}: {e}")
@@ -175,9 +158,7 @@ class PinningRequestConsumer:
         Args:
             rabbitmq_url: URL of the RabbitMQ server
         """
-        self.rabbitmq_url = rabbitmq_url or os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "pinning_request"
 
         self.rabbitmq_connection = None
@@ -205,9 +186,7 @@ class PinningRequestConsumer:
             logger.error(f"Failed to connect: {e}")
             raise
 
-    async def _assign_file_to_owner(
-        self, conn, cid: str, owner: str, filename: Optional[str] = None
-    ) -> None:
+    async def _assign_file_to_owner(self, conn, cid: str, owner: str, filename: Optional[str] = None) -> None:
         """Helper to create a file_assignments entry for a single CID."""
         if not cid or not owner:
             return
@@ -216,9 +195,7 @@ class PinningRequestConsumer:
         cid_short = cid[:20] + "..."
 
         # --- FETCH FILE SIZE ---
-        logger.info(
-            f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - fetching file size"
-        )
+        logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - fetching file size")
 
         # 🔍 DEBUG: Log what CID format we're storing for new storage requests
         logger.info(f"💾 STORING_NEW_FILE: account={account} storing CID={cid_short}")
@@ -226,9 +203,7 @@ class PinningRequestConsumer:
         # Check if this looks like a hex string vs actual CID
         if cid and all(c in "0123456789abcdefABCDEF" for c in cid):
             if len(cid) > 50:  # Typical hex-encoded CID length
-                logger.warning(
-                    f"⚠️ POTENTIAL_HEX_CID_NEW: account={account} CID looks like hex: {cid[:50]}..."
-                )
+                logger.warning(f"⚠️ POTENTIAL_HEX_CID_NEW: account={account} CID looks like hex: {cid[:50]}...")
 
         file_size = await fetch_ipfs_file_size(cid)
         if file_size is None:
@@ -236,14 +211,10 @@ class PinningRequestConsumer:
                 f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - could not fetch size from IPFS, will retry later"
             )
             # Don't insert files with 0 size - let them be processed later when IPFS is available
-            logger.info(
-                f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - skipping file with no size"
-            )
+            logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - skipping file with no size")
             return
         else:
-            logger.info(
-                f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - size={file_size:,} bytes"
-            )
+            logger.info(f"📌 FILE_ASSIGNMENT: account={account} CID={cid_short} - size={file_size:,} bytes")
 
         # Ensure the file exists in the files table first
         file_name_to_use = filename or f"file_{cid[:8]}"
@@ -272,13 +243,9 @@ class PinningRequestConsumer:
             cid,
             owner,
         )
-        logger.info(
-            f"✅ FILE_ASSIGNMENT_COMPLETE: account={account} CID={cid_short} - added to file_assignments table"
-        )
+        logger.info(f"✅ FILE_ASSIGNMENT_COMPLETE: account={account} CID={cid_short} - added to file_assignments table")
 
-    async def _process_manifest_files_parallel(
-        self, manifest_data: List, owner: str
-    ) -> int:
+    async def _process_manifest_files_parallel(self, manifest_data: List, owner: str) -> int:
         if not manifest_data:
             return 0
 
@@ -287,11 +254,7 @@ class PinningRequestConsumer:
         for i, file_info in enumerate(manifest_data):
             if isinstance(file_info, dict):
                 file_cid = file_info.get("cid")
-                file_name = (
-                    file_info.get("filename")
-                    or file_info.get("name")
-                    or f"file_{i+1}.bin"
-                )
+                file_name = file_info.get("filename") or file_info.get("name") or f"file_{i+1}.bin"
 
                 if file_cid:
                     file_assignments.append(
@@ -303,9 +266,7 @@ class PinningRequestConsumer:
                         }
                     )
                 else:
-                    logger.warning(
-                        f"Skipping manifest entry {i+1}: missing 'cid' field"
-                    )
+                    logger.warning(f"Skipping manifest entry {i+1}: missing 'cid' field")
 
             elif isinstance(file_info, str):
                 file_name = f"file_{i+1}.bin"
@@ -326,9 +287,7 @@ class PinningRequestConsumer:
 
         return await self._batch_process_file_assignments(file_assignments)
 
-    async def _batch_process_file_assignments(
-        self, file_assignments: List[Dict]
-    ) -> int:
+    async def _batch_process_file_assignments(self, file_assignments: List[Dict]) -> int:
         # Create semaphore for parallel file size fetching (limit to 20 concurrent)
         semaphore = asyncio.Semaphore(20)
 
@@ -346,13 +305,8 @@ class PinningRequestConsumer:
                 )
 
         # Fetch all file sizes in parallel
-        logger.info(
-            f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)"
-        )
-        tasks = [
-            fetch_file_size_with_semaphore(assignment)
-            for assignment in file_assignments
-        ]
+        logger.info(f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)")
+        tasks = [fetch_file_size_with_semaphore(assignment) for assignment in file_assignments]
         results = await asyncio.gather(*tasks)
 
         # Filter out None results (files that couldn't be fetched)
@@ -360,9 +314,7 @@ class PinningRequestConsumer:
         skipped_count = len(results) - len(valid_results)
 
         if skipped_count > 0:
-            logger.warning(
-                f"📏 Skipped {skipped_count} files due to IPFS fetch failures"
-            )
+            logger.warning(f"📏 Skipped {skipped_count} files due to IPFS fetch failures")
 
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
@@ -396,9 +348,7 @@ class PinningRequestConsumer:
                         assignments_data,
                     )
 
-                    logger.info(
-                        f"📏 Successfully processed {len(valid_results)} files with valid sizes"
-                    )
+                    logger.info(f"📏 Successfully processed {len(valid_results)} files with valid sizes")
 
                 return len(valid_results)
 
@@ -410,17 +360,13 @@ class PinningRequestConsumer:
         owner = request_data.get("owner")
 
         if not request_hash or not owner:
-            logger.error(
-                f"Invalid request data: missing request_hash or owner. Data: {request_data}"
-            )
+            logger.error(f"Invalid request data: missing request_hash or owner. Data: {request_data}")
             return False
 
         # ===== STORAGE REQUEST TRACING - STEP 5: CONSUMED FROM QUEUE =====
         account = owner[:16] + "..."
         request_hash_short = request_hash[:16] + "..."
-        logger.info(
-            f"📬 QUEUE_CONSUME: Processing storage request account={account} request_hash={request_hash_short}"
-        )
+        logger.info(f"📬 QUEUE_CONSUME: Processing storage request account={account} request_hash={request_hash_short}")
 
         # Extract and log CID information early for tracing
         file_hash_hex = request_data.get("file_hash", "")
@@ -440,9 +386,7 @@ class PinningRequestConsumer:
                         f"📬 QUEUE_CONSUME: account={account} file_hash is not string: {type(file_hash_hex)}"
                     )
         except Exception as e:
-            logger.warning(
-                f"📬 QUEUE_CONSUME: account={account} could not parse CID from file_hash: {e}"
-            )
+            logger.warning(f"📬 QUEUE_CONSUME: account={account} could not parse CID from file_hash: {e}")
 
         async with self.db_pool.acquire() as conn:
             # Check if this request has already been processed to avoid re-work
@@ -494,9 +438,7 @@ class PinningRequestConsumer:
                         )
 
                         # Process all files in parallel - MAJOR PERFORMANCE BOOST!
-                        files_processed = await self._process_manifest_files_parallel(
-                            manifest_data, owner
-                        )
+                        files_processed = await self._process_manifest_files_parallel(manifest_data, owner)
                         logger.info(
                             f"📌 PIN_REQUEST_FILES: account={account} CID={manifest_cid[:20]}... - processed {files_processed} files from manifest"
                         )
@@ -507,20 +449,14 @@ class PinningRequestConsumer:
                             f"📌 PIN_REQUEST_SINGLE: account={account} CID={manifest_cid[:20]}... - manifest contains single file object"
                         )
                         file_cid = manifest_data.get("cid")
-                        file_name = (
-                            manifest_data.get("filename")
-                            or manifest_data.get("name")
-                            or "manifest_file.bin"
-                        )
+                        file_name = manifest_data.get("filename") or manifest_data.get("name") or "manifest_file.bin"
 
                         if file_cid:
                             logger.info(
                                 f"📌 PIN_REQUEST_SINGLE: account={account} manifest_CID={manifest_cid[:20]}... file_CID={file_cid[:20]}..."
                             )
                             async with self.db_pool.acquire() as conn:
-                                await self._assign_file_to_owner(
-                                    conn, file_cid, owner, file_name
-                                )
+                                await self._assign_file_to_owner(conn, file_cid, owner, file_name)
                             files_processed = 1
                         else:
                             # No CID in manifest, treat manifest itself as the file
@@ -604,9 +540,7 @@ class PinningRequestConsumer:
                     logger.info(
                         f"💾 REQUEST_HASH_STORE: Successfully stored NEW request_hash={request_hash_short} in pinning_requests table"
                     )
-                    logger.info(
-                        f"💾 REQUEST_HASH_STORE: Full request_hash={request_hash}"
-                    )
+                    logger.info(f"💾 REQUEST_HASH_STORE: Full request_hash={request_hash}")
                 else:
                     logger.info(
                         f"💾 REQUEST_HASH_STORE: request_hash={request_hash_short} already exists in pinning_requests table (id={existing_pinning['id']})"
@@ -630,12 +564,8 @@ class PinningRequestConsumer:
 
         except Exception as e:
             account = owner[:20] + "..." if owner else "unknown"
-            request_hash_short = (
-                request_hash[:16] + "..." if request_hash else "unknown"
-            )
-            logger.error(
-                f"❌ PIN_REQUEST_ERROR: account={account} request_hash={request_hash_short} error={str(e)}"
-            )
+            request_hash_short = request_hash[:16] + "..." if request_hash else "unknown"
+            logger.error(f"❌ PIN_REQUEST_ERROR: account={account} request_hash={request_hash_short} error={str(e)}")
             logger.exception("Full traceback:")
             return False
 
@@ -655,9 +585,7 @@ class PinningRequestConsumer:
                 account = data.get("owner", "unknown")[:16] + "..."
                 request_hash = data.get("request_hash", "unknown")[:16] + "..."
 
-                logger.info(
-                    f"📬 MESSAGE_RECEIVED: account={account} request_hash={request_hash} - processing message"
-                )
+                logger.info(f"📬 MESSAGE_RECEIVED: account={account} request_hash={request_hash} - processing message")
                 logger.debug(f"Full message data: {json.dumps(data, indent=2)}")
 
                 # Process the pinning request
@@ -684,9 +612,7 @@ class PinningRequestConsumer:
         """Start consuming messages from the queue."""
         try:
             # Declare the queue
-            queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
 
