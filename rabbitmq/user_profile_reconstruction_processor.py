@@ -156,7 +156,7 @@ class UserProfileReconstructionProcessor:
 
                     # Calculate score based on available storage and current assignments
                     storage_score = available_storage / storage_capacity if storage_capacity > 0 else 0
-                    health_score = min(1.0, miner["health_score"] / 100.0)
+                    health_score = min(1.0, float(miner["health_score"]) / 100.0)
 
                     # Penalize miners that have been assigned files in this fallback session
                     fallback_count = fallback_assignments.get(miner["node_id"], 0)
