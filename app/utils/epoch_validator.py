@@ -15,7 +15,13 @@ from substrateinterface import SubstrateInterface
 
 from app.utils.config import NODE_URL, DEBUG_VALIDATOR
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)# Configure logging
 logger = logging.getLogger(__name__)
+
 
 
 def get_current_epoch_info(substrate: SubstrateInterface) -> Tuple[int, int, SubstrateInterface]:

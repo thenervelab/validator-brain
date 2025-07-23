@@ -1,4 +1,5 @@
 import logging
+
 from substrateinterface import SubstrateInterface, Keypair
 from substrateinterface.exceptions import SubstrateRequestException
 
@@ -36,10 +37,7 @@ def connect_to_node(ws_url):
 def query_storage_map(substrate, module, storage_function):
     """Query all entries in a storage map."""
     try:
-        result = substrate.query_map(
-            module=module,
-            storage_function=storage_function
-        )
+        result = substrate.query_map(module=module, storage_function=storage_function)
         return {entry[0].value: entry[1].value for entry in result}
     except SubstrateRequestException as e:
         logger.error(f"Failed to query {module}.{storage_function}: {str(e)}")
@@ -49,11 +47,7 @@ def query_storage_map(substrate, module, storage_function):
 def query_storage_double_map(substrate, module, storage_function, netuid):
     """Query all entries in a storage double map for a specific netuid."""
     try:
-        result = substrate.query_map(
-            module=module,
-            storage_function=storage_function,
-            params=[netuid]
-        )
+        result = substrate.query_map(module=module, storage_function=storage_function, params=[netuid])
         # Format as { hotkey: uid }
         return {entry[0].value: entry[1].value for entry in result}
     except SubstrateRequestException as e:
@@ -65,15 +59,12 @@ def find_unregistered_node_owners(coldkey_reg_data, uids_data):
     """Find node owners in ColdkeyNodeRegistration not present as hotkeys in Uids."""
     unregistered_owners = []
     for node_id, node_info in coldkey_reg_data.items():
-        if not node_info or not isinstance(node_info, dict) or 'owner' not in node_info:
+        if not node_info or not isinstance(node_info, dict) or "owner" not in node_info:
             logger.warning(f"Skipping node {node_id}: Invalid or missing NodeInfo")
             continue
-        account_id = node_info['owner']
+        account_id = node_info["owner"]
         if account_id not in uids_data:
-            unregistered_owners.append({
-                'node_id': node_id,
-                'owner': account_id
-            })
+            unregistered_owners.append({"node_id": node_id, "owner": account_id})
     return unregistered_owners
 
 
@@ -85,24 +76,16 @@ def submit_deregistration_report(substrate, keypair, node_ids):
 
         # Compose the call
         call = substrate.compose_call(
-            call_module='Registration',
-            call_function='submit_deregistration_report',
-            call_params={
-                'node_ids': formatted_node_ids
-            }
+            call_module="Registration",
+            call_function="submit_deregistration_report",
+            call_params={"node_ids": formatted_node_ids},
         )
 
         # Create extrinsic
-        extrinsic = substrate.create_signed_extrinsic(
-            call=call,
-            keypair=keypair
-        )
+        extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
 
         # Submit and watch
-        receipt = substrate.submit_extrinsic(
-            extrinsic,
-            wait_for_inclusion=True
-        )
+        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
 
         if receipt.is_success:
             logger.info(f"Transaction successful: Hash {receipt.extrinsic_hash}")
@@ -123,8 +106,7 @@ def main():
 
         # Query ColdkeyNodeRegistration entries
         logger.info("Querying all ColdkeyNodeRegistration entries...")
-        coldkey_reg_data = query_storage_map(registration_substrate, "Registration",
-                                             "ColdkeyNodeRegistration")
+        coldkey_reg_data = query_storage_map(registration_substrate, "Registration", "ColdkeyNodeRegistration")
 
         # Query Uids entries for netuid=75
         logger.info(f"Querying Uids entries for netuid={NETUID}...")
@@ -152,7 +134,7 @@ def main():
             logger.info(f"Using account: {keypair.ss58_address}")
 
             # Extract node IDs
-            node_ids = [owner['node_id'] for owner in unregistered_owners]
+            node_ids = [owner["node_id"] for owner in unregistered_owners]
 
             # Submit transaction
             receipt = submit_deregistration_report(registration_substrate, keypair, node_ids)

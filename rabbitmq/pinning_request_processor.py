@@ -29,6 +29,8 @@ from app.services.substrate_client import substrate_client
 load_dotenv()
 
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Use pinning-specific node URL for reliable connection

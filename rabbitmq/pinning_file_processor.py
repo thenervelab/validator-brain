@@ -28,6 +28,8 @@ from app.utils.config import IPFS_GATEWAY, get_ipfs_timeout
 
 # Setup logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 

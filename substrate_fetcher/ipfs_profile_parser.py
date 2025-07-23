@@ -1,7 +1,10 @@
 """IPFS profile parser for miner profile files."""
 
 import json
+import logging
 from typing import Dict, List, Any
+
+logger = logging.getLogger(__name__)
 
 
 def bytes_to_ipfs_cid(byte_array: List[int]) -> str:
@@ -19,8 +22,7 @@ def bytes_to_ipfs_cid(byte_array: List[int]) -> str:
     Returns:
         The IPFS CID as a string
     """
-    import logging
-    logger = logging.getLogger(__name__)
+
     
     # Convert each byte (ASCII value) to its corresponding character
     hex_string = ''.join(chr(byte) for byte in byte_array)

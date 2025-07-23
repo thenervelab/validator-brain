@@ -8,11 +8,19 @@ and storage request submissions during validator epochs.
 import logging
 import os
 from typing import List, Dict, Any, Optional
+
 from substrateinterface import SubstrateInterface, Keypair
 from substrateinterface.exceptions import SubstrateRequestException
+
 from app.utils.epoch_validator import get_current_epoch_info, get_epoch_block_position
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
 
 
 def string_to_bounded_vec(s: str, max_length: int = 256) -> bytes:
