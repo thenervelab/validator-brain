@@ -84,9 +84,7 @@ class UserProfileReconstructionConsumer:
                 logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
                 correct_file_size = await fetch_ipfs_file_size(cid)
                 if not correct_file_size:
-                    logger.warning(
-                        f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
-                    )
+                    logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
                 else:
                     file_size = correct_file_size
 
