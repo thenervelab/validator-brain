@@ -16,6 +16,8 @@ import aio_pika
 import httpx
 from aio_pika import IncomingMessage
 
+from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -76,12 +78,23 @@ class UserProfileReconstructionConsumer:
             # Convert file name to hex-encoded byte array for main_req_hash
             file_name = file_data.get("name", "unknown")
             main_req_hash = file_name.encode("utf-8").hex()
+            file_size = file_data["size"]
+
+            if file_size == 0:
+                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+                correct_file_size = await fetch_ipfs_file_size(cid)
+                if not correct_file_size:
+                    logger.warning(
+                        f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
+                    )
+                else:
+                    file_size = correct_file_size
 
             file_entry = {
                 "created_at": block_number,
                 "file_hash": file_hash,
                 "file_name": file_name,
-                "file_size_in_bytes": file_data["size"],
+                "file_size_in_bytes": file_size,
                 "is_assigned": True,
                 "last_charged_at": block_number,
                 "main_req_hash": main_req_hash,

@@ -16,6 +16,8 @@ import aio_pika
 import httpx
 from aio_pika import IncomingMessage
 
+from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -100,10 +102,22 @@ class MinerProfileReconstructionConsumer:
                 logger.warning(f"Skipping file {cid} - no owner found, cannot include in miner profile")
                 continue
 
+            file_size = file_data["size"]
+
+            if file_size == 0:
+                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+                correct_file_size = await fetch_ipfs_file_size(cid)
+                if not correct_file_size:
+                    logger.warning(
+                        f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
+                    )
+                else:
+                    file_size = correct_file_size
+
             file_entry = {
                 "created_at": block_number,
                 "file_hash": file_hash,
-                "file_size_in_bytes": file_data["size"],
+                "file_size_in_bytes": file_size,
                 "miner_node_id": node_id,
                 "owner": owner,
                 "selected_validator": selected_validator,
