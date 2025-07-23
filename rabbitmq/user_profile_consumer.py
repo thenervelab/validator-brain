@@ -36,7 +36,7 @@ from substrate_fetcher.ipfs_profile_parser import (
 load_dotenv()
 
 
-logger = logging.getLogger("user-profile-consumer")
+logger = logging.getLogger(__name__)
 
 
 class UserProfileConsumer:

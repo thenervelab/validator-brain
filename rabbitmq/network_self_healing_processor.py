@@ -29,7 +29,7 @@ load_dotenv()
 
 # Setup logging
 
-logger = logging.getLogger("network-self-healing-processor")
+logger = logging.getLogger(__name__)
 
 
 def connect_to_node(ws_url):
@@ -46,9 +46,7 @@ def connect_to_node(ws_url):
 
 def query_storage_double_map(substrate, module, storage_function, netuid):
     """Query all entries in a storage double map for a specific netuid."""
-    result = substrate.query_map(
-        module=module, storage_function=storage_function, params=[netuid]
-    )
+    result = substrate.query_map(module=module, storage_function=storage_function, params=[netuid])
     # Format as { hotkey: uid }
     return {entry[0].value: entry[1].value for entry in result}
 
@@ -77,9 +75,7 @@ def submit_deregistration_report(substrate, keypair, node_ids):
 
 class NetworkSelfHealingProcessor:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "network_self_healing"
         self.db_pool = None
 
@@ -136,9 +132,7 @@ class NetworkSelfHealingProcessor:
     async def find_deregistered_miners(self) -> List[str]:
         """Find miners that are no longer registered on Bittensor."""
         substrate = connect_to_node("wss://entrypoint-finney.opentensor.ai:443")
-        current_uids = query_storage_double_map(
-            substrate, "SubtensorModule", "Uids", 75
-        )
+        current_uids = query_storage_double_map(substrate, "SubtensorModule", "Uids", 75)
 
         logger.info("Found {} miners registered on BTS".format(len(current_uids)))
 
@@ -161,20 +155,12 @@ class NetworkSelfHealingProcessor:
 
             for miner_node_id in deregistered_miners:
                 # Clean up orphaned monitoring records first
-                await conn.execute(
-                    "DELETE FROM node_metrics WHERE miner_id = $1", miner_node_id
-                )
-                await conn.execute(
-                    "DELETE FROM file_failures WHERE miner_id = $1", miner_node_id
-                )
-                await conn.execute(
-                    "DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id
-                )
+                await conn.execute("DELETE FROM node_metrics WHERE miner_id = $1", miner_node_id)
+                await conn.execute("DELETE FROM file_failures WHERE miner_id = $1", miner_node_id)
+                await conn.execute("DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id)
 
                 # Delete from registration table (triggers CASCADE deletion and SET NULL on file_assignments)
-                result = await conn.execute(
-                    "DELETE FROM registration WHERE node_id = $1", miner_node_id
-                )
+                result = await conn.execute("DELETE FROM registration WHERE node_id = $1", miner_node_id)
                 if result == "DELETE 1":
                     total_cleaned += 1
                     logger.info(f"Cleaned up deregistered miner: {miner_node_id}")
@@ -266,9 +252,7 @@ class NetworkSelfHealingProcessor:
                     await self.queue_healing_task(file_data)
                     healed_count += 1
                 except Exception as e:
-                    logger.error(
-                        f"❌ Failed to queue healing task for {file_data['cid']}: {e}"
-                    )
+                    logger.error(f"❌ Failed to queue healing task for {file_data['cid']}: {e}")
 
             logger.info(f"✅ Queued {healed_count} self-healing tasks")
 

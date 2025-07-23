@@ -33,16 +33,14 @@ from app.utils.config import NODE_URL
 load_dotenv()
 
 
-logger = logging.getLogger("epoch-health-processor")
+logger = logging.getLogger(__name__)
 
 
 class EpochHealthProcessor:
     """Processor for comprehensive epoch-based health checks."""
 
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "epoch_health_check"
         self.node_url = NODE_URL
 
@@ -151,14 +149,10 @@ class EpochHealthProcessor:
                     logger.info(
                         f"ℹ️ No health data from PREVIOUS epoch {previous_epoch} found to mark as stale, or already marked."
                     )
-                logger.info(
-                    f"   This maintains historical health data for trend analysis and debugging"
-                )
+                logger.info(f"   This maintains historical health data for trend analysis and debugging")
 
             except Exception as e:
-                logger.error(
-                    f"Error preserving epoch health data for epoch {previous_epoch}: {e}"
-                )
+                logger.error(f"Error preserving epoch health data for epoch {previous_epoch}: {e}")
                 # Do not raise here, allow the processor to continue for the current epoch
                 # raise
 
@@ -195,9 +189,7 @@ class EpochHealthProcessor:
                     }
                 )
 
-        logger.info(
-            f"Found {len(miners)} active storage miners for epoch health checks"
-        )
+        logger.info(f"Found {len(miners)} active storage miners for epoch health checks")
         return miners
 
     async def get_all_miner_files(self, node_id: str) -> List[str]:
@@ -236,30 +228,20 @@ class EpochHealthProcessor:
     async def send_to_queue(self, health_check_data: Dict[str, Any]) -> None:
         """Send epoch health check data to RabbitMQ queue."""
         message_body = json.dumps(health_check_data)
-        message = Message(
-            body=message_body.encode(), delivery_mode=2  # Make message persistent
-        )
+        message = Message(body=message_body.encode(), delivery_mode=2)  # Make message persistent
 
-        await self.rabbitmq_channel.default_exchange.publish(
-            message, routing_key=self.queue_name
-        )
+        await self.rabbitmq_channel.default_exchange.publish(message, routing_key=self.queue_name)
 
-        logger.debug(
-            f"Sent epoch health check task to queue: {health_check_data['node_id']}"
-        )
+        logger.debug(f"Sent epoch health check task to queue: {health_check_data['node_id']}")
 
     async def process_epoch_health_checks(self) -> None:
         """Main processing function for epoch health checks."""
         try:
             # Get current epoch
             current_epoch = self.get_current_epoch()
-            current_block = (
-                self.substrate.get_block_number(None) if self.substrate else None
-            )
+            current_block = self.substrate.get_block_number(None) if self.substrate else None
 
-            logger.info(
-                f"Starting comprehensive epoch health checks for epoch {current_epoch}"
-            )
+            logger.info(f"Starting comprehensive epoch health checks for epoch {current_epoch}")
 
             # Clear existing health data for this epoch
             await self.clear_epoch_health_data(current_epoch)

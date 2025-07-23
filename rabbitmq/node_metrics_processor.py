@@ -29,7 +29,7 @@ from app.utils.config import NODE_URL
 load_dotenv()
 
 
-logger = logging.getLogger("node-metrics-processor")
+logger = logging.getLogger(__name__)
 
 
 class NodeMetricsProcessor:
@@ -60,9 +60,7 @@ class NodeMetricsProcessor:
 
         logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
 
-    def parse_node_metrics(
-        self, miner_id: str, metrics_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def parse_node_metrics(self, miner_id: str, metrics_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Parse node metrics data from substrate.
 
@@ -78,15 +76,11 @@ class NodeMetricsProcessor:
             ipfs_storage_max = metrics_data.get("ipfs_storage_max")
 
             if ipfs_repo_size is None:
-                logger.warning(
-                    f"Missing ipfs_repo_size for miner {miner_id}, defaulting to 0"
-                )
+                logger.warning(f"Missing ipfs_repo_size for miner {miner_id}, defaulting to 0")
                 ipfs_repo_size = 0
 
             if ipfs_storage_max is None:
-                logger.warning(
-                    f"Missing ipfs_storage_max for miner {miner_id}, defaulting to 0"
-                )
+                logger.warning(f"Missing ipfs_storage_max for miner {miner_id}, defaulting to 0")
                 ipfs_storage_max = 0
 
             return {
@@ -146,9 +140,7 @@ class NodeMetricsProcessor:
                 # The metrics data may also contain minerId field
                 # Use it if the key extraction didn't work or is empty
                 if isinstance(metrics_data, dict):
-                    data_miner_id = metrics_data.get(
-                        "miner_id", metrics_data.get("minerId")
-                    )
+                    data_miner_id = metrics_data.get("miner_id", metrics_data.get("minerId"))
                     if data_miner_id and data_miner_id.strip():
                         # Use the miner_id from data if it's not empty
                         miner_id = str(data_miner_id)
@@ -174,9 +166,7 @@ class NodeMetricsProcessor:
                     metrics_count += 1
                     logger.debug(f"Sent metrics for miner {miner_id}")
 
-            logger.info(
-                f"Successfully processed {metrics_count} node metrics at block {block_number}"
-            )
+            logger.info(f"Successfully processed {metrics_count} node metrics at block {block_number}")
 
         except Exception as e:
             logger.error(f"Error fetching/queuing node metrics: {e}")

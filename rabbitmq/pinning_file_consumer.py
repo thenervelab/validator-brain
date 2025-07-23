@@ -29,14 +29,12 @@ from app.db.models.pending_assignment_file import PendingAssignmentFile
 
 # Setup logging
 
-logger = logging.getLogger("pinning-file-consumer")
+logger = logging.getLogger(__name__)
 
 
 class PinningFileConsumer:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "pinning_file_processing"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
@@ -99,15 +97,11 @@ class PinningFileConsumer:
             if file_size is not None:
                 # Update with file size
                 await pending_file.update_size(file_size)
-                logger.info(
-                    f"Successfully processed file {filename} ({cid[:16]}...) - Size: {file_size:,} bytes"
-                )
+                logger.info(f"Successfully processed file {filename} ({cid[:16]}...) - Size: {file_size:,} bytes")
             else:
                 # Mark as failed
                 await pending_file.mark_failed("Could not get file size from IPFS")
-                logger.warning(
-                    f"Failed to get size for file {filename} ({cid[:16]}...)"
-                )
+                logger.warning(f"Failed to get size for file {filename} ({cid[:16]}...)")
 
             return True
 
@@ -129,9 +123,7 @@ class PinningFileConsumer:
                 if not success:
                     cid = file_data.get("cid", "unknown")
                     owner = file_data.get("owner", "unknown")
-                    logger.error(
-                        f"Failed to process file {cid} for owner {owner}, discarding message"
-                    )
+                    logger.error(f"Failed to process file {cid} for owner {owner}, discarding message")
 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")

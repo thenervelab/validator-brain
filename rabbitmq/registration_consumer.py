@@ -27,7 +27,7 @@ from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 load_dotenv()
 
 
-logger = logging.getLogger("registration-consumer")
+logger = logging.getLogger(__name__)
 
 
 class RegistrationConsumer:
@@ -71,9 +71,7 @@ class RegistrationConsumer:
         # Validate node_id length to prevent "value too long" errors
         node_id = registration.get("node_id", "")
         if len(node_id) > 100:
-            logger.warning(
-                f"Node ID too long ({len(node_id)} chars), skipping registration for node {node_id[:50]}..."
-            )
+            logger.warning(f"Node ID too long ({len(node_id)} chars), skipping registration for node {node_id[:50]}...")
             return False
 
         # Validate other VARCHAR fields
@@ -93,16 +91,12 @@ class RegistrationConsumer:
 
         node_type = registration.get("node_type", "")
         if len(node_type) > 50:
-            logger.warning(
-                f"Node type too long ({len(node_type)} chars), skipping registration for node {node_id}"
-            )
+            logger.warning(f"Node type too long ({len(node_type)} chars), skipping registration for node {node_id}")
             return False
 
         status = registration.get("status", "")
         if len(status) > 20:
-            logger.warning(
-                f"Status too long ({len(status)} chars), skipping registration for node {node_id}"
-            )
+            logger.warning(f"Status too long ({len(status)} chars), skipping registration for node {node_id}")
             return False
 
         try:
@@ -131,9 +125,7 @@ class RegistrationConsumer:
                     status,
                 )
 
-                logger.info(
-                    f"Stored registration for node {node_id} (source: {registration.get('source', 'unknown')})"
-                )
+                logger.info(f"Stored registration for node {node_id} (source: {registration.get('source', 'unknown')})")
                 return True
 
         except Exception as e:
@@ -160,9 +152,7 @@ class RegistrationConsumer:
 
                 if not success:
                     # Log error for failed storage but don't requeue
-                    logger.error(
-                        f"Failed to store registration for node {registration_data}, discarding message"
-                    )
+                    logger.error(f"Failed to store registration for node {registration_data}, discarding message")
 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")

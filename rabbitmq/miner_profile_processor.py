@@ -28,7 +28,7 @@ from app.utils.config import NODE_URL
 load_dotenv()
 
 
-logger = logging.getLogger("miner-health-processor")
+logger = logging.getLogger(__name__)
 
 
 class MinerProfileProcessor:
@@ -43,9 +43,7 @@ class MinerProfileProcessor:
             rabbitmq_url: URL of the RabbitMQ server
         """
         self.substrate_url = substrate_url or os.getenv("SUBSTRATE_URL", NODE_URL)
-        self.rabbitmq_url = rabbitmq_url or os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "miner_profile"
 
         self.substrate = None
@@ -70,18 +68,14 @@ class MinerProfileProcessor:
             self.rabbitmq_channel = await self.rabbitmq_connection.channel()
 
             # Declare the queue
-            self.rabbitmq_queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            self.rabbitmq_queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
         except Exception as e:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    def parse_miner_profile_data(
-        self, storage_data: List[List[Any]]
-    ) -> List[Dict[str, str]]:
+    def parse_miner_profile_data(self, storage_data: List[List[Any]]) -> List[Dict[str, str]]:
         """
         Parse the raw storage data from substrate into structured format.
 
@@ -96,11 +90,7 @@ class MinerProfileProcessor:
         for item in storage_data:
             if len(item) == 2:
                 # Extract node_id and CID
-                node_id = (
-                    str(item[0][0])
-                    if isinstance(item[0], list) and len(item[0]) > 0
-                    else None
-                )
+                node_id = str(item[0][0]) if isinstance(item[0], list) and len(item[0]) > 0 else None
                 cid = str(item[1]) if item[1] else None
 
                 if node_id and cid:
@@ -125,17 +115,11 @@ class MinerProfileProcessor:
         """
         try:
             message_body = json.dumps(profile).encode()
-            message = aio_pika.Message(
-                body=message_body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-            )
+            message = aio_pika.Message(body=message_body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
 
-            await self.rabbitmq_channel.default_exchange.publish(
-                message, routing_key=self.queue_name
-            )
+            await self.rabbitmq_channel.default_exchange.publish(message, routing_key=self.queue_name)
 
-            logger.info(
-                f"Sent profile to queue: {profile['node_id']} -> {profile['cid']}"
-            )
+            logger.info(f"Sent profile to queue: {profile['node_id']} -> {profile['cid']}")
         except Exception as e:
             logger.error(f"Failed to send message to queue: {e}")
             raise
@@ -159,16 +143,10 @@ class MinerProfileProcessor:
                         delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                     )
 
-                    await self.rabbitmq_channel.default_exchange.publish(
-                        message, routing_key=self.queue_name
-                    )
-                    logger.debug(
-                        f"✅ Published profile: {profile['node_id']} -> {profile['cid']}"
-                    )
+                    await self.rabbitmq_channel.default_exchange.publish(message, routing_key=self.queue_name)
+                    logger.debug(f"✅ Published profile: {profile['node_id']} -> {profile['cid']}")
                 except Exception as e:
-                    logger.error(
-                        f"❌ Failed to publish profile {profile['node_id']}: {e}"
-                    )
+                    logger.error(f"❌ Failed to publish profile {profile['node_id']}: {e}")
                     raise
 
         # Execute all publishing tasks in parallel
@@ -180,21 +158,15 @@ class MinerProfileProcessor:
         failed = len(results) - successful
 
         if failed > 0:
-            logger.warning(
-                f"⚠️ Parallel publishing: {successful} succeeded, {failed} failed"
-            )
+            logger.warning(f"⚠️ Parallel publishing: {successful} succeeded, {failed} failed")
         else:
-            logger.info(
-                f"✅ Parallel publishing: {successful}/{len(profiles)} profiles published successfully"
-            )
+            logger.info(f"✅ Parallel publishing: {successful}/{len(profiles)} profiles published successfully")
 
     async def fetch_and_process_profiles(self):
         """Fetch miner profiles from substrate and send them to RabbitMQ."""
         try:
             # Query the storage - get all key-value pairs
-            result = self.substrate.query_map(
-                module="IpfsPallet", storage_function="MinerProfile"
-            )
+            result = self.substrate.query_map(module="IpfsPallet", storage_function="MinerProfile")
 
             # Convert to list format matching the expected structure
             storage_data = []

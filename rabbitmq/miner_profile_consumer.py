@@ -33,7 +33,7 @@ from substrate_fetcher.ipfs_profile_parser import parse_miner_profile_files
 load_dotenv()
 
 
-logger = logging.getLogger("miner-profile-consumer")
+logger = logging.getLogger(__name__)
 
 
 class MinerProfileConsumer:

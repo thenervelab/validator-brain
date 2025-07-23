@@ -26,7 +26,7 @@ from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 load_dotenv()
 
 
-logger = logging.getLogger("node-metrics-consumer")
+logger = logging.getLogger(__name__)
 
 # Cap values at BIGINT maximum to prevent overflow
 PG_BIGINT_MAX = 9223372036854775807
@@ -129,9 +129,7 @@ class NodeMetricsConsumer:
             try:
                 # Parse the message body
                 metrics_data = json.loads(message.body.decode())
-                logger.info(
-                    f"Processing metrics for miner {metrics_data.get('miner_id', 'unknown')}"
-                )
+                logger.info(f"Processing metrics for miner {metrics_data.get('miner_id', 'unknown')}")
 
                 # Store the metrics
                 success = await self.store_node_metrics(metrics_data)

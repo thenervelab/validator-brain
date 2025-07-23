@@ -18,14 +18,12 @@ from substrateinterface import SubstrateInterface
 
 # Setup logging
 
-logger = logging.getLogger("miner-profile-reconstruction-processor")
+logger = logging.getLogger(__name__)
 
 
 class MinerProfileReconstructionProcessor:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.database_url = os.getenv(
             "DATABASE_URL",
             "postgresql://user:password@localhost:5432/substrate_fetcher",
@@ -40,9 +38,7 @@ class MinerProfileReconstructionProcessor:
     async def connect_database(self):
         """Connect to PostgreSQL database"""
         try:
-            self.db_pool = await asyncpg.create_pool(
-                self.database_url, min_size=1, max_size=10
-            )
+            self.db_pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=10)
             logger.info("Connected to database")
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
@@ -132,17 +128,11 @@ class MinerProfileReconstructionProcessor:
     async def send_to_queue(self, profile_data: Dict[str, Any]) -> None:
         """Send profile data to RabbitMQ queue"""
         message_body = json.dumps(profile_data)
-        message = Message(
-            body=message_body.encode(), delivery_mode=2  # Make message persistent
-        )
+        message = Message(body=message_body.encode(), delivery_mode=2)  # Make message persistent
 
-        await self.rabbitmq_channel.default_exchange.publish(
-            message, routing_key=self.queue_name
-        )
+        await self.rabbitmq_channel.default_exchange.publish(message, routing_key=self.queue_name)
 
-        logger.debug(
-            f"Sent profile to queue: {profile_data['node_id']} -> {profile_data['cid']}"
-        )
+        logger.debug(f"Sent profile to queue: {profile_data['node_id']} -> {profile_data['cid']}")
 
     async def process_profiles(self):
         """Main processing loop"""
@@ -193,18 +183,12 @@ class MinerProfileReconstructionProcessor:
                 # Send to queue
                 await self.send_to_queue(message_data)
 
-                logger.info(
-                    f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes"
-                )
+                logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
                 successful_profiles += 1
 
             except Exception as e:
-                logger.error(
-                    f"❌ Error processing profile for miner {profile['node_id']}: {e}"
-                )
-                logger.exception(
-                    f"Full traceback for miner {profile['node_id']} error:"
-                )
+                logger.error(f"❌ Error processing profile for miner {profile['node_id']}: {e}")
+                logger.exception(f"Full traceback for miner {profile['node_id']} error:")
                 failed_profiles += 1
                 continue
 
@@ -218,23 +202,15 @@ class MinerProfileReconstructionProcessor:
         # Log warning if no profiles were successfully queued
         if successful_profiles == 0:
             if failed_profiles > 0:
-                logger.error(
-                    f"🚨 CRITICAL: All {failed_profiles} profile(s) failed to process!"
-                )
-                logger.error(
-                    "   This indicates a systematic issue (database, query, or data problems)"
-                )
+                logger.error(f"🚨 CRITICAL: All {failed_profiles} profile(s) failed to process!")
+                logger.error("   This indicates a systematic issue (database, query, or data problems)")
             elif skipped_profiles > 0:
-                logger.warning(
-                    f"⚠️ All {skipped_profiles} miner(s) have no assigned files"
-                )
+                logger.warning(f"⚠️ All {skipped_profiles} miner(s) have no assigned files")
                 logger.warning("   This may indicate file assignment issues")
             else:
                 logger.warning("⚠️ No miner profiles found to process")
 
-        logger.info(
-            f"Successfully queued {successful_profiles} profiles for reconstruction"
-        )
+        logger.info(f"Successfully queued {successful_profiles} profiles for reconstruction")
 
         # Return success count for main function to check
         return successful_profiles
@@ -272,16 +248,10 @@ async def main():
         # Check if processing was successful
         if successful_count == 0:
             logger.error("🚨 PROCESSOR FAILED: No profiles were successfully queued!")
-            logger.error(
-                "   This indicates a systematic issue that needs investigation"
-            )
-            raise RuntimeError(
-                "Miner profile reconstruction processor completed but queued 0 profiles"
-            )
+            logger.error("   This indicates a systematic issue that needs investigation")
+            raise RuntimeError("Miner profile reconstruction processor completed but queued 0 profiles")
 
-        logger.info(
-            f"✅ Processor completed successfully - queued {successful_count} profiles"
-        )
+        logger.info(f"✅ Processor completed successfully - queued {successful_count} profiles")
 
     except Exception as e:
         logger.error(f"❌ Error in processor: {e}")

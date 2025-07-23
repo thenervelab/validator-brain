@@ -29,12 +29,10 @@ from app.services.substrate_client import substrate_client
 load_dotenv()
 
 
-logger = logging.getLogger("pinning-request-processor")
+logger = logging.getLogger(__name__)
 
 # Use pinning-specific node URL for reliable connection
-PINNING_NODE_URL = os.getenv(
-    "PINNING_NODE_URL", NODE_URL
-)  # Fallback to NODE_URL if not set
+PINNING_NODE_URL = os.getenv("PINNING_NODE_URL", NODE_URL)  # Fallback to NODE_URL if not set
 
 
 class PinningRequestProcessor:
@@ -65,9 +63,7 @@ class PinningRequestProcessor:
 
         logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
 
-    def parse_storage_request_data(
-        self, storage_data: List[Tuple[Any, Any]]
-    ) -> List[Dict[str, Any]]:
+    def parse_storage_request_data(self, storage_data: List[Tuple[Any, Any]]) -> List[Dict[str, Any]]:
         """
         Parse the raw storage data from substrate into structured format.
 
@@ -96,53 +92,29 @@ class PinningRequestProcessor:
                         request = {
                             "owner": owner,
                             "request_hash": request_hash,
-                            "file_hash": str(
-                                value_data.get(
-                                    "file_hash", value_data.get("fileHash", "")
-                                )
-                            ),
-                            "file_name": str(
-                                value_data.get(
-                                    "file_name", value_data.get("fileName", "")
-                                )
-                            ),
-                            "total_replicas": int(
-                                value_data.get(
-                                    "total_replicas", value_data.get("totalReplicas", 0)
-                                )
-                            ),
-                            "is_assigned": bool(
-                                value_data.get(
-                                    "is_assigned", value_data.get("isAssigned", False)
-                                )
-                            ),
+                            "file_hash": str(value_data.get("file_hash", value_data.get("fileHash", ""))),
+                            "file_name": str(value_data.get("file_name", value_data.get("fileName", ""))),
+                            "total_replicas": int(value_data.get("total_replicas", value_data.get("totalReplicas", 0))),
+                            "is_assigned": bool(value_data.get("is_assigned", value_data.get("isAssigned", False))),
                             "selected_validator": str(
                                 value_data.get(
                                     "selected_validator",
                                     value_data.get("selectedValidator", ""),
                                 )
                             ),
-                            "created_at": int(
-                                value_data.get(
-                                    "created_at", value_data.get("createdAt", 0)
-                                )
-                            ),
+                            "created_at": int(value_data.get("created_at", value_data.get("createdAt", 0))),
                             "last_charged_at": int(
                                 value_data.get(
                                     "last_charged_at",
                                     value_data.get("lastChargedAt", 0),
                                 )
                             ),
-                            "miner_ids": value_data.get(
-                                "miner_ids", value_data.get("minerIds", [])
-                            ),
+                            "miner_ids": value_data.get("miner_ids", value_data.get("minerIds", [])),
                             "timestamp": asyncio.get_event_loop().time(),
                         }
 
                         parsed_requests.append(request)
-                        logger.debug(
-                            f"Parsed storage request: {owner} -> {request_hash}"
-                        )
+                        logger.debug(f"Parsed storage request: {owner} -> {request_hash}")
                     else:
                         logger.warning(f"Invalid value format for key {key_data}")
                 else:
@@ -175,9 +147,7 @@ class PinningRequestProcessor:
             run_once: If True, fetch once and exit. If False, run continuously.
         """
         # Query all user storage requests
-        result = self.substrate.query_map(
-            module="IpfsPallet", storage_function="UserStorageRequests"
-        )
+        result = self.substrate.query_map(module="IpfsPallet", storage_function="UserStorageRequests")
 
         # First pass: collect all unique users and raw data
         raw_storage_data = []
@@ -223,19 +193,13 @@ class PinningRequestProcessor:
                                     "value": actual_value,
                                 }
                             )
-                            logger.debug(
-                                f"Collected storage request: {account} -> {request_hash[:16]}..."
-                            )
+                            logger.debug(f"Collected storage request: {account} -> {request_hash[:16]}...")
                         else:
                             null_entries += 1
-                            logger.debug(
-                                f"Found null value for {account} -> {request_hash}"
-                            )
+                            logger.debug(f"Found null value for {account} -> {request_hash}")
                     else:
                         null_entries += 1
-                        logger.debug(
-                            f"Found null entry for {account} -> {request_hash}"
-                        )
+                        logger.debug(f"Found null entry for {account} -> {request_hash}")
                 else:
                     logger.warning(f"Invalid key format: {key}")
 
@@ -243,24 +207,18 @@ class PinningRequestProcessor:
                 logger.error(f"Error parsing entry {key}: {e}")
                 continue
 
-        logger.info(
-            f"🔍 DEBUG: Found {total_entries} total entries, {null_entries} null values"
-        )
+        logger.info(f"🔍 DEBUG: Found {total_entries} total entries, {null_entries} null values")
         logger.info(
             f"🔍 DEBUG: Collected {len(raw_storage_data)} storage requests from {len(unique_users)} unique users"
         )
 
         # ===== STORAGE REQUEST TRACING - STEP 1: FETCHED FROM SUBSTRATE =====
         if raw_storage_data:
-            logger.info(
-                f"📥 SUBSTRATE_FETCH: Found {len(raw_storage_data)} raw storage requests from blockchain"
-            )
+            logger.info(f"📥 SUBSTRATE_FETCH: Found {len(raw_storage_data)} raw storage requests from blockchain")
             for i, data in enumerate(raw_storage_data[:5]):  # Log first 5 in detail
                 account = data["account"][:16] + "..."
                 request_hash = data["request_hash"][:16] + "..."
-                logger.info(
-                    f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} request_hash={request_hash}"
-                )
+                logger.info(f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} request_hash={request_hash}")
 
                 # Extract and log CID if available
                 try:
@@ -269,14 +227,10 @@ class PinningRequestProcessor:
                         file_hash = value.get("file_hash") or value.get("fileHash")
                         if file_hash:
                             # Convert hex to string for logging
-                            if isinstance(file_hash, str) and file_hash.startswith(
-                                "0x"
-                            ):
+                            if isinstance(file_hash, str) and file_hash.startswith("0x"):
                                 try:
                                     cid = bytes.fromhex(file_hash[2:]).decode("utf-8")
-                                    logger.info(
-                                        f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} CID={cid[:20]}..."
-                                    )
+                                    logger.info(f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} CID={cid[:20]}...")
                                 except:
                                     logger.info(
                                         f"📥 SUBSTRATE_FETCH[{i+1}]: account={account} file_hash_hex={file_hash[:20]}..."
@@ -285,17 +239,13 @@ class PinningRequestProcessor:
                     logger.debug(f"Could not extract CID from raw data: {e}")
 
             if len(raw_storage_data) > 5:
-                logger.info(
-                    f"📥 SUBSTRATE_FETCH: ... and {len(raw_storage_data) - 5} more storage requests fetched"
-                )
+                logger.info(f"📥 SUBSTRATE_FETCH: ... and {len(raw_storage_data) - 5} more storage requests fetched")
         else:
             logger.info("📥 SUBSTRATE_FETCH: No storage requests found on blockchain")
 
         # Fetch all user credits in parallel
         logger.info(f"Fetching credits for {len(unique_users)} users in parallel...")
-        user_balances = await substrate_client.check_multiple_user_balances(
-            list(unique_users)
-        )
+        user_balances = await substrate_client.check_multiple_user_balances(list(unique_users))
         logger.info(f"Finished fetching credits... {user_balances}")
 
         # Filter requests based on user credits
@@ -308,31 +258,21 @@ class PinningRequestProcessor:
 
             if balance > 0:
                 # User has credits, include the request
-                storage_data.append(
-                    [[account, request_data["request_hash"]], request_data["value"]]
-                )
+                storage_data.append([[account, request_data["request_hash"]], request_data["value"]])
             else:
                 # User has no credits, filter out
                 zero_credit_users.add(account)
 
         filtered_by_credits = len(zero_credit_users)
         if filtered_by_credits > 0:
-            logger.info(
-                f"🔍 DEBUG: Filtered out storage requests from {filtered_by_credits} users with zero credits"
-            )
-            logger.info(
-                f"🔍 DEBUG: Zero credit users: {list(zero_credit_users)[:5]}..."
-            )
+            logger.info(f"🔍 DEBUG: Filtered out storage requests from {filtered_by_credits} users with zero credits")
+            logger.info(f"🔍 DEBUG: Zero credit users: {list(zero_credit_users)[:5]}...")
 
-        logger.info(
-            f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering"
-        )
+        logger.info(f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering")
 
         # ===== STORAGE REQUEST TRACING - STEP 2: AFTER CREDIT FILTERING =====
         if storage_data:
-            logger.info(
-                f"💳 CREDIT_FILTER: {len(storage_data)} storage requests remain after credit filtering"
-            )
+            logger.info(f"💳 CREDIT_FILTER: {len(storage_data)} storage requests remain after credit filtering")
             for i, data in enumerate(storage_data[:3]):  # Log first 3 in detail
                 key_data = data[0]
                 value_data = data[1]
@@ -343,13 +283,9 @@ class PinningRequestProcessor:
                         f"💳 CREDIT_FILTER[{i+1}]: account={account} request_hash={request_hash} - User has credits, proceeding"
                     )
             if len(storage_data) > 3:
-                logger.info(
-                    f"💳 CREDIT_FILTER: ... and {len(storage_data) - 3} more requests with valid credits"
-                )
+                logger.info(f"💳 CREDIT_FILTER: ... and {len(storage_data) - 3} more requests with valid credits")
         else:
-            logger.info(
-                "💳 CREDIT_FILTER: No storage requests remain after credit filtering"
-            )
+            logger.info("💳 CREDIT_FILTER: No storage requests remain after credit filtering")
 
         # Parse the data
         parsed_requests = self.parse_storage_request_data(storage_data)
@@ -381,18 +317,12 @@ class PinningRequestProcessor:
                 )
 
             if len(parsed_requests) > 3:
-                logger.info(
-                    f"🔄 PARSE_COMPLETE: ... and {len(parsed_requests) - 3} more requests ready for queue"
-                )
+                logger.info(f"🔄 PARSE_COMPLETE: ... and {len(parsed_requests) - 3} more requests ready for queue")
         else:
-            logger.info(
-                "🔄 PARSE_COMPLETE: No requests successfully parsed from storage data"
-            )
+            logger.info("🔄 PARSE_COMPLETE: No requests successfully parsed from storage data")
 
         # Process ALL storage requests (assigned + unassigned)
-        assigned_count = sum(
-            1 for req in parsed_requests if req.get("is_assigned", False)
-        )
+        assigned_count = sum(1 for req in parsed_requests if req.get("is_assigned", False))
         logger.info(
             f"🔍 Found {len(parsed_requests)} storage requests ({assigned_count} assigned, {len(parsed_requests) - assigned_count} unassigned)"
         )
@@ -422,9 +352,7 @@ class PinningRequestProcessor:
                 )
 
             await self._publish_requests_parallel(parsed_requests)
-            logger.info(
-                f"📤 QUEUE_PUBLISH: Successfully published {len(parsed_requests)} storage requests to queue"
-            )
+            logger.info(f"📤 QUEUE_PUBLISH: Successfully published {len(parsed_requests)} storage requests to queue")
 
         logger.info(f"Successfully processed {len(parsed_requests)} storage requests")
 
@@ -445,15 +373,11 @@ class PinningRequestProcessor:
                     # Log successful individual publish for key requests
                     account = request.get("owner", "unknown")[:16] + "..."
                     request_hash = request.get("request_hash", "unknown")[:16] + "..."
-                    logger.debug(
-                        f"📤 QUEUE_PUBLISH_SUCCESS: account={account} request_hash={request_hash}"
-                    )
+                    logger.debug(f"📤 QUEUE_PUBLISH_SUCCESS: account={account} request_hash={request_hash}")
                 except Exception as e:
                     account = request.get("owner", "unknown")[:16] + "..."
                     request_hash = request.get("request_hash", "unknown")[:16] + "..."
-                    logger.error(
-                        f"📤 QUEUE_PUBLISH_FAILED: account={account} request_hash={request_hash} error={e}"
-                    )
+                    logger.error(f"📤 QUEUE_PUBLISH_FAILED: account={account} request_hash={request_hash} error={e}")
                     raise
 
         tasks = [_publish_single_request(request) for request in requests]
@@ -463,13 +387,9 @@ class PinningRequestProcessor:
         failed = len(results) - successful
 
         if failed > 0:
-            logger.warning(
-                f"Parallel publishing: {successful} succeeded, {failed} failed"
-            )
+            logger.warning(f"Parallel publishing: {successful} succeeded, {failed} failed")
         else:
-            logger.info(
-                f"Parallel publishing: {successful}/{len(requests)} requests published successfully"
-            )
+            logger.info(f"Parallel publishing: {successful}/{len(requests)} requests published successfully")
 
     async def close(self):
         """Close all connections."""

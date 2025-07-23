@@ -39,14 +39,12 @@ load_dotenv()
 
 # Setup logging
 
-logger = logging.getLogger("miner-health-consumer")
+logger = logging.getLogger(__name__)
 
 
 class MinerHealthConsumer:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "miner_health_check"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
@@ -56,12 +54,8 @@ class MinerHealthConsumer:
         self.ipfs_semaphore = asyncio.Semaphore(10)  # Max 10 concurrent IPFS requests
 
         # Configuration
-        self.ping_failure_threshold = int(
-            os.getenv("PING_FAILURE_THRESHOLD", "1")
-        )  # Remove after 1 ping failure
-        self.pin_failure_threshold = int(
-            os.getenv("PIN_FAILURE_THRESHOLD", "2")
-        )  # Remove after 2 pin failures
+        self.ping_failure_threshold = int(os.getenv("PING_FAILURE_THRESHOLD", "1"))  # Remove after 1 ping failure
+        self.pin_failure_threshold = int(os.getenv("PIN_FAILURE_THRESHOLD", "2"))  # Remove after 2 pin failures
 
         # Concurrency control
         self.max_concurrent_miners = int(os.getenv("MAX_CONCURRENT_MINERS", "5"))
@@ -78,18 +72,14 @@ class MinerHealthConsumer:
             self.rabbitmq_channel = await self.rabbitmq_connection.channel()
 
             # Set prefetch count to allow multiple messages for concurrent processing
-            await self.rabbitmq_channel.set_qos(
-                prefetch_count=self.max_concurrent_miners * 2
-            )
+            await self.rabbitmq_channel.set_qos(prefetch_count=self.max_concurrent_miners * 2)
 
             logger.info("Connected to RabbitMQ")
         except Exception as e:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def ensure_miner_in_health_table(
-        self, node_id: str, ipfs_peer_id: str, epoch: int
-    ) -> None:
+    async def ensure_miner_in_health_table(self, node_id: str, ipfs_peer_id: str, epoch: int) -> None:
         """Ensure the miner exists in the miner_epoch_health table."""
         async with self.db_pool.acquire() as conn:
             try:
@@ -106,9 +96,7 @@ class MinerHealthConsumer:
                     epoch,
                 )
 
-                logger.debug(
-                    f"Ensured miner {node_id} exists in health table for epoch {epoch}"
-                )
+                logger.debug(f"Ensured miner {node_id} exists in health table for epoch {epoch}")
 
             except Exception as e:
                 logger.error(f"Error ensuring miner {node_id} in health table: {e}")
@@ -143,9 +131,7 @@ class MinerHealthConsumer:
                     pin_failures,  # pin_check_failures increment
                 )
 
-                logger.debug(
-                    f"Updated health results for miner {node_id} in epoch {epoch}"
-                )
+                logger.debug(f"Updated health results for miner {node_id} in epoch {epoch}")
 
             except Exception as e:
                 logger.error(f"Error updating health results for miner {node_id}: {e}")
@@ -159,9 +145,7 @@ class MinerHealthConsumer:
                 file_count = file_stats.get("file_count", 0)
 
                 if file_count == 0:
-                    logger.info(
-                        f"Miner {node_id} has no files assigned, skipping removal"
-                    )
+                    logger.info(f"Miner {node_id} has no files assigned, skipping removal")
                     return True
 
                 # Remove miner from all assignments
@@ -170,9 +154,7 @@ class MinerHealthConsumer:
                 logger.warning(
                     f"Removed failed miner {node_id} from {removed_count} file assignments. Reason: {reason}"
                 )
-                logger.info(
-                    f"File assignment system will detect empty slots and reassign files automatically"
-                )
+                logger.info(f"File assignment system will detect empty slots and reassign files automatically")
 
                 return True
 
@@ -190,12 +172,8 @@ class MinerHealthConsumer:
             files_to_check = message_data.get("files_to_check", [])
             total_files_assigned = message_data.get("total_files_assigned", 0)
 
-            logger.info(
-                f"Processing health check for miner {node_id} (IPFS: {ipfs_peer_id}) in epoch {epoch}"
-            )
-            logger.info(
-                f"Miner has {total_files_assigned} files assigned, checking {len(files_to_check)} files"
-            )
+            logger.info(f"Processing health check for miner {node_id} (IPFS: {ipfs_peer_id}) in epoch {epoch}")
+            logger.info(f"Miner has {total_files_assigned} files assigned, checking {len(files_to_check)} files")
 
             # Ensure miner exists in health table
             await self.ensure_miner_in_health_table(node_id, ipfs_peer_id, epoch)
@@ -230,22 +208,16 @@ class MinerHealthConsumer:
             pin_failures = 0
 
             if files_to_check:
-                logger.info(
-                    f"Performing pin tests for {node_id} on {len(files_to_check)} files"
-                )
+                logger.info(f"Performing pin tests for {node_id} on {len(files_to_check)} files")
 
                 # Create concurrent pin check tasks
                 async def check_single_file(file_cid: str, file_index: int) -> bool:
                     """Check a single file and return True if successful."""
                     if self.stop_event.is_set():
-                        logger.warning(
-                            f"Stop event detected, skipping file check for {node_id}"
-                        )
+                        logger.warning(f"Stop event detected, skipping file check for {node_id}")
                         return False
 
-                    logger.debug(
-                        f"Checking file {file_index}/{len(files_to_check)} for {node_id}: {file_cid}"
-                    )
+                    logger.debug(f"Checking file {file_index}/{len(files_to_check)} for {node_id}: {file_cid}")
 
                     # Use semaphore to limit concurrent IPFS operations
                     async with self.ipfs_semaphore:
@@ -258,22 +230,15 @@ class MinerHealthConsumer:
                                 epoch,
                                 self.stop_event,
                             )
-                            logger.debug(
-                                f"Pin check successful for file {file_cid} on {node_id}"
-                            )
+                            logger.debug(f"Pin check successful for file {file_cid} on {node_id}")
                             return True
 
                         except Exception as e:
-                            logger.error(
-                                f"Pin check failed for file {file_cid} on {node_id}: {e}"
-                            )
+                            logger.error(f"Pin check failed for file {file_cid} on {node_id}: {e}")
                             return False
 
                 # Run all pin checks concurrently
-                pin_tasks = [
-                    check_single_file(file_cid, i + 1)
-                    for i, file_cid in enumerate(files_to_check)
-                ]
+                pin_tasks = [check_single_file(file_cid, i + 1) for i, file_cid in enumerate(files_to_check)]
 
                 try:
                     results = await asyncio.gather(*pin_tasks, return_exceptions=True)
@@ -288,20 +253,14 @@ class MinerHealthConsumer:
                             pin_failures += 1
 
                 except Exception as e:
-                    logger.error(
-                        f"Error during concurrent pin checks for {node_id}: {e}"
-                    )
+                    logger.error(f"Error during concurrent pin checks for {node_id}: {e}")
                     pin_failures = len(files_to_check)  # Treat all as failures
 
-                logger.info(
-                    f"Pin test results for {node_id}: {pin_successes} successful, {pin_failures} failed"
-                )
+                logger.info(f"Pin test results for {node_id}: {pin_successes} successful, {pin_failures} failed")
 
                 # Check if miner should be removed due to pin failures
                 if pin_failures >= self.pin_failure_threshold:
-                    await self.update_health_results(
-                        node_id, epoch, True, pin_successes, pin_failures
-                    )
+                    await self.update_health_results(node_id, epoch, True, pin_successes, pin_failures)
                     await self.remove_failed_miner(
                         node_id,
                         f"Pin tests failed: {pin_failures}/{len(files_to_check)} files",
@@ -311,17 +270,13 @@ class MinerHealthConsumer:
                 logger.info(f"No files to check for miner {node_id}")
 
             # Update health results
-            await self.update_health_results(
-                node_id, epoch, True, pin_successes, pin_failures
-            )
+            await self.update_health_results(node_id, epoch, True, pin_successes, pin_failures)
 
             logger.info(f"Health check completed successfully for miner {node_id}")
             return True
 
         except Exception as e:
-            logger.error(
-                f"Error processing health check for {message_data.get('node_id', 'unknown')}: {e}"
-            )
+            logger.error(f"Error processing health check for {message_data.get('node_id', 'unknown')}: {e}")
             logger.exception("Full traceback:")
             return False
 
@@ -355,10 +310,7 @@ class MinerHealthConsumer:
 
                     # Log performance stats every 10 miners
                     if self.processed_miners % 10 == 0:
-                        success_rate = (
-                            (self.processed_miners - self.failed_miners)
-                            / self.processed_miners
-                        ) * 100
+                        success_rate = ((self.processed_miners - self.failed_miners) / self.processed_miners) * 100
                         logger.info(
                             f"Performance stats: {self.processed_miners} processed, {success_rate:.1f}% success rate"
                         )
@@ -373,9 +325,7 @@ class MinerHealthConsumer:
         """Start consuming messages from the queue."""
         try:
             # Declare the queue (in case it doesn't exist)
-            queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
             logger.info(f"Max concurrent miners: {self.max_concurrent_miners}")
@@ -386,9 +336,7 @@ class MinerHealthConsumer:
             await queue.consume(self.message_handler)
 
             # Keep the consumer running
-            logger.info(
-                "Simple miner health consumer is running. Press Ctrl+C to stop."
-            )
+            logger.info("Simple miner health consumer is running. Press Ctrl+C to stop.")
             try:
                 await self.stop_event.wait()
             except KeyboardInterrupt:

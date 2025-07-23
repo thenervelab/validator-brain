@@ -31,7 +31,7 @@ from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 load_dotenv()
 
 
-logger = logging.getLogger("registration-processor")
+logger = logging.getLogger(__name__)
 
 
 class RegistrationProcessor:
@@ -79,9 +79,7 @@ class RegistrationProcessor:
             logger.error(f"Error clearing registration table: {e}")
             raise
 
-    def parse_registration_data(
-        self, node_id: str, registration_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def parse_registration_data(self, node_id: str, registration_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Parse registration data from substrate.
 
@@ -94,31 +92,17 @@ class RegistrationProcessor:
         """
         try:
             # Handle both camelCase and snake_case field names
-            ipfs_node_id = registration_data.get(
-                "ipfsNodeId", registration_data.get("ipfs_node_id")
-            )
-            node_type = registration_data.get(
-                "nodeType", registration_data.get("node_type")
-            )
-            owner = registration_data.get(
-                "owner", registration_data.get("owner_account")
-            )
-            registered_at = registration_data.get(
-                "registeredAt", registration_data.get("registered_at")
-            )
-            status = registration_data.get(
-                "status", "Online"
-            )  # Default to Online if not specified
+            ipfs_node_id = registration_data.get("ipfsNodeId", registration_data.get("ipfs_node_id"))
+            node_type = registration_data.get("nodeType", registration_data.get("node_type"))
+            owner = registration_data.get("owner", registration_data.get("owner_account"))
+            registered_at = registration_data.get("registeredAt", registration_data.get("registered_at"))
+            status = registration_data.get("status", "Online")  # Default to Online if not specified
 
             # Use the nodeId from the data if available, otherwise use the key
-            actual_node_id = registration_data.get(
-                "nodeId", registration_data.get("node_id", node_id)
-            )
+            actual_node_id = registration_data.get("nodeId", registration_data.get("node_id", node_id))
 
             if not all([actual_node_id, ipfs_node_id, node_type, owner, registered_at]):
-                logger.warning(
-                    f"Missing required fields for node {node_id}: {registration_data}"
-                )
+                logger.warning(f"Missing required fields for node {node_id}: {registration_data}")
                 return None
 
             return {
@@ -170,9 +154,7 @@ class RegistrationProcessor:
                 registration_data = value.value if hasattr(value, "value") else value
 
                 # Parse the registration
-                parsed_registration = self.parse_registration_data(
-                    node_id, registration_data
-                )
+                parsed_registration = self.parse_registration_data(node_id, registration_data)
 
                 if parsed_registration:
                     # Add block number to the message
@@ -214,9 +196,7 @@ class RegistrationProcessor:
                 registration_data = value.value if hasattr(value, "value") else value
 
                 # Parse the registration
-                parsed_registration = self.parse_registration_data(
-                    node_id, registration_data
-                )
+                parsed_registration = self.parse_registration_data(node_id, registration_data)
 
                 if parsed_registration:
                     # Add block number to the message
@@ -237,9 +217,7 @@ class RegistrationProcessor:
                     registration_count += 1
                     logger.debug(f"Sent node registration for node {node_id}")
 
-            logger.info(
-                f"Successfully processed {registration_count} registrations at block {block_number}"
-            )
+            logger.info(f"Successfully processed {registration_count} registrations at block {block_number}")
 
         except Exception as e:
             logger.error(f"Error fetching/queuing registrations: {e}")

@@ -40,14 +40,12 @@ load_dotenv()
 
 # Setup logging
 
-logger = logging.getLogger("file-assignment-processor")
+logger = logging.getLogger(__name__)
 
 
 class FileAssignmentProcessor:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "file_assignment_processing"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
@@ -57,28 +55,18 @@ class FileAssignmentProcessor:
         # Assignment configuration
         self.replicas_per_file = int(os.getenv("REPLICAS_PER_FILE", "5"))
         self.max_files_per_batch = int(os.getenv("MAX_FILES_PER_BATCH", "100"))
-        self.max_reassignments_per_batch = int(
-            os.getenv("MAX_REASSIGNMENTS_PER_BATCH", "50")
-        )
+        self.max_reassignments_per_batch = int(os.getenv("MAX_REASSIGNMENTS_PER_BATCH", "50"))
         self.min_miner_health_score = float(os.getenv("MIN_MINER_HEALTH_SCORE", "20.0"))
         self.new_miner_boost_days = int(os.getenv("NEW_MINER_BOOST_DAYS", "30"))
         self.new_miner_boost_factor = float(os.getenv("NEW_MINER_BOOST_FACTOR", "1.5"))
 
         # Load balancing configuration
-        self.assignment_penalty_factor = float(
-            os.getenv("ASSIGNMENT_PENALTY_FACTOR", "0.8")
-        )  # Penalty per assignment
-        self.max_assignments_per_miner = int(
-            os.getenv("MAX_ASSIGNMENTS_PER_MINER", "10")
-        )  # Per batch
+        self.assignment_penalty_factor = float(os.getenv("ASSIGNMENT_PENALTY_FACTOR", "0.8"))  # Penalty per assignment
+        self.max_assignments_per_miner = int(os.getenv("MAX_ASSIGNMENTS_PER_MINER", "10"))  # Per batch
 
         # Pin check failure detection configuration
-        self.pin_check_failure_threshold = float(
-            os.getenv("PIN_CHECK_FAILURE_THRESHOLD", "50.0")
-        )  # 50% success rate
-        self.recent_epochs_window = int(
-            os.getenv("RECENT_EPOCHS_WINDOW", "1")
-        )  # Look back 3 epochs
+        self.pin_check_failure_threshold = float(os.getenv("PIN_CHECK_FAILURE_THRESHOLD", "50.0"))  # 50% success rate
+        self.recent_epochs_window = int(os.getenv("RECENT_EPOCHS_WINDOW", "1"))  # Look back 3 epochs
         self.max_failing_replacements_per_batch = int(
             os.getenv("MAX_FAILING_REPLACEMENTS_PER_BATCH", "50")
         )  # Per batch
@@ -186,31 +174,17 @@ class FileAssignmentProcessor:
 
             if files_with_nulls:
                 # Log prioritization for debugging
-                completely_empty = [
-                    f for f in files_with_nulls if f["null_miner_count"] == 5
-                ]
-                partially_empty = [
-                    f for f in files_with_nulls if f["null_miner_count"] < 5
-                ]
+                completely_empty = [f for f in files_with_nulls if f["null_miner_count"] == 5]
+                partially_empty = [f for f in files_with_nulls if f["null_miner_count"] < 5]
 
-                logger.info(
-                    f"🔍 Found {len(files_with_nulls)} files needing reassignment:"
-                )
-                logger.info(
-                    f"   - {len(completely_empty)} completely empty (0/5 miners)"
-                )
-                logger.info(
-                    f"   - {len(partially_empty)} partially empty (1-4/5 miners)"
-                )
+                logger.info(f"🔍 Found {len(files_with_nulls)} files needing reassignment:")
+                logger.info(f"   - {len(completely_empty)} completely empty (0/5 miners)")
+                logger.info(f"   - {len(partially_empty)} partially empty (1-4/5 miners)")
 
                 if completely_empty:
-                    logger.info(
-                        f"🎯 Prioritizing {len(completely_empty)} completely empty files:"
-                    )
+                    logger.info(f"🎯 Prioritizing {len(completely_empty)} completely empty files:")
                     for file_info in completely_empty[:3]:  # Show first 3
-                        logger.info(
-                            f"     {file_info['cid'][:20]}... (all NULL miners)"
-                        )
+                        logger.info(f"     {file_info['cid'][:20]}... (all NULL miners)")
 
             return files_with_nulls
 
@@ -301,8 +275,7 @@ class FileAssignmentProcessor:
         if days_since_registration <= self.new_miner_boost_days:
             # Linear boost from max factor to 1.0 over the boost period
             new_miner_boost = self.new_miner_boost_factor - (
-                (self.new_miner_boost_factor - 1.0)
-                * (days_since_registration / self.new_miner_boost_days)
+                (self.new_miner_boost_factor - 1.0) * (days_since_registration / self.new_miner_boost_days)
             )
         else:
             new_miner_boost = 1.0
@@ -331,10 +304,8 @@ class FileAssignmentProcessor:
             storage_score * 0.40
             + file_score * 0.20
             + health_score * 0.15
-            + min(1.0, days_since_registration / 365)
-            * 0.10  # Older miners get slight preference for stability
-            + (1.0 - min(1.0, batch_assignments / 5.0))
-            * 0.15  # Prefer miners with fewer current assignments
+            + min(1.0, days_since_registration / 365) * 0.10  # Older miners get slight preference for stability
+            + (1.0 - min(1.0, batch_assignments / 5.0)) * 0.15  # Prefer miners with fewer current assignments
         )
 
         # Apply new miner boost and load balancing penalty
@@ -379,9 +350,7 @@ class FileAssignmentProcessor:
                 continue
 
             # Use actual IPFS repo size as primary indicator of usage
-            ipfs_repo_size = miner[
-                "used_storage_bytes"
-            ]  # from node_metrics.ipfs_repo_size
+            ipfs_repo_size = miner["used_storage_bytes"]  # from node_metrics.ipfs_repo_size
             calculated_size = miner["total_files_size_bytes"]  # from our miner_stats
 
             # Use the higher value as a safety measure, but prefer actual IPFS data
@@ -427,26 +396,18 @@ class FileAssignmentProcessor:
         for miner in suitable_miners:
             score = self.calculate_miner_score(miner)
             if score > 0:  # Only include miners with positive scores
-                scored_miners.append(
-                    {"node_id": miner["node_id"], "score": score, "miner_data": miner}
-                )
+                scored_miners.append({"node_id": miner["node_id"], "score": score, "miner_data": miner})
 
         if len(scored_miners) < self.replicas_per_file:
-            logger.warning(
-                f"Only {len(scored_miners)} miners with positive scores, need {self.replicas_per_file}"
-            )
+            logger.warning(f"Only {len(scored_miners)} miners with positive scores, need {self.replicas_per_file}")
             return [m["node_id"] for m in scored_miners]
 
         # Use weighted random selection for better distribution
-        selected_miners = self._weighted_random_selection(
-            scored_miners, self.replicas_per_file
-        )
+        selected_miners = self._weighted_random_selection(scored_miners, self.replicas_per_file)
 
         return selected_miners
 
-    def _weighted_random_selection(
-        self, scored_miners: List[Dict[str, Any]], count: int
-    ) -> List[str]:
+    def _weighted_random_selection(self, scored_miners: List[Dict[str, Any]], count: int) -> List[str]:
         """
         Select miners using weighted random selection based on their scores.
         This promotes better distribution across the network.
@@ -475,9 +436,7 @@ class FileAssignmentProcessor:
                 break
 
             # Weighted random selection
-            selected_idx = random.choices(
-                range(len(remaining_miners)), weights=remaining_probs
-            )[0]
+            selected_idx = random.choices(range(len(remaining_miners)), weights=remaining_probs)[0]
             selected_miner = remaining_miners.pop(selected_idx)
             remaining_probs.pop(selected_idx)
 
@@ -525,9 +484,7 @@ class FileAssignmentProcessor:
                 continue
 
             # Use actual IPFS repo size as primary indicator of usage
-            ipfs_repo_size = miner[
-                "used_storage_bytes"
-            ]  # from node_metrics.ipfs_repo_size
+            ipfs_repo_size = miner["used_storage_bytes"]  # from node_metrics.ipfs_repo_size
             calculated_size = miner["total_files_size_bytes"]  # from our miner_stats
 
             # Use the higher value as a safety measure, but prefer actual IPFS data
@@ -558,9 +515,7 @@ class FileAssignmentProcessor:
         for miner in suitable_miners:
             score = self.calculate_miner_score(miner)
             if score > 0:
-                scored_miners.append(
-                    {"node_id": miner["node_id"], "score": score, "miner_data": miner}
-                )
+                scored_miners.append({"node_id": miner["node_id"], "score": score, "miner_data": miner})
 
         if len(scored_miners) < empty_slots:
             return [m["node_id"] for m in scored_miners]
@@ -584,9 +539,7 @@ class FileAssignmentProcessor:
 
                 # Track batch assignments for load balancing
                 miner_id = miner["node_id"]
-                self.batch_assignments[miner_id] = (
-                    self.batch_assignments.get(miner_id, 0) + 1
-                )
+                self.batch_assignments[miner_id] = self.batch_assignments.get(miner_id, 0) + 1
 
                 logger.debug(
                     f"Updated miner {miner['node_id']}: +{file_size} bytes, +1 file, "
@@ -629,14 +582,10 @@ class FileAssignmentProcessor:
                 owner = file_info["owner"]
                 filename = file_info.get("filename", "")
 
-                logger.info(
-                    f"Assigning new file {filename} ({cid[:16]}...) - Size: {file_size:,} bytes"
-                )
+                logger.info(f"Assigning new file {filename} ({cid[:16]}...) - Size: {file_size:,} bytes")
 
                 # Select miners for this file
-                selected_miners = self.select_miners_for_file(
-                    available_miners, file_size
-                )
+                selected_miners = self.select_miners_for_file(available_miners, file_size)
 
                 # CRITICAL VALIDATION: Check if we have enough miners
                 if len(selected_miners) < min_required_miners:
@@ -696,9 +645,7 @@ class FileAssignmentProcessor:
                 )
 
             except Exception as e:
-                logger.error(
-                    f"❌ Error processing file {file_info.get('cid', 'unknown')}: {e}"
-                )
+                logger.error(f"❌ Error processing file {file_info.get('cid', 'unknown')}: {e}")
                 failed_assignments += 1
                 continue
 
@@ -716,9 +663,7 @@ class FileAssignmentProcessor:
             logger.info("No files found needing reassignment")
             return 0, 0
 
-        logger.info(
-            f"Found {len(files_needing_reassignment)} files needing reassignment"
-        )
+        logger.info(f"Found {len(files_needing_reassignment)} files needing reassignment")
 
         successful_reassignments = 0
         failed_reassignments = 0
@@ -754,9 +699,7 @@ class FileAssignmentProcessor:
                 )
 
                 if not new_miners:
-                    logger.warning(
-                        f"No suitable miners found for reassignment of file {cid}"
-                    )
+                    logger.warning(f"No suitable miners found for reassignment of file {cid}")
                     failed_reassignments += 1
                     continue
 
@@ -786,9 +729,7 @@ class FileAssignmentProcessor:
                 )
 
             except Exception as e:
-                logger.error(
-                    f"Error processing reassignment for file {file_info.get('cid', 'unknown')}: {e}"
-                )
+                logger.error(f"Error processing reassignment for file {file_info.get('cid', 'unknown')}: {e}")
                 failed_reassignments += 1
                 continue
 
@@ -807,9 +748,7 @@ class FileAssignmentProcessor:
         Returns:
             Tuple of (successful_replacements, failed_replacements)
         """
-        files_with_failing_miners = await self.get_files_with_failing_miners(
-            current_epoch
-        )
+        files_with_failing_miners = await self.get_files_with_failing_miners(current_epoch)
         if not files_with_failing_miners:
             logger.info("No files found with failing miners")
             return 0, 0
@@ -838,11 +777,7 @@ class FileAssignmentProcessor:
                 ]
 
                 # Get healthy miners (exclude failing ones)
-                healthy_miners = [
-                    m
-                    for m in current_miners
-                    if m is not None and m not in failing_miners
-                ]
+                healthy_miners = [m for m in current_miners if m is not None and m not in failing_miners]
 
                 logger.info(
                     f"Replacing failing miners for file {filename} ({cid[:16]}...) - "
@@ -856,9 +791,7 @@ class FileAssignmentProcessor:
                 )
 
                 if not replacement_miners:
-                    logger.warning(
-                        f"No suitable replacement miners found for file {cid}"
-                    )
+                    logger.warning(f"No suitable replacement miners found for file {cid}")
                     failed_replacements += 1
                     continue
 
@@ -875,9 +808,7 @@ class FileAssignmentProcessor:
                 replacement_idx = 0
 
                 for i, miner in enumerate(new_miners):
-                    if miner in failing_miners and replacement_idx < len(
-                        replacement_miners
-                    ):
+                    if miner in failing_miners and replacement_idx < len(replacement_miners):
                         new_miners[i] = replacement_miners[replacement_idx]
                         replacement_idx += 1
 
@@ -933,27 +864,17 @@ class FileAssignmentProcessor:
             logger.info(f"Found {len(available_miners)} available miners")
 
             # PRIORITY 1: Fix files with NULL miners in file_assignments table (ALWAYS FIRST)
-            logger.info(
-                "🎯 PRIORITY 1: Scanning file_assignments table for NULL miners..."
-            )
-            reassign_successful, reassign_failed = await self.process_reassignments(
-                available_miners, current_epoch
-            )
+            logger.info("🎯 PRIORITY 1: Scanning file_assignments table for NULL miners...")
+            reassign_successful, reassign_failed = await self.process_reassignments(available_miners, current_epoch)
 
             # PRIORITY 2: Process new file assignments from pending table
-            logger.info(
-                "📋 PRIORITY 2: Processing new files from pending_assignment_file..."
-            )
-            new_successful, new_failed = await self.process_new_file_assignments(
-                available_miners, current_epoch
-            )
+            logger.info("📋 PRIORITY 2: Processing new files from pending_assignment_file...")
+            new_successful, new_failed = await self.process_new_file_assignments(available_miners, current_epoch)
 
             # PRIORITY 3: Process failing miner replacements
             logger.info("🔄 PRIORITY 3: Processing failing miner replacements...")
-            replace_successful, replace_failed = (
-                await self.process_failing_miner_replacements(
-                    available_miners, current_epoch
-                )
+            replace_successful, replace_failed = await self.process_failing_miner_replacements(
+                available_miners, current_epoch
             )
 
             # Summary
@@ -961,18 +882,10 @@ class FileAssignmentProcessor:
             total_failed = new_failed + reassign_failed + replace_failed
 
             logger.info(f"📊 File assignment processing complete:")
-            logger.info(
-                f"  🎯 NULL miner fixes: {reassign_successful} successful, {reassign_failed} failed"
-            )
-            logger.info(
-                f"  📋 New assignments: {new_successful} successful, {new_failed} failed"
-            )
-            logger.info(
-                f"  🔄 Failing replacements: {replace_successful} successful, {replace_failed} failed"
-            )
-            logger.info(
-                f"  📈 Total: {total_successful} successful, {total_failed} failed"
-            )
+            logger.info(f"  🎯 NULL miner fixes: {reassign_successful} successful, {reassign_failed} failed")
+            logger.info(f"  📋 New assignments: {new_successful} successful, {new_failed} failed")
+            logger.info(f"  🔄 Failing replacements: {replace_successful} successful, {replace_failed} failed")
+            logger.info(f"  📈 Total: {total_successful} successful, {total_failed} failed")
 
             # CRITICAL: Check for remaining NULL assignments
             async with self.db_pool.acquire() as conn:
@@ -985,9 +898,7 @@ class FileAssignmentProcessor:
                 )
 
                 if remaining_nulls == 0:
-                    logger.info(
-                        "🎉 SUCCESS: All files now have complete miner assignments!"
-                    )
+                    logger.info("🎉 SUCCESS: All files now have complete miner assignments!")
                 else:
                     logger.warning(
                         f"⚠️ {remaining_nulls} files still have NULL miners - may need larger batch size or more miners"
@@ -1011,9 +922,7 @@ class FileAssignmentProcessor:
         avg_assignments = total_assignments / unique_miners if unique_miners > 0 else 0
 
         # Sort miners by assignment count
-        sorted_assignments = sorted(
-            self.batch_assignments.items(), key=lambda x: x[1], reverse=True
-        )
+        sorted_assignments = sorted(self.batch_assignments.items(), key=lambda x: x[1], reverse=True)
 
         logger.info(f"📊 Distribution Statistics:")
         logger.info(f"  Total assignments: {total_assignments}")
@@ -1029,9 +938,7 @@ class FileAssignmentProcessor:
         assignment_counts = list(self.batch_assignments.values())
         min_assignments = min(assignment_counts)
         max_assignments = max(assignment_counts)
-        logger.info(
-            f"  Assignment range: {min_assignments} - {max_assignments} per miner"
-        )
+        logger.info(f"  Assignment range: {min_assignments} - {max_assignments} per miner")
 
     async def close(self):
         """Close all connections."""
@@ -1043,9 +950,7 @@ class FileAssignmentProcessor:
             self.substrate.close()
             logger.info("Closed substrate connection")
 
-    async def get_files_with_failing_miners(
-        self, current_epoch: int
-    ) -> List[Dict[str, Any]]:
+    async def get_files_with_failing_miners(self, current_epoch: int) -> List[Dict[str, Any]]:
         """
         Get files assigned to miners with failing pin checks that need reassignment.
 

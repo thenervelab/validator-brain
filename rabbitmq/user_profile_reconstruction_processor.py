@@ -19,14 +19,12 @@ from substrateinterface import SubstrateInterface
 
 # Setup logging
 
-logger = logging.getLogger("user-profile-reconstruction-processor")
+logger = logging.getLogger(__name__)
 
 
 class UserProfileReconstructionProcessor:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.database_url = os.getenv(
             "DATABASE_URL",
             "postgresql://user:password@localhost:5432/substrate_fetcher",
@@ -41,9 +39,7 @@ class UserProfileReconstructionProcessor:
     async def connect_database(self):
         """Connect to PostgreSQL database"""
         try:
-            self.db_pool = await asyncpg.create_pool(
-                self.database_url, min_size=1, max_size=10
-            )
+            self.db_pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=10)
             logger.info("Connected to database")
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
@@ -77,9 +73,7 @@ class UserProfileReconstructionProcessor:
             # Use a default block number if we can't fetch it
             self.current_block = 0
 
-    async def assign_fallback_miners(
-        self, owner: str, unassigned_files: List[Dict[str, Any]], conn
-    ) -> None:
+    async def assign_fallback_miners(self, owner: str, unassigned_files: List[Dict[str, Any]], conn) -> None:
         """
         Assign miners to unassigned files as a fallback during profile reconstruction.
         This ensures no files are lost if the main file assignment process missed them.
@@ -114,9 +108,7 @@ class UserProfileReconstructionProcessor:
             )
 
             if not available_miners:
-                logger.error(
-                    f"No available miners found for fallback assignment for user {owner}"
-                )
+                logger.error(f"No available miners found for fallback assignment for user {owner}")
                 return
 
             # Track assignments for load balancing within this fallback session
@@ -144,12 +136,8 @@ class UserProfileReconstructionProcessor:
                 scored_miners = []
                 for miner in available_miners:
                     # Use actual IPFS repo size as primary indicator of usage
-                    ipfs_repo_size = miner[
-                        "used_storage_bytes"
-                    ]  # from node_metrics.ipfs_repo_size
-                    calculated_size = miner[
-                        "total_files_size_bytes"
-                    ]  # from our miner_stats
+                    ipfs_repo_size = miner["used_storage_bytes"]  # from node_metrics.ipfs_repo_size
+                    calculated_size = miner["total_files_size_bytes"]  # from our miner_stats
 
                     # Use the higher value as a safety measure, but prefer actual IPFS data
                     if ipfs_repo_size > 0:
@@ -167,11 +155,7 @@ class UserProfileReconstructionProcessor:
                         continue
 
                     # Calculate score based on available storage and current assignments
-                    storage_score = (
-                        available_storage / storage_capacity
-                        if storage_capacity > 0
-                        else 0
-                    )
+                    storage_score = available_storage / storage_capacity if storage_capacity > 0 else 0
                     health_score = min(1.0, miner["health_score"] / 100.0)
 
                     # Penalize miners that have been assigned files in this fallback session
@@ -179,9 +163,7 @@ class UserProfileReconstructionProcessor:
                     load_penalty = 0.8**fallback_count  # Exponential penalty
 
                     # Combined score
-                    final_score = (
-                        storage_score * 0.6 + health_score * 0.4
-                    ) * load_penalty
+                    final_score = (storage_score * 0.6 + health_score * 0.4) * load_penalty
 
                     scored_miners.append(
                         {
@@ -196,24 +178,15 @@ class UserProfileReconstructionProcessor:
                         f"No miners with sufficient capacity for file {cid} (size: {file_size:,}, need: {required_space:,} with safety margin)"
                     )
                     # Use first available miners as last resort
-                    selected_miners = [
-                        m["node_id"]
-                        for m in available_miners[: min(3, len(available_miners))]
-                    ]
-                    logger.warning(
-                        f"Using {len(selected_miners)} miners as last resort for file {cid}"
-                    )
+                    selected_miners = [m["node_id"] for m in available_miners[: min(3, len(available_miners))]]
+                    logger.warning(f"Using {len(selected_miners)} miners as last resort for file {cid}")
                 else:
                     # Use weighted random selection for better distribution
-                    selected_miners = self._fallback_weighted_selection(
-                        scored_miners, needed_miners
-                    )
+                    selected_miners = self._fallback_weighted_selection(scored_miners, needed_miners)
 
                 # Update fallback assignment tracking
                 for miner_id in selected_miners:
-                    fallback_assignments[miner_id] = (
-                        fallback_assignments.get(miner_id, 0) + 1
-                    )
+                    fallback_assignments[miner_id] = fallback_assignments.get(miner_id, 0) + 1
 
                 # Combine existing miners with newly selected miners
                 combined_miners = existing_miners + selected_miners
@@ -286,9 +259,7 @@ class UserProfileReconstructionProcessor:
         except Exception as e:
             logger.exception(f"Error in fallback miner assignment for user {owner}")
 
-    def _fallback_weighted_selection(
-        self, scored_miners: List[Dict[str, Any]], count: int
-    ) -> List[str]:
+    def _fallback_weighted_selection(self, scored_miners: List[Dict[str, Any]], count: int) -> List[str]:
         """Weighted random selection for fallback assignments."""
         import random
 
@@ -316,9 +287,7 @@ class UserProfileReconstructionProcessor:
                 selected_miner = random.choice(remaining_miners)
             else:
                 probabilities = [m["score"] / current_total for m in remaining_miners]
-                selected_idx = random.choices(
-                    range(len(remaining_miners)), weights=probabilities
-                )[0]
+                selected_idx = random.choices(range(len(remaining_miners)), weights=probabilities)[0]
                 selected_miner = remaining_miners[selected_idx]
 
             selected_miners.append(selected_miner["node_id"])
@@ -441,18 +410,14 @@ class UserProfileReconstructionProcessor:
                         f"size {row['last_profile_total_size']} -> {row['current_total_size']}"
                     )
                     if row["new_pending_files"] > 0:
-                        logger.info(
-                            f"  - Including {row['new_pending_files']} NEW files from storage requests"
-                        )
+                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
                 else:
                     logger.info(
                         f"User {row['owner']} needs initial profile: "
                         f"{row['current_file_count']} files, {row['current_total_size']} bytes"
                     )
                     if row["new_pending_files"] > 0:
-                        logger.info(
-                            f"  - Including {row['new_pending_files']} NEW files from storage requests"
-                        )
+                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
 
             return [{"owner": row["owner"]} for row in users_rows]
 
@@ -572,17 +537,11 @@ class UserProfileReconstructionProcessor:
     async def send_to_queue(self, profile_data: Dict[str, Any]) -> None:
         """Send profile data to RabbitMQ queue"""
         message_body = json.dumps(profile_data)
-        message = Message(
-            body=message_body.encode(), delivery_mode=2  # Make message persistent
-        )
+        message = Message(body=message_body.encode(), delivery_mode=2)  # Make message persistent
 
-        await self.rabbitmq_channel.default_exchange.publish(
-            message, routing_key=self.queue_name
-        )
+        await self.rabbitmq_channel.default_exchange.publish(message, routing_key=self.queue_name)
 
-        logger.debug(
-            f"Sent profile to queue: {profile_data['owner']} -> {profile_data['cid']}"
-        )
+        logger.debug(f"Sent profile to queue: {profile_data['owner']} -> {profile_data['cid']}")
 
     async def process_profiles(self):
         """Main processing loop"""
@@ -628,14 +587,10 @@ class UserProfileReconstructionProcessor:
                     "5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55",
                     "5HoreGVb17XhY3wanDvzoAWS7yHYbc5uMteXqRNTiZ6Txkqq",
                 ):
-                    debug_filename = (
-                        f"/tmp/debug_profile_{owner}_{self.current_block}.json"
-                    )
+                    debug_filename = f"/tmp/debug_profile_{owner}_{self.current_block}.json"
                     async with aiofiles.open(debug_filename, "w") as f:
                         await f.write(json.dumps(message_data, indent=2))
-                    logger.info(
-                        f"DEBUG: Dumped profile JSON for user {owner} to {debug_filename}"
-                    )
+                    logger.info(f"DEBUG: Dumped profile JSON for user {owner} to {debug_filename}")
                     logger.info(
                         f"DEBUG: Profile data - files: {file_count}, total_size: {total_size}, block: {self.current_block}"
                     )
@@ -643,14 +598,10 @@ class UserProfileReconstructionProcessor:
                 # Send to queue
                 await self.send_to_queue(message_data)
 
-                logger.info(
-                    f"Queued profile for user {owner}: {file_count} files, {total_size} bytes"
-                )
+                logger.info(f"Queued profile for user {owner}: {file_count} files, {total_size} bytes")
 
             except Exception as e:
-                logger.error(
-                    f"Error processing profile for user {profile['owner']}: {e}"
-                )
+                logger.error(f"Error processing profile for user {profile['owner']}: {e}")
                 continue
 
         logger.info(f"Successfully queued {len(profiles)} profiles for reconstruction")

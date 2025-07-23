@@ -34,14 +34,12 @@ load_dotenv()
 
 # Setup logging
 
-logger = logging.getLogger("network-self-healing-consumer")
+logger = logging.getLogger(__name__)
 
 
 class NetworkSelfHealingConsumer:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "network_self_healing"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
@@ -61,9 +59,7 @@ class NetworkSelfHealingConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def find_healthy_miners(
-        self, exclude_miners: List[str], needed_count: int
-    ) -> List[str]:
+    async def find_healthy_miners(self, exclude_miners: List[str], needed_count: int) -> List[str]:
         """
         Find healthy miners to fill empty assignment slots.
 
@@ -119,22 +115,14 @@ class NetworkSelfHealingConsumer:
                     break
 
             if len(healthy_miners) < needed_count:
-                logger.warning(
-                    f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria"
-                )
-                logger.warning(
-                    f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB"
-                )
+                logger.warning(f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria")
+                logger.warning(f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB")
                 logger.warning(f"   Excluded miners: {len(exclude_set)}")
 
                 # Additional debugging info
                 offline_count = len([m for m in all_miners if m["health_score"] < 20.0])
-                overloaded_count = len(
-                    [m for m in all_miners if m["total_size"] >= 10737418240]
-                )
-                logger.warning(
-                    f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded"
-                )
+                overloaded_count = len([m for m in all_miners if m["total_size"] >= 10737418240])
+                logger.warning(f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded")
 
             return healthy_miners
 
@@ -155,9 +143,7 @@ class NetworkSelfHealingConsumer:
         current_miners = healing_data.get("current_miners", [])
 
         if not cid or not owner:
-            logger.error(
-                f"Invalid healing data: missing cid or owner. Data: {healing_data}"
-            )
+            logger.error(f"Invalid healing data: missing cid or owner. Data: {healing_data}")
             return False
 
         logger.info(f"🛠️ Processing healing for file {filename} ({cid[:16]}...)")
@@ -166,17 +152,11 @@ class NetworkSelfHealingConsumer:
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
                     # 1. Acquire advisory lock for this specific file (prevents parallel processing)
-                    cid_hash = (
-                        hash(cid) % 2147483647
-                    )  # Convert CID to integer for advisory lock
-                    lock_acquired = await conn.fetchval(
-                        "SELECT pg_try_advisory_xact_lock($1)", cid_hash
-                    )
+                    cid_hash = hash(cid) % 2147483647  # Convert CID to integer for advisory lock
+                    lock_acquired = await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", cid_hash)
 
                     if not lock_acquired:
-                        logger.info(
-                            f"🔒 File {cid[:16]}... is being processed by another consumer, skipping"
-                        )
+                        logger.info(f"🔒 File {cid[:16]}... is being processed by another consumer, skipping")
                         return True  # Not an error, just skip
 
                     # 2. Get current assignment state (now protected by advisory lock)
@@ -213,19 +193,13 @@ class NetworkSelfHealingConsumer:
                             assigned_miners.append(miner)
 
                     if not empty_slots:
-                        logger.info(
-                            f"✅ File {cid[:16]}... already has all slots filled"
-                        )
+                        logger.info(f"✅ File {cid[:16]}... already has all slots filled")
                         return True
 
-                    logger.info(
-                        f"🔍 File {cid[:16]}... has {len(empty_slots)} empty slots to fill"
-                    )
+                    logger.info(f"🔍 File {cid[:16]}... has {len(empty_slots)} empty slots to fill")
 
                     # 4. Find healthy miners to fill empty slots
-                    new_miners = await self.find_healthy_miners(
-                        assigned_miners, len(empty_slots)
-                    )
+                    new_miners = await self.find_healthy_miners(assigned_miners, len(empty_slots))
 
                     if len(new_miners) < len(empty_slots):
                         logger.warning(
@@ -280,12 +254,8 @@ class NetworkSelfHealingConsumer:
                     )
 
                     # Log final assignment state for debugging
-                    final_assignments = [
-                        m[:20] + "..." if m else "NULL" for m in updated_miners
-                    ]
-                    logger.debug(
-                        f"🔍 Final assignment state: [{', '.join(final_assignments)}]"
-                    )
+                    final_assignments = [m[:20] + "..." if m else "NULL" for m in updated_miners]
+                    logger.debug(f"🔍 Final assignment state: [{', '.join(final_assignments)}]")
 
                     # The updated_at timestamp change will automatically trigger user profile reconstruction
                     logger.info(
@@ -310,13 +280,9 @@ class NetworkSelfHealingConsumer:
                 success = await self.process_file_healing(healing_data)
 
                 if success:
-                    logger.debug(
-                        f"✅ Successfully processed healing for {healing_data.get('cid', 'unknown')}"
-                    )
+                    logger.debug(f"✅ Successfully processed healing for {healing_data.get('cid', 'unknown')}")
                 else:
-                    logger.error(
-                        f"❌ Failed to process healing for {healing_data.get('cid', 'unknown')}"
-                    )
+                    logger.error(f"❌ Failed to process healing for {healing_data.get('cid', 'unknown')}")
 
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to decode message: {e}")
@@ -328,9 +294,7 @@ class NetworkSelfHealingConsumer:
         """Start consuming messages from the queue."""
         try:
             # Declare the queue (in case it doesn't exist)
-            queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"🚀 Starting to consume from queue '{self.queue_name}'")
 
@@ -338,9 +302,7 @@ class NetworkSelfHealingConsumer:
             await queue.consume(self.message_handler)
 
             # Keep the consumer running
-            logger.info(
-                "🛠️ Network self-healing consumer is running. Press Ctrl+C to stop."
-            )
+            logger.info("🛠️ Network self-healing consumer is running. Press Ctrl+C to stop.")
             try:
                 await asyncio.Future()  # Run forever
             except asyncio.CancelledError:

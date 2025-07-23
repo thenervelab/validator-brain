@@ -35,14 +35,12 @@ load_dotenv()
 
 # Setup logging
 
-logger = logging.getLogger("file-assignment-consumer")
+logger = logging.getLogger(__name__)
 
 
 class FileAssignmentConsumer:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "file_assignment_processing"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
@@ -81,9 +79,7 @@ class FileAssignmentConsumer:
             valid_miners = [m for m in assigned_miners if m is not None and m.strip()]
 
             # CRITICAL VALIDATION: Require minimum miners
-            min_required_miners = int(
-                os.getenv("MIN_REQUIRED_MINERS", "3")
-            )  # Default 3, can be configured
+            min_required_miners = int(os.getenv("MIN_REQUIRED_MINERS", "3"))  # Default 3, can be configured
 
             if len(valid_miners) < min_required_miners:
                 logger.error(
@@ -174,9 +170,7 @@ class FileAssignmentConsumer:
 
                     # 5. Batch update miner stats for assigned miners
                     if valid_miners:
-                        batch_data = [
-                            (miner_id, file_size_bytes) for miner_id in valid_miners
-                        ]
+                        batch_data = [(miner_id, file_size_bytes) for miner_id in valid_miners]
                         await conn.executemany(
                             """
                             INSERT INTO miner_stats (
@@ -218,14 +212,10 @@ class FileAssignmentConsumer:
         filename = assignment_data.get("filename", "")
         file_size_bytes = assignment_data.get("file_size_bytes", 0)
         new_miners = assignment_data.get("new_miners", [])
-        null_miner_count = assignment_data.get(
-            "null_miner_count", 0
-        )  # From enhanced processor
+        null_miner_count = assignment_data.get("null_miner_count", 0)  # From enhanced processor
 
         if not cid or not owner or not new_miners:
-            logger.error(
-                f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}"
-            )
+            logger.error(f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}")
             return False
 
         # Enhanced logging for NULL miner fixes
@@ -271,9 +261,7 @@ class FileAssignmentConsumer:
 
                     # Debug: Log current state
                     current_null_count = sum(1 for m in current_list if m is None)
-                    logger.debug(
-                        f"Current assignment state: {current_null_count} NULL slots out of 5"
-                    )
+                    logger.debug(f"Current assignment state: {current_null_count} NULL slots out of 5")
 
                     # 3. Fill empty slots with new miners
                     new_miner_index = 0
@@ -283,9 +271,7 @@ class FileAssignmentConsumer:
                         if current_miner is None and new_miner_index < len(new_miners):
                             # Fill empty slot with new miner
                             updated_miners.append(new_miners[new_miner_index])
-                            logger.debug(
-                                f"   Slot {i+1}: NULL → {new_miners[new_miner_index]}"
-                            )
+                            logger.debug(f"   Slot {i+1}: NULL → {new_miners[new_miner_index]}")
                             new_miner_index += 1
                         else:
                             # Keep existing miner (or None if no new miners left)
@@ -321,9 +307,7 @@ class FileAssignmentConsumer:
                     # 5. Batch update miner stats for newly assigned miners
                     valid_new_miners = [miner_id for miner_id in new_miners if miner_id]
                     if valid_new_miners:
-                        batch_data = [
-                            (miner_id, file_size_bytes) for miner_id in valid_new_miners
-                        ]
+                        batch_data = [(miner_id, file_size_bytes) for miner_id in valid_new_miners]
                         await conn.executemany(
                             """
                             INSERT INTO miner_stats (
@@ -357,9 +341,7 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
 
-    async def process_failing_miner_replacement(
-        self, assignment_data: Dict[str, Any]
-    ) -> bool:
+    async def process_failing_miner_replacement(self, assignment_data: Dict[str, Any]) -> bool:
         """
         Process a failing miner replacement task.
 
@@ -479,9 +461,7 @@ class FileAssignmentConsumer:
                     return True
 
         except Exception as e:
-            logger.error(
-                f"Error processing failing miner replacement for file {cid}: {e}"
-            )
+            logger.error(f"Error processing failing miner replacement for file {cid}: {e}")
             logger.exception("Full traceback:")
             return False
 
@@ -503,9 +483,7 @@ class FileAssignmentConsumer:
         reason = assignment_data.get("reason", "Network rebalancing")
 
         if not cid or not from_miner or not to_miner:
-            logger.error(
-                f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}"
-            )
+            logger.error(f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}")
             return False
 
         logger.info(
@@ -549,18 +527,14 @@ class FileAssignmentConsumer:
                             # Replace the first occurrence of from_miner with to_miner
                             updated_miners.append(to_miner)
                             found_miner = True
-                            logger.debug(
-                                f"   Replaced {from_miner[:12]}... with {to_miner[:12]}..."
-                            )
+                            logger.debug(f"   Replaced {from_miner[:12]}... with {to_miner[:12]}...")
                         else:
                             # Keep existing miner
                             updated_miners.append(current_miner)
 
                     # 4. Verify the replacement was made
                     if not found_miner:
-                        logger.error(
-                            f"Miner {from_miner} not found in current assignment for file {cid}"
-                        )
+                        logger.error(f"Miner {from_miner} not found in current assignment for file {cid}")
                         logger.error(f"Current miners: {current_list}")
                         return False
 
@@ -693,9 +667,7 @@ class FileAssignmentConsumer:
         """Start consuming messages from the queue."""
         try:
             # Declare the queue (in case it doesn't exist)
-            queue = await self.rabbitmq_channel.declare_queue(
-                self.queue_name, durable=True
-            )
+            queue = await self.rabbitmq_channel.declare_queue(self.queue_name, durable=True)
 
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
 

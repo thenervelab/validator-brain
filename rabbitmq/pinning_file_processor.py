@@ -28,14 +28,12 @@ from app.utils.config import IPFS_GATEWAY, get_ipfs_timeout
 
 # Setup logging
 
-logger = logging.getLogger("pinning-file-processor")
+logger = logging.getLogger(__name__)
 
 
 class PinningFileProcessor:
     def __init__(self):
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "pinning_file_processing"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
@@ -81,9 +79,7 @@ class PinningFileProcessor:
 
             return [dict(row) for row in rows]
 
-    async def fetch_file_content(
-        self, file_hash: str
-    ) -> Optional[List[Dict[str, Any]]]:
+    async def fetch_file_content(self, file_hash: str) -> Optional[List[Dict[str, Any]]]:
         """
         Fetch file content from IPFS and parse as JSON.
 
@@ -103,13 +99,9 @@ class PinningFileProcessor:
                         cid = bytes.fromhex(file_hash[2:]).decode("utf-8")
                     else:
                         cid = bytes.fromhex(file_hash).decode("utf-8")
-                    logger.debug(
-                        f"Converted hex file_hash to CID: {file_hash[:20]}... -> {cid[:20]}..."
-                    )
+                    logger.debug(f"Converted hex file_hash to CID: {file_hash[:20]}... -> {cid[:20]}...")
                 except Exception as e:
-                    logger.warning(
-                        f"Could not convert hex file_hash to CID: {e}, using as-is"
-                    )
+                    logger.warning(f"Could not convert hex file_hash to CID: {e}, using as-is")
                     cid = file_hash
 
             gateway_url = IPFS_GATEWAY
@@ -136,15 +128,11 @@ class PinningFileProcessor:
                 else:
                     logger.warning(f"Invalid file object in {file_hash}: {file_obj}")
 
-            logger.info(
-                f"Successfully fetched {len(valid_files)} files from {file_hash}"
-            )
+            logger.info(f"Successfully fetched {len(valid_files)} files from {file_hash}")
             return valid_files
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"HTTP error fetching file {file_hash}: {e.response.status_code}"
-            )
+            logger.error(f"HTTP error fetching file {file_hash}: {e.response.status_code}")
             return None
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error for file {file_hash}: {e}")
@@ -153,9 +141,7 @@ class PinningFileProcessor:
             logger.error(f"Error fetching file {file_hash}: {e}")
             return None
 
-    async def queue_file_for_processing(
-        self, file_data: Dict[str, Any], owner: str
-    ) -> None:
+    async def queue_file_for_processing(self, file_data: Dict[str, Any], owner: str) -> None:
         """Queue a file for size processing"""
         message_data = {
             "cid": file_data["cid"],
@@ -203,14 +189,10 @@ class PinningFileProcessor:
                     await self.queue_file_for_processing(file_data, owner)
                     total_files_queued += 1
 
-                logger.info(
-                    f"Queued {len(files)} files from request {file_hash[:16]}..."
-                )
+                logger.info(f"Queued {len(files)} files from request {file_hash[:16]}...")
 
             except Exception as e:
-                logger.error(
-                    f"Error processing request {request.get('request_hash', 'unknown')}: {e}"
-                )
+                logger.error(f"Error processing request {request.get('request_hash', 'unknown')}: {e}")
                 continue
 
         logger.info(f"Successfully queued {total_files_queued} files for processing")

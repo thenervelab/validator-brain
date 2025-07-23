@@ -24,7 +24,7 @@ from app.db.models.pending_miner_profile import PendingMinerProfile
 
 # Setup logging
 
-logger = logging.getLogger("miner-profile-reconstruction-consumer")
+logger = logging.getLogger(__name__)
 
 
 class MinerProfileReconstructionConsumer:
@@ -192,7 +192,7 @@ class MinerProfileReconstructionConsumer:
                         await profile_record.mark_published()
 
                     logger.info(
-                        f"Successfully processed profile {profile_cid} -> {published_cid} for miner {message_data['node_id']} {message_data['owner']}"
+                        f"Successfully processed profile {profile_cid} -> {published_cid} for miner {message_data['node_id']} {profile_json['owner']}"
                     )
                 else:
                     # Mark as failed
@@ -214,9 +214,8 @@ class MinerProfileReconstructionConsumer:
 
                     logger.error(f"Failed to process profile {profile_cid}")
 
-            except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                # Log error and continue processing
+            except Exception:
+                logger.exception("Error processing message:")
 
     async def start_consuming(self):
         """Start consuming messages from the queue"""

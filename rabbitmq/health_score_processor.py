@@ -28,7 +28,7 @@ from app.utils.config import NODE_URL
 load_dotenv()
 
 
-logger = logging.getLogger("health-score-processor")
+logger = logging.getLogger(__name__)
 
 
 class HealthScoreProcessor:
@@ -92,9 +92,7 @@ class HealthScoreProcessor:
             """
             )
 
-            logger.info(
-                f"📊 Found {len(health_calculations):,} miners with recent health data"
-            )
+            logger.info(f"📊 Found {len(health_calculations):,} miners with recent health data")
 
             if not health_calculations:
                 logger.warning("No recent health data found to process")
@@ -120,9 +118,7 @@ class HealthScoreProcessor:
                 pin_failures = health["pin_check_failures"] or 0
 
                 total_successful = ping_successes + pin_successes
-                total_checks = (
-                    ping_successes + ping_failures + pin_successes + pin_failures
-                )
+                total_checks = ping_successes + ping_failures + pin_successes + pin_failures
 
                 batch_data.append((node_id, total_successful, total_checks))
 
@@ -157,9 +153,7 @@ class HealthScoreProcessor:
             """
             )
 
-            logger.info(
-                f"📈 Verification: {healthy_miners:,} miners now have health scores > 0"
-            )
+            logger.info(f"📈 Verification: {healthy_miners:,} miners now have health scores > 0")
 
             # Log sample of updated health scores
             sample_health = await conn.fetch(
@@ -174,17 +168,9 @@ class HealthScoreProcessor:
 
             logger.info("📊 Sample updated health scores:")
             for miner in sample_health:
-                node_short = (
-                    miner["node_id"][:20] + "..."
-                    if len(miner["node_id"]) > 20
-                    else miner["node_id"]
-                )
+                node_short = miner["node_id"][:20] + "..." if len(miner["node_id"]) > 20 else miner["node_id"]
                 score = miner["health_score"] or 0
-                updated = (
-                    miner["updated_at"].strftime("%H:%M:%S")
-                    if miner["updated_at"]
-                    else "unknown"
-                )
+                updated = miner["updated_at"].strftime("%H:%M:%S") if miner["updated_at"] else "unknown"
                 logger.info(f"   ✅ {node_short} - {score:.1f}% @ {updated}")
 
             return {"updated_count": updated_count, "healthy_miners": healthy_miners}
@@ -198,13 +184,9 @@ class HealthScoreProcessor:
         """
         try:
             current_epoch = self.get_current_epoch()
-            current_block = (
-                self.substrate.get_block_number(None) if self.substrate else None
-            )
+            current_block = self.substrate.get_block_number(None) if self.substrate else None
 
-            logger.info(
-                f"🏥 Processing health scores for epoch {current_epoch} (block: {current_block})"
-            )
+            logger.info(f"🏥 Processing health scores for epoch {current_epoch} (block: {current_block})")
 
             # Update health scores from epoch health data
             results = await self.update_health_scores_from_epoch_data()
