@@ -130,7 +130,7 @@ class MinerProfileReconstructionConsumer:
         ]
 
         # Execute all file processing in parallel with concurrency limit
-        semaphore = asyncio.Semaphore(50)  # Limit concurrent IPFS requests
+        semaphore = asyncio.Semaphore(100)  # Limit concurrent IPFS requests
         
         async def process_with_semaphore(task):
             async with semaphore:
