@@ -16,8 +16,6 @@ import sys
 from datetime import datetime
 from typing import Optional
 
-from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
-
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -180,25 +178,12 @@ class UserProfileConsumer:
                         logger.warning(f"Failed to convert file_hash to CID for {account}")
                         continue
 
-                    if file_size == 0:
-                        logger.warning(f"Found {file_cid=} with {file_size=}, re-fetching")
-                        correct_file_size = await fetch_ipfs_file_size(file_cid)
-                        if not correct_file_size:
-                            logger.warning(
-                                f"Got invalid {correct_file_size=} for {file_cid=}, will try again next time"
-                            )
-                        else:
-                            file_size = correct_file_size
-
-                    # Insert into files table (update size if it's 0 or different)
+                    # Insert into files table (skip if exists)
                     await conn.execute(
                         """
                         INSERT INTO files (cid, name, size, created_at)
                         VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (cid) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            size = EXCLUDED.size
-                        WHERE files.size = 0 OR (files.size != EXCLUDED.size AND EXCLUDED.size > 0)
+                        ON CONFLICT (cid) DO NOTHING
                     """,
                         file_cid,
                         file_name,
