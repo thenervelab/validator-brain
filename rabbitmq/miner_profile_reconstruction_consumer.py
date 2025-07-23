@@ -75,6 +75,39 @@ class MinerProfileReconstructionConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
+    async def process_file_parallel(self, file_data: Dict[str, Any], node_id: str, block_number: int, selected_validator: str) -> Optional[Dict[str, Any]]:
+        """Process a single file with potential IPFS size re-fetching"""
+        # Convert CID back to hex-encoded byte array
+        cid = file_data["cid"]
+        file_hash = list(cid.encode("utf-8"))
+
+        # Get the actual owner from file_assignments table
+        owner = await self.get_file_owner(cid)
+
+        # Skip files without owners to prevent incorrect charging
+        if not owner:
+            logger.warning(f"Skipping file {cid} - no owner found, cannot include in miner profile")
+            return None
+
+        file_size = file_data["size"]
+
+        if file_size == 0:
+            logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+            correct_file_size = await fetch_ipfs_file_size(cid)
+            if not correct_file_size:
+                logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+            else:
+                file_size = correct_file_size
+
+        return {
+            "created_at": block_number,
+            "file_hash": file_hash,
+            "file_size_in_bytes": file_size,
+            "miner_node_id": node_id,
+            "owner": owner,
+            "selected_validator": selected_validator,
+        }
+
     async def reconstruct_profile_json(self, message_data: Dict[str, Any]) -> list:
         """Reconstruct the miner profile as JSON in the original substrate format"""
         node_id = message_data["node_id"]
@@ -85,43 +118,29 @@ class MinerProfileReconstructionConsumer:
         if not selected_validator:
             raise ValueError("VALIDATOR_ACCOUNT_ID environment variable is required but not set")
 
-        # Build the profile as an array of file objects
-        profile_files = []
+        # Process all files in parallel
+        files_data = message_data.get("files", [])
+        if not files_data:
+            return []
 
-        # Add files to the profile in the original format
-        for file_data in message_data.get("files", []):
-            # Convert CID back to hex-encoded byte array
-            cid = file_data["cid"]
-            file_hash = list(cid.encode("utf-8"))
+        # Create tasks for parallel processing
+        tasks = [
+            self.process_file_parallel(file_data, node_id, block_number, selected_validator)
+            for file_data in files_data
+        ]
 
-            # Get the actual owner from file_assignments table
-            owner = await self.get_file_owner(cid)
+        # Execute all file processing in parallel with concurrency limit
+        semaphore = asyncio.Semaphore(50)  # Limit concurrent IPFS requests
+        
+        async def process_with_semaphore(task):
+            async with semaphore:
+                return await task
 
-            # Skip files without owners to prevent incorrect charging
-            if not owner:
-                logger.warning(f"Skipping file {cid} - no owner found, cannot include in miner profile")
-                continue
+        # Process files in parallel
+        file_results = await asyncio.gather(*[process_with_semaphore(task) for task in tasks])
 
-            file_size = file_data["size"]
-
-            if file_size == 0:
-                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
-                correct_file_size = await fetch_ipfs_file_size(cid)
-                if not correct_file_size:
-                    logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
-                else:
-                    file_size = correct_file_size
-
-            file_entry = {
-                "created_at": block_number,
-                "file_hash": file_hash,
-                "file_size_in_bytes": file_size,
-                "miner_node_id": node_id,
-                "owner": owner,
-                "selected_validator": selected_validator,
-            }
-
-            profile_files.append(file_entry)
+        # Filter out None results (files that were skipped due to missing owners)
+        profile_files = [file_entry for file_entry in file_results if file_entry is not None]
 
         return profile_files
 

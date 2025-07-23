@@ -56,6 +56,39 @@ class UserProfileReconstructionConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
+    async def process_file_parallel(self, file_data: Dict[str, Any], owner: str, block_number: int, selected_validator: str) -> Dict[str, Any]:
+        """Process a single file with potential IPFS size re-fetching"""
+        # Convert CID to hex-encoded byte array
+        cid = file_data["cid"]
+        file_hash = list(cid.encode("utf-8"))
+
+        # Convert file name to hex-encoded byte array for main_req_hash
+        file_name = file_data.get("name", "unknown")
+        main_req_hash = file_name.encode("utf-8").hex()
+        file_size = file_data["size"]
+
+        if file_size == 0:
+            logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+            correct_file_size = await fetch_ipfs_file_size(cid)
+            if not correct_file_size:
+                logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+            else:
+                file_size = correct_file_size
+
+        return {
+            "created_at": block_number,
+            "file_hash": file_hash,
+            "file_name": file_name,
+            "file_size_in_bytes": file_size,
+            "is_assigned": True,
+            "last_charged_at": block_number,
+            "main_req_hash": main_req_hash,
+            "miner_ids": file_data.get("miner_ids", []),
+            "owner": owner,
+            "selected_validator": selected_validator,
+            "total_replicas": file_data.get("total_replicas", 0),
+        }
+
     async def reconstruct_profile_json(self, message_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Reconstruct the user profile as JSON in the original substrate format"""
         owner = message_data["owner"]
@@ -66,43 +99,26 @@ class UserProfileReconstructionConsumer:
         if not selected_validator:
             raise ValueError("VALIDATOR_ACCOUNT_ID environment variable is required but not set")
 
-        # Build the profile as an array of file objects
-        profile_files = []
+        # Process all files in parallel
+        files_data = message_data.get("files", [])
+        if not files_data:
+            return []
 
-        # Add files to the profile in the original format
-        for file_data in message_data.get("files", []):
-            # Convert CID to hex-encoded byte array
-            cid = file_data["cid"]
-            file_hash = list(cid.encode("utf-8"))
+        # Create tasks for parallel processing
+        tasks = [
+            self.process_file_parallel(file_data, owner, block_number, selected_validator)
+            for file_data in files_data
+        ]
 
-            # Convert file name to hex-encoded byte array for main_req_hash
-            file_name = file_data.get("name", "unknown")
-            main_req_hash = file_name.encode("utf-8").hex()
-            file_size = file_data["size"]
+        # Execute all file processing in parallel with concurrency limit
+        semaphore = asyncio.Semaphore(50)  # Limit concurrent IPFS requests
+        
+        async def process_with_semaphore(task):
+            async with semaphore:
+                return await task
 
-            if file_size == 0:
-                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
-                correct_file_size = await fetch_ipfs_file_size(cid)
-                if not correct_file_size:
-                    logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
-                else:
-                    file_size = correct_file_size
-
-            file_entry = {
-                "created_at": block_number,
-                "file_hash": file_hash,
-                "file_name": file_name,
-                "file_size_in_bytes": file_size,
-                "is_assigned": True,
-                "last_charged_at": block_number,
-                "main_req_hash": main_req_hash,
-                "miner_ids": file_data.get("miner_ids", []),
-                "owner": owner,
-                "selected_validator": selected_validator,
-                "total_replicas": file_data.get("total_replicas", 0),
-            }
-
-            profile_files.append(file_entry)
+        # Process files in parallel
+        profile_files = await asyncio.gather(*[process_with_semaphore(task) for task in tasks])
 
         return profile_files
 
