@@ -16,16 +16,38 @@ Usage:
 import asyncio
 import logging
 import os
+import sqlite3
 import time
+from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from typing import List, Dict, Any, Set
 
 import base58
 import httpx
 from substrateinterface import SubstrateInterface
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Configure logging with rotating file handler
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create formatter
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+# Create rotating file handler (50MB per file, keep 3 previous files = 200MB total)
+file_handler = RotatingFileHandler(
+    filename="chain_data_pinner.log", maxBytes=50 * 1024 * 1024, backupCount=3  # 50MB  # Keep 3 previous files
+)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+
+# Create console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+# Add handlers to logger
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 
 class ChainDataPinner:
@@ -34,12 +56,30 @@ class ChainDataPinner:
     def __init__(self):
         self.substrate_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
         self.ipfs_api_url = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001")
-        self.ipfs_gateway_url = os.getenv("IPFS_GATEWAY_URL", "https://get.hippius.network")
+        self.ipfs_gateway_url = os.getenv("IPFS_GATEWAY_URL", "https://ipfs.hippius.com")
+        self.db_path = os.getenv("PINNING_DB_PATH", "/home/ubuntu/hippius/pinning_status.db")
         self.substrate = None
         self.http_client = None
+        self.db_conn = None
+
+    def init_database(self):
+        """Initialize SQLite database with pinning status table."""
+        self.db_conn = sqlite3.connect(self.db_path)
+        self.db_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pinning_status (
+                owner TEXT NOT NULL,
+                cid TEXT NOT NULL,
+                pinned_status TEXT NOT NULL CHECK (pinned_status IN ('success', 'fail')),
+                processed_at TEXT NOT NULL,
+                PRIMARY KEY (owner, cid)
+            )
+        """
+        )
+        self.db_conn.commit()
 
     async def connect(self):
-        """Initialize connections to substrate and HTTP client."""
+        """Initialize connections to substrate, HTTP client, and database."""
         try:
             # Connect to substrate
             self.substrate = SubstrateInterface(url=self.substrate_url, use_remote_preset=True)
@@ -49,6 +89,10 @@ class ChainDataPinner:
             limits = httpx.Limits(max_keepalive_connections=100, max_connections=200)
             self.http_client = httpx.AsyncClient(timeout=30.0, limits=limits)
             logger.info(f"HTTP client initialized for IPFS API at {self.ipfs_api_url}")
+
+            # Initialize SQLite database
+            self.init_database()
+            logger.info(f"SQLite database initialized at {self.db_path}")
 
         except Exception as e:
             logger.error(f"Failed to connect: {e}")
@@ -60,6 +104,56 @@ class ChainDataPinner:
             self.substrate.close()
         if self.http_client:
             await self.http_client.aclose()
+        if self.db_conn:
+            self.db_conn.close()
+
+    def should_retry_pin(self, owner: str, cid: str) -> bool:
+        """Check if we should retry pinning this CID based on database status."""
+        cursor = self.db_conn.execute(
+            "SELECT pinned_status, processed_at, attempts FROM pinning_status WHERE owner = ? AND cid = ?", (owner, cid)
+        )
+        result = cursor.fetchone()
+
+        if result is None:
+            # Never tried before, should pin
+            return True
+
+        status, processed_at_str, attempts = result
+
+        if status == "success":
+            # Already successfully pinned, skip
+            return False
+
+        # Check attempts limit first - if >= 3 attempts, stop trying
+        if attempts >= 3:
+            return False
+
+        # Status is 'fail', check if enough time has passed (2 hours)
+        processed_at = datetime.fromisoformat(processed_at_str)
+        two_hours_ago = datetime.now() - timedelta(hours=2)
+
+        return processed_at < two_hours_ago
+
+    def update_pin_status(self, owner: str, cid: str, status: str):
+        """Update the pinning status in database."""
+        now = datetime.now().isoformat()
+
+        # Get current attempts count
+        cursor = self.db_conn.execute("SELECT attempts FROM pinning_status WHERE owner = ? AND cid = ?", (owner, cid))
+        result = cursor.fetchone()
+
+        if result is None:
+            # First attempt
+            attempts = 1 if status == "fail" else 0
+        else:
+            # Increment attempts only on failure
+            attempts = result[0] + 1 if status == "fail" else result[0]
+
+        self.db_conn.execute(
+            "INSERT OR REPLACE INTO pinning_status (owner, cid, pinned_status, processed_at, attempts) VALUES (?, ?, ?, ?, ?)",
+            (owner, cid, status, now, attempts),
+        )
+        self.db_conn.commit()
 
     def fetch_user_profiles(self) -> List[Dict[str, str]]:
         """Fetch user profiles from substrate UserProfile storage."""
@@ -273,34 +367,146 @@ class ChainDataPinner:
             logger.warning(f"Error getting pinned CIDs: {e}")
             return set()
 
-    async def pin_cid(self, cid: str, timeout: float = 10.0) -> bool:
-        """Pin a single CID to local IPFS node with timeout."""
+    async def pin_cid(self, cid: str, timeout: float = 30.0) -> bool:
+        """Pin a single CID to local IPFS node with timeout. Streams from gateway if needed."""
         try:
-            response = await self.http_client.post(
-                f"{self.ipfs_api_url}/api/v0/pin/add", params={"arg": cid}, timeout=timeout
-            )
+            # Database already checked in should_retry_pin(), so proceed directly to pinning
 
-            if response.status_code == 200:
-                logger.debug(f"Successfully pinned CID: {cid}")
-                return True
-            else:
-                logger.warning(f"Failed to pin CID {cid}: {response.status_code} - {response.text}")
-                return False
+            # Try direct pin first (attempt to pin from IPFS network)
+            try:
+                response = await self.http_client.post(
+                    f"{self.ipfs_api_url}/api/v0/pin/add", params={"arg": cid}, timeout=10.0
+                )
+                if response.status_code == 200:
+                    response_data = response.json()
+                    pinned_cid = response_data.get("Pins", [])
+                    logger.info(f"Successfully pinned CID from network: {cid} - Response: {response.text}")
+                    return True
+                else:
+                    logger.debug(f"Direct pin failed for {cid}: {response.status_code} - {response.text}")
+            except Exception as e:
+                logger.debug(f"Exception during direct pin for {cid}: {e}")
+
+            # Direct pin failed, try streaming from gateways as fallback
+            gateways = [self.ipfs_gateway_url, "https://get.hippius.network"]
+
+            for i, gateway_base_url in enumerate(gateways, 1):
+                logger.info(f"Direct pin failed, trying gateway {i}/2 ({gateway_base_url}) for CID: {cid}")
+
+                try:
+                    gateway_url = f"{gateway_base_url}/ipfs/{cid}"
+
+                    # Stream from gateway and add to IPFS simultaneously (reduced timeout)
+                    async with self.http_client.stream("GET", gateway_url, timeout=10.0) as gateway_stream:
+                        if gateway_stream.status_code != 200:
+                            logger.warning(f"Gateway {i} failed for CID {cid}: {gateway_stream.status_code}")
+                            continue  # Try next gateway
+
+                        # Prepare multipart form data for IPFS add API
+                        boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+
+                        async def stream_generator():
+                            # Start multipart
+                            yield f"--{boundary}\r\n".encode()
+                            yield f'Content-Disposition: form-data; name="file"; filename="{cid}"\r\n'.encode()
+                            yield f"Content-Type: application/octet-stream\r\n\r\n".encode()
+
+                            # Stream content
+                            async for chunk in gateway_stream.aiter_bytes(chunk_size=64 * 1024):
+                                yield chunk
+
+                            # End multipart
+                            yield f"\r\n--{boundary}--\r\n".encode()
+
+                        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+
+                        # Upload to IPFS with pinning (reduced timeout)
+                        add_response = await self.http_client.post(
+                            f"{self.ipfs_api_url}/api/v0/add?pin=true&cid-version=1",
+                            headers=headers,
+                            content=stream_generator(),
+                            timeout=10.0,
+                        )
+
+                        if add_response.status_code == 200:
+                            result = add_response.json()
+                            added_cid = result.get("Hash")
+                            if added_cid == cid:
+                                logger.info(
+                                    f"Successfully streamed and pinned CID from gateway {i}: {cid} - Response: {add_response.text}"
+                                )
+                                return True
+                            else:
+                                logger.warning(f"CID mismatch from gateway {i}: expected {cid}, got {added_cid}")
+                                continue  # Try next gateway
+                        else:
+                            logger.warning(
+                                f"Gateway {i} add failed for CID {cid}: {add_response.status_code} - {add_response.text}"
+                            )
+                            continue  # Try next gateway
+
+                except Exception as e:
+                    logger.warning(f"Gateway {i} exception for CID {cid}: {e}")
+                    continue  # Try next gateway
+
+            # All gateways failed
+            logger.error(f"All pin attempts failed for CID {cid}")
+            return False
 
         except Exception as e:
             logger.error(f"Error pinning CID {cid}: {e}")
             return False
 
-    async def pin_cid_with_semaphore(self, semaphore: asyncio.Semaphore, item: Dict[str, str]) -> Dict[str, Any]:
+    async def pin_cid_with_semaphore(self, semaphore: asyncio.Semaphore, item: Dict[str, str], progress_counter: dict, total_count: int) -> Dict[str, Any]:
         """Pin a single CID with semaphore concurrency control."""
         async with semaphore:
             cid = item["cid"]
             account = item["account"]
             item_type = item["type"]
 
-            success = await self.pin_cid(cid, timeout=10.0)
+            # Check if we should retry this pin based on database
+            if not self.should_retry_pin(account, cid):
+                logger.debug(f"Skipping CID {cid} for {account} - already processed or too recent failure")
+                
+                # Update progress counter and log
+                progress_counter["count"] += 1
+                remaining = total_count - progress_counter["count"]
+                remaining_pct = (remaining / total_count) * 100
+                logger.debug(f"Skipped {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                
+                return {"cid": cid, "account": account, "type": item_type, "success": False, "skipped": True}
 
-            result = {"cid": cid, "account": account, "type": item_type, "success": success}
+            success = await self.pin_cid(cid, timeout=30.0)
+
+            # Update database with result
+            status = "success" if success else "fail"
+            self.update_pin_status(account, cid, status)
+
+            # Update progress counter and log
+            progress_counter["count"] += 1
+            remaining = total_count - progress_counter["count"]
+            remaining_pct = (remaining / total_count) * 100
+
+            if success:
+                if item_type == "profile_file":
+                    profile_cid = item.get("profile_cid", "unknown")
+                    logger.info(f"Pinned {item_type} CID {cid} from profile {profile_cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                elif item_type == "storage_request":
+                    file_name = item.get("file_name", "unknown")
+                    logger.info(f"Pinned {item_type} CID {cid} ({file_name}) for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                else:
+                    logger.info(f"Pinned {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+            else:
+                if item_type == "profile_file":
+                    profile_cid = item.get("profile_cid", "unknown")
+                    logger.warning(f"Failed to pin {item_type} CID {cid} from profile {profile_cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                elif item_type == "storage_request":
+                    file_name = item.get("file_name", "unknown")
+                    logger.warning(f"Failed to pin {item_type} CID {cid} ({file_name}) for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                else:
+                    logger.warning(f"Failed to pin {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+
+            result = {"cid": cid, "account": account, "type": item_type, "success": success, "skipped": False}
 
             # Add extra info for profile files
             if item_type == "profile_file" and "profile_cid" in item:
@@ -410,18 +616,20 @@ class ChainDataPinner:
             logger.info(f"Found {total_cids_to_pin} total new CIDs to pin")
 
             # Pin all CIDs in parallel with concurrency limit
-            logger.info("Starting parallel pinning with 50 concurrent operations...")
-            semaphore = asyncio.Semaphore(50)  # Limit to 50 concurrent pins
+            logger.info("Starting parallel pinning with 15 concurrent operations...")
+            semaphore = asyncio.Semaphore(15)  # Limit to 15 concurrent pins
+            progress_counter = {"count": 0}  # Shared counter for progress tracking
 
             # Create tasks for parallel pinning
-            pin_tasks = [self.pin_cid_with_semaphore(semaphore, item) for item in all_cids_to_pin]
+            pin_tasks = [self.pin_cid_with_semaphore(semaphore, item, progress_counter, total_cids_to_pin) for item in all_cids_to_pin]
 
             # Execute all pinning operations in parallel
             pin_results = await asyncio.gather(*pin_tasks, return_exceptions=True)
 
-            # Process results
+            # Process results for summary counts only (progress logging happens in real-time)
             successful_pins = 0
             failed_pins = 0
+            skipped_pins = 0
 
             for result in pin_results:
                 if isinstance(result, Exception):
@@ -429,33 +637,15 @@ class ChainDataPinner:
                     failed_pins += 1
                     continue
 
-                cid = result["cid"]
-                account = result["account"]
-                item_type = result["type"]
                 success = result["success"]
+                skipped = result.get("skipped", False)
 
-                if success:
+                if skipped:
+                    skipped_pins += 1
+                elif success:
                     successful_pins += 1
-                    if item_type == "profile_file":
-                        profile_cid = result.get("profile_cid", "unknown")
-                        logger.info(f"Pinned {item_type} CID {cid} from profile {profile_cid} for account {account}")
-                    elif item_type == "storage_request":
-                        file_name = result.get("file_name", "unknown")
-                        logger.info(f"Pinned {item_type} CID {cid} ({file_name}) for account {account}")
-                    else:
-                        logger.info(f"Pinned {item_type} CID {cid} for account {account}")
                 else:
                     failed_pins += 1
-                    if item_type == "profile_file":
-                        profile_cid = result.get("profile_cid", "unknown")
-                        logger.warning(
-                            f"Failed to pin {item_type} CID {cid} from profile {profile_cid} for account {account}"
-                        )
-                    elif item_type == "storage_request":
-                        file_name = result.get("file_name", "unknown")
-                        logger.warning(f"Failed to pin {item_type} CID {cid} ({file_name}) for account {account}")
-                    else:
-                        logger.warning(f"Failed to pin {item_type} CID {cid} for account {account}")
 
             # Summary
             elapsed_time = time.time() - start_time
@@ -465,7 +655,9 @@ class ChainDataPinner:
             logger.info(f"  Total CIDs to pin: {total_cids_to_pin}")
             logger.info(f"  Successfully pinned: {successful_pins}")
             logger.info(f"  Failed to pin: {failed_pins}")
-            logger.info(f"  Average pins per second: {successful_pins / elapsed_time:.1f}")
+            logger.info(f"  Skipped (already processed): {skipped_pins}")
+            if successful_pins > 0:
+                logger.info(f"  Average pins per second: {successful_pins / elapsed_time:.1f}")
 
         except Exception as e:
             logger.error(f"Error in process_chain_data: {e}")
