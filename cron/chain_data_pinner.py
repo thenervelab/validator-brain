@@ -87,7 +87,7 @@ class ChainDataPinner:
 
             # Initialize HTTP client for IPFS API with higher connection limits for parallel pinning
             limits = httpx.Limits(max_keepalive_connections=100, max_connections=200)
-            self.http_client = httpx.AsyncClient(timeout=30.0, limits=limits)
+            self.http_client = httpx.AsyncClient(timeout=5, limits=limits)
             logger.info(f"HTTP client initialized for IPFS API at {self.ipfs_api_url}")
 
             # Initialize SQLite database
@@ -367,7 +367,7 @@ class ChainDataPinner:
             logger.warning(f"Error getting pinned CIDs: {e}")
             return set()
 
-    async def pin_cid(self, cid: str, timeout: float = 30.0) -> bool:
+    async def pin_cid(self, cid: str, timeout: float = 5) -> bool:
         """Pin a single CID to local IPFS node with timeout. Streams from gateway if needed."""
         try:
             # Database already checked in should_retry_pin(), so proceed directly to pinning
@@ -375,7 +375,7 @@ class ChainDataPinner:
             # Try direct pin first (attempt to pin from IPFS network)
             try:
                 response = await self.http_client.post(
-                    f"{self.ipfs_api_url}/api/v0/pin/add", params={"arg": cid}, timeout=10.0
+                    f"{self.ipfs_api_url}/api/v0/pin/add", params={"arg": cid}, timeout=timeout
                 )
                 if response.status_code == 200:
                     response_data = response.json()
@@ -388,16 +388,20 @@ class ChainDataPinner:
                 logger.debug(f"Exception during direct pin for {cid}: {e}")
 
             # Direct pin failed, try streaming from gateways as fallback
-            gateways = [self.ipfs_gateway_url, "https://get.hippius.network"]
+            gateways = [
+                self.ipfs_gateway_url,
+            ]
 
             for i, gateway_base_url in enumerate(gateways, 1):
-                logger.info(f"Direct pin failed, trying gateway {i}/2 ({gateway_base_url}) for CID: {cid}")
+                logger.info(
+                    f"Direct pin failed, trying gateway {i}/{len(gateways)} ({gateway_base_url}) for CID: {cid}"
+                )
 
                 try:
                     gateway_url = f"{gateway_base_url}/ipfs/{cid}"
 
                     # Stream from gateway and add to IPFS simultaneously (reduced timeout)
-                    async with self.http_client.stream("GET", gateway_url, timeout=10.0) as gateway_stream:
+                    async with self.http_client.stream("GET", gateway_url, timeout=timeout) as gateway_stream:
                         if gateway_stream.status_code != 200:
                             logger.warning(f"Gateway {i} failed for CID {cid}: {gateway_stream.status_code}")
                             continue  # Try next gateway
@@ -425,7 +429,7 @@ class ChainDataPinner:
                             f"{self.ipfs_api_url}/api/v0/add?pin=true&cid-version=1",
                             headers=headers,
                             content=stream_generator(),
-                            timeout=10.0,
+                            timeout=timeout,
                         )
 
                         if add_response.status_code == 200:
@@ -457,7 +461,9 @@ class ChainDataPinner:
             logger.error(f"Error pinning CID {cid}: {e}")
             return False
 
-    async def pin_cid_with_semaphore(self, semaphore: asyncio.Semaphore, item: Dict[str, str], progress_counter: dict, total_count: int) -> Dict[str, Any]:
+    async def pin_cid_with_semaphore(
+        self, semaphore: asyncio.Semaphore, item: Dict[str, str], progress_counter: dict, total_count: int
+    ) -> Dict[str, Any]:
         """Pin a single CID with semaphore concurrency control."""
         async with semaphore:
             cid = item["cid"]
@@ -467,16 +473,18 @@ class ChainDataPinner:
             # Check if we should retry this pin based on database
             if not self.should_retry_pin(account, cid):
                 logger.debug(f"Skipping CID {cid} for {account} - already processed or too recent failure")
-                
+
                 # Update progress counter and log
                 progress_counter["count"] += 1
                 remaining = total_count - progress_counter["count"]
                 remaining_pct = (remaining / total_count) * 100
-                logger.debug(f"Skipped {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
-                
+                logger.debug(
+                    f"Skipped {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                )
+
                 return {"cid": cid, "account": account, "type": item_type, "success": False, "skipped": True}
 
-            success = await self.pin_cid(cid, timeout=30.0)
+            success = await self.pin_cid(cid, timeout=10)
 
             # Update database with result
             status = "success" if success else "fail"
@@ -490,21 +498,33 @@ class ChainDataPinner:
             if success:
                 if item_type == "profile_file":
                     profile_cid = item.get("profile_cid", "unknown")
-                    logger.info(f"Pinned {item_type} CID {cid} from profile {profile_cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                    logger.info(
+                        f"Pinned {item_type} CID {cid} from profile {profile_cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                    )
                 elif item_type == "storage_request":
                     file_name = item.get("file_name", "unknown")
-                    logger.info(f"Pinned {item_type} CID {cid} ({file_name}) for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                    logger.info(
+                        f"Pinned {item_type} CID {cid} ({file_name}) for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                    )
                 else:
-                    logger.info(f"Pinned {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                    logger.info(
+                        f"Pinned {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                    )
             else:
                 if item_type == "profile_file":
                     profile_cid = item.get("profile_cid", "unknown")
-                    logger.warning(f"Failed to pin {item_type} CID {cid} from profile {profile_cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                    logger.warning(
+                        f"Failed to pin {item_type} CID {cid} from profile {profile_cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                    )
                 elif item_type == "storage_request":
                     file_name = item.get("file_name", "unknown")
-                    logger.warning(f"Failed to pin {item_type} CID {cid} ({file_name}) for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                    logger.warning(
+                        f"Failed to pin {item_type} CID {cid} ({file_name}) for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                    )
                 else:
-                    logger.warning(f"Failed to pin {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)")
+                    logger.warning(
+                        f"Failed to pin {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
+                    )
 
             result = {"cid": cid, "account": account, "type": item_type, "success": success, "skipped": False}
 
@@ -544,7 +564,7 @@ class ChainDataPinner:
 
             # Then fetch profile contents and extract individual file CIDs in parallel
             logger.info("Fetching user profile contents to extract file CIDs...")
-            profile_semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent profile fetches
+            profile_semaphore = asyncio.Semaphore(50)  # Limit to 10 concurrent profile fetches
 
             async def process_profile_with_semaphore(profile):
                 """Process a single user profile with semaphore control."""
@@ -621,7 +641,10 @@ class ChainDataPinner:
             progress_counter = {"count": 0}  # Shared counter for progress tracking
 
             # Create tasks for parallel pinning
-            pin_tasks = [self.pin_cid_with_semaphore(semaphore, item, progress_counter, total_cids_to_pin) for item in all_cids_to_pin]
+            pin_tasks = [
+                self.pin_cid_with_semaphore(semaphore, item, progress_counter, total_cids_to_pin)
+                for item in all_cids_to_pin
+            ]
 
             # Execute all pinning operations in parallel
             pin_results = await asyncio.gather(*pin_tasks, return_exceptions=True)
