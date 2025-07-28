@@ -258,9 +258,7 @@ class NetworkSelfHealingProcessor:
                     else:
                         logger.error("❌ Failed to submit Hippius deregistration report")
                 else:
-                    logger.info(
-                        "No node ids to de-register. All contenders graced this epoch."
-                    )
+                    logger.info("No node ids to de-register. All contenders graced this epoch.")
             else:
                 logger.info("✅ All miners are still registered on Bittensor")
 

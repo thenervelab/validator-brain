@@ -324,6 +324,9 @@ def _submit_single_batch(
             logger.warning("No valid data to submit to blockchain")
             return False
 
+        logger.critical(f"{formatted_requests=}")
+        logger.critical(f"{formatted_miner_profiles=}")
+
         # Compose the call
         call = substrate.compose_call(
             call_module='IpfsPallet',
