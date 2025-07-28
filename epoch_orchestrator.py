@@ -1223,7 +1223,11 @@ class EpochOrchestrator:
                 logger.error("❌ Health score processing failed - assignment may use stale data")
                 # Proceed anyway to avoid blocking the validator
                 self.health_scores_processed = True
+
+            await self.network_self_healing_routine()
+
             return
+
 
         # Phase 3: SEQUENTIAL File Assignment (immediately after self-healing complete)
         elif not self.assignment_completed:
