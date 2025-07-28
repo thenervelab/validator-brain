@@ -245,7 +245,8 @@ class NetworkSelfHealingProcessor:
 
                 # Submit deregistration report to Hippius blockchain
                 validator_seed = os.getenv("VALIDATOR_SEED")
-                keypair = Keypair.create_from_seed(validator_seed, ss58_format=42)
+                keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
+
                 logger.info(
                     f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
                 )
