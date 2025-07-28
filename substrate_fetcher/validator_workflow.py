@@ -25,8 +25,7 @@ from app.services.storage_processor import (
 from app.services.substrate_client import fetch_current_block
 from app.services.substrate_fetcher import fetch_and_store_blockchain_data
 from app.utils.config import get_epoch_block_interval
-from app.utils.epoch_validator import get_epoch_block_position, calculate_epoch_from_block, \
-    get_epoch_start_block
+from app.utils.epoch_validator import get_epoch_block_position, calculate_epoch_from_block, get_epoch_start_block
 from app.utils.logging import logger
 
 

@@ -372,6 +372,10 @@ data:
     pending_miner_profile_status_check;\n\nALTER TABLE pending_miner_profile \nADD
     CONSTRAINT pending_miner_profile_status_check \nCHECK (status IN ('pending',
     'published', 'failed', 'submitted'));"
+  20250728000002_add_unique_constraint_to_pending_miner_profile_node_id.sql: "-- migrate:up\nALTER
+    TABLE pending_miner_profile \nADD CONSTRAINT pending_miner_profile_node_id_unique
+    UNIQUE (node_id);\n\n-- migrate:down\nALTER TABLE pending_miner_profile \nDROP
+    CONSTRAINT IF EXISTS pending_miner_profile_node_id_unique;"
 kind: ConfigMap
 metadata:
   creationTimestamp: null

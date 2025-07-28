@@ -100,11 +100,11 @@ class NodeMetricsConsumer:
                             f"Capped ipfs_storage_max for {metrics['miner_id']}: {metrics['ipfs_storage_max']} -> {PG_BIGINT_MAX}"
                         )
 
-                    if metrics["ipfs_storage_max_tb"] < MIN_IPFS_SIZE_TB:
+                    if metrics["ipfs_storage_max"] < MIN_IPFS_SIZE_TB:
                         logger.warning(
                             f"Deregistering miner {metrics['miner_id']}: ipfs_storage_max_tb too low {metrics['ipfs_storage_max_tb']}TB (< {MIN_IPFS_SIZE_TB}TB required)"
                         )
-                        
+
                         # Set miner status to inactive in registration table
                         await conn.execute(
                             """
@@ -115,7 +115,7 @@ class NodeMetricsConsumer:
                             metrics["miner_id"],
                         )
                         logger.info(f"Set miner {metrics['miner_id']} status to inactive due to insufficient storage")
-                        
+
                         # Null out file assignments where this miner was assigned so they can be reassigned
                         result = await conn.execute(
                             """
@@ -132,7 +132,9 @@ class NodeMetricsConsumer:
                             metrics["miner_id"],
                         )
                         if result != "UPDATE 0":
-                            logger.info(f"Nullified file assignments for deregistered miner {metrics['miner_id']} - files will be reassigned")
+                            logger.info(
+                                f"Nullified file assignments for deregistered miner {metrics['miner_id']} - files will be reassigned"
+                            )
 
                         return False
 

@@ -250,13 +250,9 @@ class NetworkSelfHealingProcessor:
                     f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
                 )
                 hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                receipt = submit_deregistration_report(
-                    hippius_substrate, keypair, dereged_node_ids
-                )
+                receipt = submit_deregistration_report(hippius_substrate, keypair, dereged_node_ids)
                 if receipt and receipt.is_success:
-                    logger.info(
-                        "✅ Hippius deregistration report submitted successfully"
-                    )
+                    logger.info("✅ Hippius deregistration report submitted successfully")
                 else:
                     logger.error("❌ Failed to submit Hippius deregistration report")
             else:
