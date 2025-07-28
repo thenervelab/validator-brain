@@ -19,7 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aio_pika
 from dotenv import load_dotenv
-from substrateinterface import SubstrateInterface
+from substrateinterface import SubstrateInterface, Keypair
 
 from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 
@@ -31,6 +31,22 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def connect_to_node(ws_url):
+    """Establish connection to a Substrate node."""
+    try:
+        logger.info(f"Connecting to {ws_url}...")
+        substrate = SubstrateInterface(
+            url=ws_url,
+            ss58_format=42,
+        )
+        logger.info(f"Connected to chain: {substrate.chain}")
+        logger.info(f"Runtime version: {substrate.runtime_version}")
+        return substrate
+    except Exception as e:
+        logger.error(f"Connection failed to {ws_url}: {str(e)}")
+        raise
 
 
 def submit_deregistration_report(substrate, keypair, node_ids):
@@ -229,20 +245,20 @@ class NetworkSelfHealingProcessor:
 
                 # Submit deregistration report to Hippius blockchain
                 validator_seed = os.getenv("VALIDATOR_SEED")
-                # keypair = Keypair.create_from_seed(validator_seed, ss58_format=42)
-                # logger.info(
-                #     f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
-                # )
-                # hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                # receipt = submit_deregistration_report(
-                #     hippius_substrate, keypair, dereged_node_ids
-                # )
-                # if receipt and receipt.is_success:
-                #     logger.info(
-                #         "✅ Hippius deregistration report submitted successfully"
-                #     )
-                # else:
-                #     logger.error("❌ Failed to submit Hippius deregistration report")
+                keypair = Keypair.create_from_seed(validator_seed, ss58_format=42)
+                logger.info(
+                    f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
+                )
+                hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
+                receipt = submit_deregistration_report(
+                    hippius_substrate, keypair, dereged_node_ids
+                )
+                if receipt and receipt.is_success:
+                    logger.info(
+                        "✅ Hippius deregistration report submitted successfully"
+                    )
+                else:
+                    logger.error("❌ Failed to submit Hippius deregistration report")
             else:
                 logger.info("✅ All miners are still registered on Bittensor")
 
