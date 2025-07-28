@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Cap values at BIGINT maximum to prevent overflow
 PG_BIGINT_MAX = 9223372036854775807
-MIN_IPFS_SIZE_TB = 2
+MIN_IPFS_SIZE_TB = 2199023255552
 
 
 class NodeMetricsConsumer:
