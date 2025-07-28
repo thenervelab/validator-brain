@@ -52,7 +52,7 @@ def connect_to_node(ws_url):
 def submit_deregistration_report(substrate, keypair, node_ids):
     """Submit deregistration report transaction."""
     formatted_node_ids = [node_id.encode() for node_id in node_ids]
-
+    logger.info(f"deregistration {formatted_node_ids=}")
     call = substrate.compose_call(
         call_module="Registration",
         call_function="submit_deregistration_report",
