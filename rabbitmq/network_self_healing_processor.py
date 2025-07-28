@@ -247,15 +247,20 @@ class NetworkSelfHealingProcessor:
                 validator_seed = os.getenv("VALIDATOR_SEED")
                 keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
 
-                logger.info(
-                    f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
-                )
-                hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                receipt = submit_deregistration_report(hippius_substrate, keypair, dereged_node_ids)
-                if receipt and receipt.is_success:
-                    logger.info("✅ Hippius deregistration report submitted successfully")
+                if dereged_node_ids:
+                    logger.info(
+                        f"Submitting deregistration report to Hippius using account: {keypair.ss58_address} for {len(dereged_node_ids)} node ids"
+                    )
+                    hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
+                    receipt = submit_deregistration_report(hippius_substrate, keypair, dereged_node_ids)
+                    if receipt and receipt.is_success:
+                        logger.info("✅ Hippius deregistration report submitted successfully")
+                    else:
+                        logger.error("❌ Failed to submit Hippius deregistration report")
                 else:
-                    logger.error("❌ Failed to submit Hippius deregistration report")
+                    logger.info(
+                        "No node ids to de-register. All contenders graced this epoch."
+                    )
             else:
                 logger.info("✅ All miners are still registered on Bittensor")
 
