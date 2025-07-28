@@ -56,7 +56,8 @@ class ChainDataPinner:
     def __init__(self):
         self.substrate_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
         self.ipfs_api_url = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001")
-        self.ipfs_gateway_url = os.getenv("IPFS_GATEWAY_URL", "https://ipfs.hippius.com")
+        from app.utils.config import get_ipfs_node_url
+        self.ipfs_gateway_url = get_ipfs_node_url()
         self.db_path = os.getenv("PINNING_DB_PATH", "/home/ubuntu/hippius/pinning_status.db")
         self.substrate = None
         self.http_client = None

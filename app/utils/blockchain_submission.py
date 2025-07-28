@@ -433,7 +433,7 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
 
             requests = []
             for row in rows:
-                logger.info(f">>>>request>>>>{row}")
+                logger.info(f"New storage request: {row}")
                 request = {
                     "storage_request_owner": row['storage_request_owner'],
                     "storage_request_file_hash": row['storage_request_file_hash'],

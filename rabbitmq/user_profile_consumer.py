@@ -24,7 +24,7 @@ import httpx
 from dotenv import load_dotenv
 
 from app.db.connection import get_db_pool, init_db_pool, close_db_pool
-from app.utils.config import IPFS_GATEWAY
+from app.utils.config import get_ipfs_node_url
 from substrate_fetcher.ipfs_profile_parser import (
     parse_user_profile_files,
     bytes_to_ipfs_cid,
@@ -52,7 +52,7 @@ class UserProfileConsumer:
         """
         self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         # Use the centralized config for IPFS URL
-        self.ipfs_gateway = IPFS_GATEWAY
+        self.ipfs_gateway = get_ipfs_node_url()
         self.queue_name = "user_profile"
 
         self.rabbitmq_connection = None
@@ -82,7 +82,7 @@ class UserProfileConsumer:
 
     async def fetch_from_ipfs(self, cid: str) -> Optional[bytes]:
         """
-        Fetch content from IPFS using the gateway.
+        Fetch content from IPFS using the API endpoint.
 
         Args:
             cid: Content ID to fetch
@@ -90,11 +90,12 @@ class UserProfileConsumer:
         Returns:
             Content bytes or None if failed
         """
-        url = f"{self.ipfs_gateway}/ipfs/{cid}"
+        # Use IPFS API endpoint for fetching content
+        api_url = f"{self.ipfs_gateway}/api/v0/cat?arg={cid}"
 
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
-                response = await client.get(url)
+                response = await client.post(api_url)
                 if response.status_code == 200:
                     return response.content
                 else:

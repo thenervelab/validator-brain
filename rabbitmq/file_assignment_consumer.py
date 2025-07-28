@@ -76,7 +76,7 @@ class FileAssignmentConsumer:
             file_size_bytes = assignment_data.get("file_size_bytes", 0)
             assigned_miners = assignment_data.get("assigned_miners", [])
             pending_file_id = assignment_data.get("pending_file_id")
-
+            
             # Filter out None values from assigned miners
             valid_miners = [m for m in assigned_miners if m is not None and m.strip()]
 
@@ -158,6 +158,24 @@ class FileAssignmentConsumer:
                         miners_padded[3],
                         miners_padded[4],
                     )
+
+                    # Flag affected miners for profile reconstruction
+                    affected_miners = set()
+                    for miner in miners_padded:
+                        if miner:
+                            affected_miners.add(miner)
+                    
+                    if affected_miners:
+                        await conn.executemany(
+                            """
+                            INSERT INTO pending_miner_profile (node_id, status, created_at) 
+                            VALUES ($1, 'needs_reconstruction', NOW())
+                            ON CONFLICT (node_id) DO UPDATE SET 
+                                status = 'needs_reconstruction',
+                                created_at = NOW()
+                            """,
+                            [(miner_id,) for miner_id in affected_miners]
+                        )
 
                     # 4. Update pending_assignment_file status if we have the ID
                     if pending_file_id:
@@ -306,6 +324,24 @@ class FileAssignmentConsumer:
                         )
                         return False
 
+                    # Flag affected miners for profile reconstruction
+                    affected_miners = set()
+                    for miner in updated_miners:
+                        if miner:
+                            affected_miners.add(miner)
+                    
+                    if affected_miners:
+                        await conn.executemany(
+                            """
+                            INSERT INTO pending_miner_profile (node_id, status, created_at) 
+                            VALUES ($1, 'needs_reconstruction', NOW())
+                            ON CONFLICT (node_id) DO UPDATE SET 
+                                status = 'needs_reconstruction',
+                                created_at = NOW()
+                            """,
+                            [(miner_id,) for miner_id in affected_miners]
+                        )
+
                     # 5. Batch update miner stats for newly assigned miners
                     valid_new_miners = [miner_id for miner_id in new_miners if miner_id]
                     if valid_new_miners:
@@ -415,6 +451,27 @@ class FileAssignmentConsumer:
                             f"Race condition detected for file {cid} - assignment was modified by another process"
                         )
                         return False
+
+                    # Flag affected miners for profile reconstruction (both old and new)
+                    affected_miners = set()
+                    for miner in new_miners:
+                        if miner:
+                            affected_miners.add(miner)
+                    for miner in failing_miners:
+                        if miner:
+                            affected_miners.add(miner)
+                    
+                    if affected_miners:
+                        await conn.executemany(
+                            """
+                            INSERT INTO pending_miner_profile (node_id, status, created_at) 
+                            VALUES ($1, 'needs_reconstruction', NOW())
+                            ON CONFLICT (node_id) DO UPDATE SET 
+                                status = 'needs_reconstruction',
+                                created_at = NOW()
+                            """,
+                            [(miner_id,) for miner_id in affected_miners]
+                        )
 
                     # 3. Update miner stats for newly assigned miners (add)
                     for miner_id in replacement_miners:
@@ -572,6 +629,22 @@ class FileAssignmentConsumer:
                             f"Race condition detected for file {cid} - assignment was modified by another process"
                         )
                         return False
+
+                    # Flag affected miners for profile reconstruction
+                    affected_miners = {from_miner, to_miner}
+                    affected_miners = {miner for miner in affected_miners if miner}  # Remove None values
+                    
+                    if affected_miners:
+                        await conn.executemany(
+                            """
+                            INSERT INTO pending_miner_profile (node_id, status, created_at) 
+                            VALUES ($1, 'needs_reconstruction', NOW())
+                            ON CONFLICT (node_id) DO UPDATE SET 
+                                status = 'needs_reconstruction',
+                                created_at = NOW()
+                            """,
+                            [(miner_id,) for miner_id in affected_miners]
+                        )
 
                     # 7. Update miner stats for the new miner (add)
                     await conn.execute(

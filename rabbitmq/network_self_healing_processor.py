@@ -7,20 +7,19 @@ and queues them for self-healing via RabbitMQ.
 """
 
 import asyncio
-import json
 import logging
 import os
 import sys
-from datetime import datetime
 from typing import Dict, List, Any
+
+from substrate_fetcher.registration import get_deregistered_coldkeys
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aio_pika
-from aio_pika import Message
 from dotenv import load_dotenv
-from substrateinterface import SubstrateInterface, Keypair
+from substrateinterface import SubstrateInterface
 
 from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 
@@ -32,25 +31,6 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-
-def connect_to_node(ws_url):
-    """Establish connection to a Substrate node."""
-    logger.info(f"Connecting to {ws_url}...")
-    substrate = SubstrateInterface(
-        url=ws_url,
-        ss58_format=42,
-    )
-    logger.info(f"Connected to chain: {substrate.chain}")
-    logger.info(f"Runtime version: {substrate.runtime_version}")
-    return substrate
-
-
-def query_storage_double_map(substrate, module, storage_function, netuid):
-    """Query all entries in a storage double map for a specific netuid."""
-    result = substrate.query_map(module=module, storage_function=storage_function, params=[netuid])
-    # Format as { hotkey: uid }
-    return {entry[0].value: entry[1].value for entry in result}
 
 
 def submit_deregistration_report(substrate, keypair, node_ids):
@@ -73,6 +53,49 @@ def submit_deregistration_report(substrate, keypair, node_ids):
         logger.error(f"Hippius deregistration failed: {receipt.error_message}")
 
     return receipt
+
+
+async def grace(node_ids) -> None:
+    """
+    Grace period check for deregistered node_ids.
+    Increments unsuccessful_registration_checks counter and removes nodes
+    that have been checked less than 10 times from the processing list.
+    """
+    if not node_ids:
+        return
+
+    db_pool = get_db_pool()
+    nodes_to_remove = []
+
+    async with db_pool.acquire() as conn:
+        for node_id in list(node_ids):
+            # Insert or update the deregistered node record
+            result = await conn.fetchrow(
+                """
+                INSERT INTO deregistered_node_ids (node_id, unsuccessful_registration_checks, updated_at)
+                VALUES ($1, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT (node_id) 
+                DO UPDATE SET 
+                    unsuccessful_registration_checks = deregistered_node_ids.unsuccessful_registration_checks + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING unsuccessful_registration_checks
+                """,
+                node_id,
+            )
+
+            check_count = result["unsuccessful_registration_checks"]
+
+            # If less than 10 checks, remove from processing list (grace period)
+            if check_count < 3:
+                nodes_to_remove.append(node_id)
+                logger.info(f"🕐 Gracing node_id {node_id} (check #{check_count}/10)")
+
+    # Remove graced nodes from the processing list
+    for node_id in nodes_to_remove:
+        node_ids.discard(node_id)
+
+    if nodes_to_remove:
+        logger.info(f"🕐 Graced {len(nodes_to_remove)} nodes, {len(node_ids)} remaining for processing")
 
 
 class NetworkSelfHealingProcessor:
@@ -131,22 +154,6 @@ class NetworkSelfHealingProcessor:
         logger.info("Found {} known miners".format(len(miners)))
         return {row["owner_account"]: row["node_id"] for row in miners}
 
-    async def find_deregistered_miners(self) -> List[str]:
-        """Find miners that are no longer registered on Bittensor."""
-        substrate = connect_to_node("wss://entrypoint-finney.opentensor.ai:443")
-        current_uids = query_storage_double_map(substrate, "SubtensorModule", "Uids", 75)
-
-        logger.info("Found {} miners registered on BTS".format(len(current_uids)))
-
-        known_miners = await self.get_known_miners()
-        deregistered_miners = []
-
-        for owner_account, miner_node_id in known_miners.items():
-            if miner_node_id not in current_uids:
-                deregistered_miners.append(miner_node_id)
-
-        return deregistered_miners
-
     async def cleanup_deregistered_miners(self, deregistered_miners: List[str]) -> int:
         """Delete deregistered miners and cleanup orphaned records."""
         if not deregistered_miners:
@@ -161,40 +168,27 @@ class NetworkSelfHealingProcessor:
                 await conn.execute("DELETE FROM file_failures WHERE miner_id = $1", miner_node_id)
                 await conn.execute("DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id)
 
-                # Delete from registration table (triggers CASCADE deletion and SET NULL on file_assignments)
+                # Remove miner from file assignments (set miner columns to NULL)
+                await conn.execute(
+                    """
+                    UPDATE file_assignments SET
+                        miner1 = CASE WHEN miner1 = $1 THEN NULL ELSE miner1 END,
+                        miner2 = CASE WHEN miner2 = $1 THEN NULL ELSE miner2 END,
+                        miner3 = CASE WHEN miner3 = $1 THEN NULL ELSE miner3 END,
+                        miner4 = CASE WHEN miner4 = $1 THEN NULL ELSE miner4 END,
+                        miner5 = CASE WHEN miner5 = $1 THEN NULL ELSE miner5 END
+                    WHERE miner1 = $1 OR miner2 = $1 OR miner3 = $1 OR miner4 = $1 OR miner5 = $1
+                    """,
+                    miner_node_id,
+                )
+
+                # Delete from registration table
                 result = await conn.execute("DELETE FROM registration WHERE node_id = $1", miner_node_id)
                 if result == "DELETE 1":
                     total_cleaned += 1
                     logger.info(f"Cleaned up deregistered miner: {miner_node_id}")
 
             return total_cleaned
-
-    async def queue_healing_task(self, file_data: Dict[str, Any]):
-        """Queue a self-healing task for a broken file."""
-        task_data = {
-            "type": "file_healing",
-            "cid": file_data["cid"],
-            "owner": file_data["owner"],
-            "filename": file_data["filename"],
-            "file_size_bytes": file_data["file_size_bytes"],
-            "current_miners": [
-                file_data["miner1"],
-                file_data["miner2"],
-                file_data["miner3"],
-                file_data["miner4"],
-                file_data["miner5"],
-            ],
-            "timestamp": datetime.now().isoformat(),
-        }
-
-        message_body = json.dumps(task_data).encode()
-
-        await self.rabbitmq_channel.default_exchange.publish(
-            Message(body=message_body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT),
-            routing_key=self.queue_name,
-        )
-
-        logger.debug(f"Queued healing task for file {file_data['cid'][:16]}...")
 
     async def process_self_healing(self):
         """Main processing method."""
@@ -208,26 +202,40 @@ class NetworkSelfHealingProcessor:
             # Connect to RabbitMQ
             await self.connect_rabbitmq()
 
-            # Check for deregistered miners and clean them up
-            deregistered_miners = await self.find_deregistered_miners()
-            if deregistered_miners:
-                logger.info(f"🚨 Found {len(deregistered_miners)} deregistered miners")
+            bt_client = SubstrateInterface(
+                url="wss://entrypoint-finney.opentensor.ai:443",
+                ss58_format=42,
+            )
 
-                # will add back once confirmed fixed
-                # cleaned_count = await self.cleanup_deregistered_miners(
-                #     deregistered_miners
-                # )
-                # logger.info(f"🧹 Cleaned up {cleaned_count} deregistered miners")
+            # Connect to registration network (from NODE_URL env var)
+            registration_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+            registration_substrate = SubstrateInterface(
+                url=registration_url,
+                use_remote_preset=True,
+            )
+
+            # Check for deregistered miners and clean them up
+            dereged_coldkeys = get_deregistered_coldkeys(bt_client, registration_substrate)
+
+            if dereged_coldkeys:
+                dereged_node_ids = set(sum(dereged_coldkeys.values(), []))
+
+                logger.info(f"🚨 Found {len(dereged_coldkeys)=} and {len(dereged_node_ids)=}")
+                await grace(dereged_node_ids)
+                logger.info(f"{len(dereged_node_ids)=} after grace applied...")
+
+                cleaned_count = await self.cleanup_deregistered_miners(list(dereged_node_ids))
+                logger.info(f"🧹 Cleaned up {cleaned_count} deregistered miners")
 
                 # Submit deregistration report to Hippius blockchain
                 validator_seed = os.getenv("VALIDATOR_SEED")
-                keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
-                logger.info(
-                    f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
-                )
+                # keypair = Keypair.create_from_seed(validator_seed, ss58_format=42)
+                # logger.info(
+                #     f"DRYRUN: Submitting deregistration report to Hippius using account: {keypair.ss58_address}"
+                # )
                 # hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
                 # receipt = submit_deregistration_report(
-                #     hippius_substrate, keypair, deregistered_miners
+                #     hippius_substrate, keypair, dereged_node_ids
                 # )
                 # if receipt and receipt.is_success:
                 #     logger.info(
@@ -238,26 +246,6 @@ class NetworkSelfHealingProcessor:
             else:
                 logger.info("✅ All miners are still registered on Bittensor")
 
-            # Find broken assignments (now includes files from deregistered miners)
-            broken_files = await self.find_broken_assignments()
-
-            if not broken_files:
-                logger.info("✅ No broken assignments found - network is healthy")
-                return True
-
-            logger.info(f"🔍 Found {len(broken_files)} files with broken assignments")
-
-            # Queue healing tasks
-            healed_count = 0
-            for file_data in broken_files:
-                try:
-                    await self.queue_healing_task(file_data)
-                    healed_count += 1
-                except Exception as e:
-                    logger.error(f"❌ Failed to queue healing task for {file_data['cid']}: {e}")
-
-            logger.info(f"✅ Queued {healed_count} self-healing tasks")
-
             # Close RabbitMQ connection
             if hasattr(self, "rabbitmq_connection"):
                 await self.rabbitmq_connection.close()
@@ -265,7 +253,7 @@ class NetworkSelfHealingProcessor:
             return True
 
         except Exception as e:
-            logger.error(f"❌ Error during self-healing processing: {e}")
+            logger.exception(f"❌ Error during self-healing processing")
             return False
         finally:
             if self.db_pool:

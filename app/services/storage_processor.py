@@ -24,7 +24,9 @@ async def score_miners(miners: List[Dict]) -> List[Dict]:
         # Use health score from database instead of real-time ping
         health_score = miner.get("health_score", 0)
         if health_score is None or health_score < 20.0:  # Skip miners with very low health
-            logger.warning(f"Miner {node_id} has low health score {health_score} (available keys: {list(miner.keys())}), skipping from assignment")
+            logger.warning(
+                f"Miner {node_id} has low health score {health_score} (available keys: {list(miner.keys())}), skipping from assignment"
+            )
             continue
 
         # Calculate miner's available storage
@@ -37,7 +39,8 @@ async def score_miners(miners: List[Dict]) -> List[Dict]:
         storage_score = available_storage / max_storage if max_storage > 0 else 0
         file_count = miner["total_files_pinned"] or 0
         file_count_normalized = min(
-            1.0, file_count / 1000,
+            1.0,
+            file_count / 1000,
         )  # Normalize to 0-1 range, assuming 1000 files as max
         file_score = 1.0 - file_count_normalized  # Fewer files is better
         success_rate = miner.get("health_score", 100) / 100  # Convert health_score to 0-1 range
@@ -58,7 +61,6 @@ async def score_miners(miners: List[Dict]) -> List[Dict]:
 
     # Sort miners by score (highest first)
     scored_miners.sort(key=lambda m: m["score"], reverse=True)
-    logger.info(f"scored_miners=={scored_miners}")
 
     return scored_miners
 
@@ -100,14 +102,10 @@ def update_miner_scores(scored_miners: List[Dict], selected_miner_ids: List[str]
             miner["file_count"] += 1
 
             # Recalculate score
-            storage_score = (
-                miner["available_storage"] / miner["max_storage"] if miner["max_storage"] > 0 else 0
-            )
+            storage_score = miner["available_storage"] / miner["max_storage"] if miner["max_storage"] > 0 else 0
             file_count_normalized = min(1.0, miner["file_count"] / 1000)
             file_score = 1.0 - file_count_normalized
-            miner["score"] = (
-                (storage_score * 0.6) + (file_score * 0.3) + (miner["success_rate"] * 0.1)
-            )
+            miner["score"] = (storage_score * 0.6) + (file_score * 0.3) + (miner["success_rate"] * 0.1)
 
     # Re-sort miners by updated scores
     scored_miners.sort(key=lambda m: m["score"], reverse=True)

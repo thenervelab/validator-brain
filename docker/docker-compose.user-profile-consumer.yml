@@ -2,11 +2,13 @@ services:
   user-profile-consumer:
     profiles: [ "consumers" ]
     build: ..
-    container_name: user-profile-consumer
+    # Removed container_name to allow scaling
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq-substrate:5672/
       - IPFS_NODE_URL=http://ipfs:5001
+      - DHT_NODE_URL=http://ipfs:5001
+      - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID}
       - PYTHONUNBUFFERED=1
       - WAIT_FOR_IPFS=true
     volumes:
@@ -21,6 +23,8 @@ services:
       ipfs:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      replicas: 10
     networks:
       - validator-network
 

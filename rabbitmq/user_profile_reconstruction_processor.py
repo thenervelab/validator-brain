@@ -246,10 +246,6 @@ class UserProfileReconstructionProcessor:
                     owner,
                 )
 
-                logger.info(
-                    f"Fallback assigned file {filename} ({cid[:16]}...) - added {len(selected_miners)} new miners (total: {len(combined_miners)}): {', '.join(selected_miners[:3])}{'...' if len(selected_miners) > 3 else ''}"
-                )
-
             # Log fallback distribution stats
             if fallback_assignments:
                 total_fallback = sum(fallback_assignments.values())
@@ -441,9 +437,10 @@ class UserProfileReconstructionProcessor:
                     fa.miner5,
                     fa.updated_at,
                     'assigned' as source
-                FROM files f
-                JOIN file_assignments fa ON f.cid = fa.cid
+                FROM file_assignments fa
+                LEFT JOIN files f ON f.cid = fa.cid
                 WHERE fa.owner = $1
+                AND (f.name IS NULL OR f.name NOT LIKE 'miner_file_%')
                 ORDER BY f.created_at ASC
             """,
                 owner,
@@ -523,7 +520,7 @@ class UserProfileReconstructionProcessor:
             # Assign miners to unassigned files as fallback
             if unassigned_files:
                 logger.warning(
-                    f"User {owner}: Found {len(unassigned_files)} files without miners - assigning fallback miners"
+                    f"User {owner}: Found {len(unassigned_files)} files with incomplete assignments (< 5 miners) - assigning fallback miners"
                 )
                 await self.assign_fallback_miners(owner, unassigned_files, conn)
 
@@ -531,8 +528,18 @@ class UserProfileReconstructionProcessor:
             assigned_count = len(assigned_files)
             pending_count = len(pending_files)
             logger.info(
-                f"User {owner}: Found {assigned_count} assigned files + {pending_count} pending files = {len(files)} total files"
+                f"🔍 User {owner}: Found {assigned_count} assigned files + {pending_count} pending files = {len(files)} total files"
             )
+
+            # Log file sources breakdown
+            assigned_with_miners = sum(
+                1 for f in assigned_files if any([f["miner1"], f["miner2"], f["miner3"], f["miner4"], f["miner5"]])
+            )
+            assigned_without_miners = assigned_count - assigned_with_miners
+            if assigned_without_miners > 0:
+                logger.warning(f"   ⚠️  {assigned_without_miners} assigned files have NO miners")
+            if pending_count > 0:
+                logger.info(f"   📋 {pending_count} files from pending_assignment_file (new storage requests)")
 
             return files
 
@@ -585,10 +592,7 @@ class UserProfileReconstructionProcessor:
                 }
 
                 # Debug logging for specific user ID
-                if owner in (
-                    "5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55",
-                    "5HoreGVb17XhY3wanDvzoAWS7yHYbc5uMteXqRNTiZ6Txkqq",
-                ):
+                if owner in ("5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55",):
                     debug_filename = f"/tmp/debug_profile_{owner}_{self.current_block}.json"
                     async with aiofiles.open(debug_filename, "w") as f:
                         await f.write(json.dumps(message_data, indent=2))
@@ -599,9 +603,6 @@ class UserProfileReconstructionProcessor:
 
                 # Send to queue
                 await self.send_to_queue(message_data)
-
-                logger.info(f"Queued profile for user {owner}: {file_count} files, {total_size} bytes")
-
             except Exception as e:
                 logger.error(f"Error processing profile for user {profile['owner']}: {e}")
                 continue

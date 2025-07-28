@@ -2,12 +2,16 @@ services:
   miner-profile-reconstruction-consumer:
     profiles: [ "consumers" ]
     build: ..
-    container_name: miner-profile-reconstruction-consumer
+    # Removed container_name to allow scaling
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq-substrate:5672/
       - IPFS_NODE_URL=http://ipfs:5001
+      - DHT_NODE_URL=http://ipfs:5001
+      - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID}
       - PYTHONUNBUFFERED=1
+      - DB_POOL_MIN_SIZE=1
+      - DB_POOL_MAX_SIZE=2
     volumes:
       - ../:/ipfs-service-validator
     working_dir: /ipfs-service-validator
@@ -20,6 +24,8 @@ services:
       ipfs:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      replicas: 10
     networks:
       - validator-network
 

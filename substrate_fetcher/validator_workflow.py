@@ -632,8 +632,43 @@ class ValidatorWorkflow:
 
             miner_profiles.append(profile)
 
-        processed_data["miner_profiles"] = miner_profiles
-        logger.info(f"Processed {len(miner_profiles)} miner profiles")
+        # Filter out miners with insufficient storage capacity (< 2TB)
+        MIN_STORAGE_CAPACITY_BYTES = 2199023255552  # 2TB in bytes
+        filtered_miner_profiles = []
+        filtered_node_ids = set()
+
+        for profile in miner_profiles:
+            storage_capacity = getattr(profile, "storage_capacity_bytes", 0) or 0
+            if storage_capacity >= MIN_STORAGE_CAPACITY_BYTES:
+                filtered_miner_profiles.append(profile)
+            else:
+                filtered_node_ids.add(profile.node_id)
+                logger.warning(
+                    f"Filtered out miner {profile.node_id} - insufficient storage: {storage_capacity:,} bytes (< 2TB)"
+                )
+
+        # Also filter node registrations to exclude miners with insufficient storage
+        filtered_node_registrations = []
+        for registration in all_registrations:
+            if registration.node_id not in filtered_node_ids:
+                filtered_node_registrations.append(registration)
+            else:
+                logger.info(f"Removed registration for miner {registration.node_id} due to insufficient storage")
+
+        # Store filtered node IDs for cleanup operations that will happen later in the database sync
+        if filtered_node_ids:
+            logger.info(
+                f"Will deregister {len(filtered_node_ids)} miners with insufficient storage: {list(filtered_node_ids)}"
+            )
+            # Add filtered node IDs to processed data for later cleanup
+            processed_data["filtered_node_ids"] = list(filtered_node_ids)
+
+        processed_data["node_registration"] = filtered_node_registrations
+        processed_data["miner_profiles"] = filtered_miner_profiles
+        logger.info(
+            f"Processed {len(miner_profiles)} miner profiles, filtered to {len(filtered_miner_profiles)} (removed {len(miner_profiles) - len(filtered_miner_profiles)} with < 2TB storage)"
+        )
+        logger.info(f"Filtered node registrations from {len(all_registrations)} to {len(filtered_node_registrations)}")
 
         # Process storage requests
         storage_request_data = substrate_data["IpfsPallet.UserStorageRequests"]
@@ -1018,154 +1053,6 @@ class ValidatorWorkflow:
                 logger.info("Cleared profile tables for next epoch")
 
         return {"profile_tables_cleared": True, "block_position": block_position}
-
-    async def perform_validator_actions(
-        self,
-        substrate_data: Dict,
-        block_number: int,
-        epoch_start_block: int = None,
-    ) -> Dict:
-        """
-        Perform validator actions based on position in epoch (Rust-style).
-
-        Args:
-            substrate_data: Raw blockchain data
-            block_number: Current block number
-            epoch_start_block: Block number when epoch started (optional)
-
-        Returns:
-            Dictionary with results of actions taken
-        """
-        # Calculate epoch for metrics
-        epoch_length = get_epoch_block_interval()
-        current_epoch = calculate_epoch_from_block(block_number)
-
-        # Calculate epoch start if not provided
-        if epoch_start_block is None:
-            epoch_start_block = get_epoch_start_block(current_epoch)
-
-        # Calculate position within epoch (0 to 99)
-        block_position = get_epoch_block_position(block_number)
-
-        # Initialize performance tracking
-        from substrate_fetcher.monitoring import (
-            create_performance_tracker,
-            record_validation_metrics,
-        )
-
-        performance_tracker = create_performance_tracker(
-            name="validator_actions",
-            validator_id=self.validator_account_id,
-            epoch=current_epoch,
-            block_number=block_number,
-            phase="all",
-        )
-
-        # Add starting tags
-        performance_tracker.add_tag("block_number", str(block_number))
-        performance_tracker.add_tag("block_position", str(block_position))
-        performance_tracker.add_tag("epoch_start_block", str(epoch_start_block))
-
-        try:
-            # Calculate position within epoch using new method
-            epoch_position = self.determine_epoch_position(block_number, epoch_start_block)
-
-            # Update performance tracker phase
-            performance_tracker.phase = epoch_position
-
-            # Log phase information
-            logger.info(
-                f"Block {block_number} (position {block_position} in epoch): {epoch_position} phase",
-            )
-
-            # Process blockchain data into standardized format
-            processed_data = await self.process_blockchain_data(substrate_data)
-
-            # Synchronize with blockchain state
-            from app.db.connection import get_db_pool
-            from substrate_fetcher.blockchain_sync import synchronize_with_blockchain
-
-            # Get local data from DB
-            db_pool = get_db_pool()
-            local_data = await self.get_local_data_from_db(db_pool)
-
-            # Synchronize local and blockchain state
-            sync_status = await synchronize_with_blockchain(local_data, processed_data, db_pool)
-
-            results = {"sync_status": sync_status.dict()}
-
-            # Execute actions based on epoch position (Rust-style)
-            # if epoch_position == "early":
-            logger.info(f"Executing early epoch actions (blocks 0-5, position {block_position})")
-            early_results = await self.perform_early_epoch_actions(processed_data, block_position)
-            results.update(early_results)
-
-            # elif epoch_position == "mid":
-            logger.info(f"Executing mid-epoch actions (blocks 5-40, position {block_position})")
-            mid_results = await self.perform_mid_epoch_actions(processed_data, block_position)
-            results.update(mid_results)
-
-            # elif epoch_position == "assignment":
-            logger.info(
-                f"Executing assignment epoch actions (blocks 40-98, position {block_position})",
-            )
-            assignment_results = await self.perform_assignment_epoch_actions(
-                processed_data,
-                results,
-                block_position,
-            )
-            results.update(assignment_results)
-
-            # elif epoch_position == "cleanup":
-            logger.info(f"Executing cleanup epoch actions (block 98+, position {block_position})")
-            cleanup_results = await self.perform_cleanup_epoch_actions(
-                processed_data,
-                results,
-                block_position,
-            )
-            results.update(cleanup_results)
-
-            # Submit to blockchain during assignment phase (once per epoch)
-            # if epoch_position == "assignment" and "pin_requests" in results:
-            logger.info(
-                f"Submitting to blockchain during assignment phase (block position {block_position})",
-            )
-
-            # Import blockchain submission
-            from substrate_fetcher.blockchain_submission import (
-                submit_pending_data_to_blockchain,
-            )
-
-            # Submit pending data to blockchain
-            submission_result = await submit_pending_data_to_blockchain(
-                db_pool,
-                block_number,
-                current_epoch,
-            )
-
-            # Add submission result to results
-            results["blockchain_submission"] = submission_result.dict()
-
-            # Add phase information to results
-            results["epoch_phase"] = epoch_position
-            results["block_number"] = block_number
-            results["block_position"] = block_position
-            results["epoch_start_block"] = epoch_start_block
-
-            # Complete performance tracking
-            metrics = performance_tracker.complete(success=True)
-            await record_validation_metrics(metrics)
-
-            return results
-
-        except Exception as e:
-            # Record failure in metrics
-            if "performance_tracker" in locals():
-                metrics = performance_tracker.complete(success=False, error_message=str(e))
-                await record_validation_metrics(metrics)
-
-            # Re-raise exception
-            raise
 
     async def get_local_data_from_db(self, db_pool) -> Dict:
         """

@@ -56,38 +56,45 @@ class UserProfileReconstructionConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def process_file_parallel(self, file_data: Dict[str, Any], owner: str, block_number: int, selected_validator: str) -> Dict[str, Any]:
+    async def process_file_parallel(
+        self, file_data: Dict[str, Any], owner: str, block_number: int, selected_validator: str
+    ) -> Dict[str, Any]:
         """Process a single file with potential IPFS size re-fetching"""
-        # Convert CID to hex-encoded byte array
-        cid = file_data["cid"]
-        file_hash = list(cid.encode("utf-8"))
+        try:
+            # Convert CID to hex-encoded byte array
+            cid = file_data["cid"]
+            file_hash = list(cid.encode("utf-8"))
 
-        # Convert file name to hex-encoded byte array for main_req_hash
-        file_name = file_data.get("name", "unknown")
-        main_req_hash = file_name.encode("utf-8").hex()
-        file_size = file_data["size"]
+            # Convert file name to hex-encoded byte array for main_req_hash
+            file_name = file_data.get("name", "unknown")
+            main_req_hash = file_name.encode("utf-8").hex()
+            file_size = file_data["size"]
 
-        if file_size == 0:
-            logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
-            correct_file_size = await fetch_ipfs_file_size(cid)
-            if not correct_file_size:
-                logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
-            else:
-                file_size = correct_file_size
+            if file_size == 0:
+                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+                correct_file_size = await fetch_ipfs_file_size(cid)
+                if not correct_file_size:
+                    logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+                else:
+                    file_size = correct_file_size
 
-        return {
-            "created_at": block_number,
-            "file_hash": file_hash,
-            "file_name": file_name,
-            "file_size_in_bytes": file_size,
-            "is_assigned": True,
-            "last_charged_at": block_number,
-            "main_req_hash": main_req_hash,
-            "miner_ids": file_data.get("miner_ids", []),
-            "owner": owner,
-            "selected_validator": selected_validator,
-            "total_replicas": file_data.get("total_replicas", 0),
-        }
+            return {
+                "created_at": block_number,
+                "file_hash": file_hash,
+                "file_name": file_name,
+                "file_size_in_bytes": file_size,
+                "is_assigned": True,
+                "last_charged_at": block_number,
+                "main_req_hash": main_req_hash,
+                "miner_ids": file_data.get("miner_ids", []),
+                "owner": owner,
+                "selected_validator": selected_validator,
+                "total_replicas": file_data.get("total_replicas", 0),
+            }
+        except Exception as e:
+            logger.error(f"Error processing file {file_data.get('cid', 'unknown')}: {e}")
+            # Return None for failed files - they'll be filtered out
+            return None
 
     async def reconstruct_profile_json(self, message_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Reconstruct the user profile as JSON in the original substrate format"""
@@ -106,20 +113,28 @@ class UserProfileReconstructionConsumer:
 
         # Create tasks for parallel processing
         tasks = [
-            self.process_file_parallel(file_data, owner, block_number, selected_validator)
-            for file_data in files_data
+            self.process_file_parallel(file_data, owner, block_number, selected_validator) for file_data in files_data
         ]
 
         # Execute all file processing in parallel with concurrency limit
         semaphore = asyncio.Semaphore(50)  # Limit concurrent IPFS requests
-        
+
         async def process_with_semaphore(task):
             async with semaphore:
                 return await task
 
         # Process files in parallel
-        profile_files = await asyncio.gather(*[process_with_semaphore(task) for task in tasks])
+        profile_files_raw = await asyncio.gather(*[process_with_semaphore(task) for task in tasks])
 
+        # Filter out None values (failed files)
+        profile_files = [f for f in profile_files_raw if f is not None]
+
+        # Log if files were dropped
+        dropped_count = len(profile_files_raw) - len(profile_files)
+        if dropped_count > 0:
+            logger.warning(f"Dropped {dropped_count} files due to processing errors for user {owner}")
+
+        logger.info(f"Successfully processed {len(profile_files)} files for user {owner}")
         return profile_files
 
     async def publish_to_ipfs(self, profile_json: List[Dict[str, Any]]) -> Optional[str]:
@@ -163,26 +178,8 @@ class UserProfileReconstructionConsumer:
                 # Check if we have an existing profile
                 existing = await PendingUserProfile.get_by_owner(owner)
 
-                # Always reconstruct the profile to include any new files
-                # (Remove the skip logic that was preventing updates)
-
                 # Reconstruct the profile JSON
                 profile_json = await self.reconstruct_profile_json(message_data)
-
-                # 🔍 DEBUG: Log profile contents before publishing
-                logger.info(f"🔍 DEBUG_PROFILE_RECONSTRUCTION: account={owner}")
-                logger.info(f"   Profile contains {len(profile_json)} files")
-                logger.info(f"   Message data files: {message_data.get('file_count', 0)}")
-                logger.info(f"   Message data total size: {message_data.get('total_size', 0)}")
-
-                # Log sample files
-                for i, file_entry in enumerate(profile_json[:3]):
-                    file_name = file_entry.get("file_name", "unknown")
-                    file_size = file_entry.get("file_size_in_bytes", 0)
-                    logger.info(f"   File {i+1}: {file_name} ({file_size:,} bytes)")
-
-                if len(profile_json) > 3:
-                    logger.info(f"   ... and {len(profile_json) - 3} more files")
 
                 # Publish profile to IPFS
                 published_cid = await self.publish_to_ipfs(profile_json)
