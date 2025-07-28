@@ -40,7 +40,7 @@ class MinerProfileReconstructionProcessor:
     async def connect_database(self):
         """Connect to PostgreSQL database"""
         try:
-            self.db_pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=10)
+            self.db_pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=3)
             logger.info("Connected to database")
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
@@ -75,19 +75,16 @@ class MinerProfileReconstructionProcessor:
             self.current_block = 0
 
     async def fetch_miner_profiles_to_reconstruct(self) -> List[Dict[str, Any]]:
-        """Fetch miner profiles that need to be reconstructed from file_assignments"""
+        """Fetch miner profiles that need to be reconstructed from pending_miner_profile table"""
         async with self.db_pool.acquire() as conn:
-            # Get all miners (no limit)
+            # Only get miners explicitly flagged for reconstruction
             miners_rows = await conn.fetch(
                 """
-                SELECT DISTINCT miner_id as node_id
-                FROM node_metrics 
-                WHERE miner_id IS NOT NULL
-                AND miner_id NOT IN (
-                    SELECT node_id FROM pending_miner_profile 
-                    WHERE node_id IS NOT NULL AND status = 'published'
-                )
-                ORDER BY miner_id
+                SELECT DISTINCT node_id
+                FROM pending_miner_profile 
+                WHERE node_id IS NOT NULL 
+                AND status = 'needs_reconstruction'
+                ORDER BY node_id
             """
             )
 

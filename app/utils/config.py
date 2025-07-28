@@ -8,7 +8,6 @@ dotenv.load_dotenv()
 
 # Blockchain node URL
 NODE_URL = os.environ.get("NODE_URL", "wss://rpc.hippius.network")
-IPFS_GATEWAY = os.environ.get("IPFS_GATEWAY", "https://get.hippius.network")
 DEBUG_VALIDATOR = os.getenv("DEBUG_IS_CHOSEN_VALI", False)
 
 
@@ -19,7 +18,7 @@ def get_ipfs_node_url():
     Returns:
         IPFS node URL as string
     """
-    return os.environ.get("IPFS_NODE_URL", "http://localhost:5001").rstrip("/")
+    return os.environ["IPFS_NODE_URL"].rstrip("/")
 
 
 def get_dht_node_url():
@@ -29,7 +28,7 @@ def get_dht_node_url():
     Returns:
         IPFS node URL as string
     """
-    return os.environ.get("DHT_NODE_URL", "https://dht.hippius.com").rstrip("/")
+    return os.environ["DHT_NODE_URL"].rstrip("/")
 
 
 def get_ipfs_timeout(operation_type="default"):

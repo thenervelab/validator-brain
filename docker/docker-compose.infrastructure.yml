@@ -8,6 +8,7 @@ services:
       - "8080:8080"
     volumes:
       - ipfs_data:/data/ipfs
+      - ./ipfs-init.sh:/usr/local/bin/ipfs-init.sh:ro
     environment:
       - IPFS_PROFILE=server
     healthcheck:
@@ -19,6 +20,7 @@ services:
     restart: unless-stopped
     networks:
       - validator-network
+    entrypoint: ["/usr/local/bin/ipfs-init.sh"]
 
   postgres:
     image: postgres:17

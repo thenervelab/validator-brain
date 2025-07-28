@@ -865,49 +865,8 @@ class FileAssignmentProcessor:
 
             logger.info(f"Found {len(available_miners)} available miners")
 
-            # PRIORITY 1: Fix files with NULL miners in file_assignments table (ALWAYS FIRST)
             logger.info("🎯 PRIORITY 1: Scanning file_assignments table for NULL miners...")
-            reassign_successful, reassign_failed = await self.process_reassignments(available_miners, current_epoch)
-
-            # PRIORITY 2: Process new file assignments from pending table
-            logger.info("📋 PRIORITY 2: Processing new files from pending_assignment_file...")
-            new_successful, new_failed = await self.process_new_file_assignments(available_miners, current_epoch)
-
-            # PRIORITY 3: Process failing miner replacements
-            logger.info("🔄 PRIORITY 3: Processing failing miner replacements...")
-            replace_successful, replace_failed = await self.process_failing_miner_replacements(
-                available_miners, current_epoch
-            )
-
-            # Summary
-            total_successful = new_successful + reassign_successful + replace_successful
-            total_failed = new_failed + reassign_failed + replace_failed
-
-            logger.info(f"📊 File assignment processing complete:")
-            logger.info(f"  🎯 NULL miner fixes: {reassign_successful} successful, {reassign_failed} failed")
-            logger.info(f"  📋 New assignments: {new_successful} successful, {new_failed} failed")
-            logger.info(f"  🔄 Failing replacements: {replace_successful} successful, {replace_failed} failed")
-            logger.info(f"  📈 Total: {total_successful} successful, {total_failed} failed")
-
-            # CRITICAL: Check for remaining NULL assignments
-            async with self.db_pool.acquire() as conn:
-                remaining_nulls = await conn.fetchval(
-                    """
-                    SELECT COUNT(*) FROM file_assignments 
-                    WHERE miner1 IS NULL OR miner2 IS NULL OR miner3 IS NULL 
-                      OR miner4 IS NULL OR miner5 IS NULL
-                """
-                )
-
-                if remaining_nulls == 0:
-                    logger.info("🎉 SUCCESS: All files now have complete miner assignments!")
-                else:
-                    logger.warning(
-                        f"⚠️ {remaining_nulls} files still have NULL miners - may need larger batch size or more miners"
-                    )
-
-            # Log distribution statistics
-            self._log_distribution_stats()
+            await self.process_reassignments(available_miners, current_epoch)
 
         except Exception as e:
             logger.error(f"Error in file assignment processing: {e}")

@@ -355,6 +355,23 @@ data:
     IF EXISTS pending_user_profile_status_check;\n\nALTER TABLE pending_user_profile
     \nADD CONSTRAINT pending_user_profile_status_check \nCHECK (status IN ('pending',
     'published', 'failed')); "
+  20250725000000_create_deregistered_node_ids_table.sql: "-- migrate:up\nCREATE TABLE
+    deregistered_node_ids (\n    node_id TEXT PRIMARY KEY,\n    unsuccessful_registration_checks
+    INTEGER DEFAULT 0 NOT NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
+    \   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE INDEX idx_deregistered_node_ids_checks
+    ON deregistered_node_ids(unsuccessful_registration_checks);\n\n-- migrate:down\nDROP
+    TABLE IF EXISTS deregistered_node_ids;"
+  20250728000000_make_pending_miner_profile_cid_nullable.sql: "-- migrate:up\nALTER
+    TABLE pending_miner_profile \nALTER COLUMN cid DROP NOT NULL;\n\n-- migrate:down\nALTER
+    TABLE pending_miner_profile \nALTER COLUMN cid SET NOT NULL;"
+  20250728000001_add_needs_reconstruction_status.sql: "-- migrate:up\nALTER TABLE
+    pending_miner_profile \nDROP CONSTRAINT IF EXISTS pending_miner_profile_status_check;\n\nALTER
+    TABLE pending_miner_profile \nADD CONSTRAINT pending_miner_profile_status_check
+    \nCHECK (status IN ('pending', 'published', 'failed', 'submitted', 'needs_reconstruction'));\n\n--
+    migrate:down\nALTER TABLE pending_miner_profile \nDROP CONSTRAINT IF EXISTS
+    pending_miner_profile_status_check;\n\nALTER TABLE pending_miner_profile \nADD
+    CONSTRAINT pending_miner_profile_status_check \nCHECK (status IN ('pending',
+    'published', 'failed', 'submitted'));"
 kind: ConfigMap
 metadata:
   creationTimestamp: null

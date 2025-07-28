@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Cap values at BIGINT maximum to prevent overflow
 PG_BIGINT_MAX = 9223372036854775807
+MIN_IPFS_SIZE_TB = 2
 
 
 class NodeMetricsConsumer:
@@ -98,6 +99,42 @@ class NodeMetricsConsumer:
                         logger.warning(
                             f"Capped ipfs_storage_max for {metrics['miner_id']}: {metrics['ipfs_storage_max']} -> {PG_BIGINT_MAX}"
                         )
+
+                    if metrics["ipfs_storage_max_tb"] < MIN_IPFS_SIZE_TB:
+                        logger.warning(
+                            f"Deregistering miner {metrics['miner_id']}: ipfs_storage_max_tb too low {metrics['ipfs_storage_max_tb']}TB (< {MIN_IPFS_SIZE_TB}TB required)"
+                        )
+                        
+                        # Set miner status to inactive in registration table
+                        await conn.execute(
+                            """
+                            UPDATE registration 
+                            SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+                            WHERE node_id = $1
+                            """,
+                            metrics["miner_id"],
+                        )
+                        logger.info(f"Set miner {metrics['miner_id']} status to inactive due to insufficient storage")
+                        
+                        # Null out file assignments where this miner was assigned so they can be reassigned
+                        result = await conn.execute(
+                            """
+                            UPDATE file_assignments 
+                            SET 
+                                miner1 = CASE WHEN miner1 = $1 THEN NULL ELSE miner1 END,
+                                miner2 = CASE WHEN miner2 = $1 THEN NULL ELSE miner2 END,
+                                miner3 = CASE WHEN miner3 = $1 THEN NULL ELSE miner3 END,
+                                miner4 = CASE WHEN miner4 = $1 THEN NULL ELSE miner4 END,
+                                miner5 = CASE WHEN miner5 = $1 THEN NULL ELSE miner5 END,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE miner1 = $1 OR miner2 = $1 OR miner3 = $1 OR miner4 = $1 OR miner5 = $1
+                            """,
+                            metrics["miner_id"],
+                        )
+                        if result != "UPDATE 0":
+                            logger.info(f"Nullified file assignments for deregistered miner {metrics['miner_id']} - files will be reassigned")
+
+                        return False
 
                     await conn.execute(
                         """

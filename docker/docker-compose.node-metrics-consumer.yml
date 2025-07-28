@@ -6,6 +6,7 @@ services:
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq-substrate:5672/
+      - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID}
       - PYTHONUNBUFFERED=1
     volumes:
       - ../:/ipfs-service-validator

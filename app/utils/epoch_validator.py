@@ -169,10 +169,6 @@ def is_epoch_validator(substrate: SubstrateInterface, our_validator_account: str
             current_validator = str(validator_account)
             epoch_start = int(epoch_start_block)
             
-            logger.info(f"Current epoch validator: {current_validator}")
-            logger.info(f"Epoch start block: {epoch_start}")
-            logger.info(f"Our validator account: {our_validator_account}")
-            
             # Check if we are the validator
             if DEBUG_VALIDATOR:
                 logger.debug("DEBUG_VALIDATOR detected, forcing current validator status")
