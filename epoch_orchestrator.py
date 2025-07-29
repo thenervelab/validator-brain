@@ -658,14 +658,6 @@ class EpochOrchestrator:
                     )()
                     node_registration.append(node_reg)
 
-            if not storage_requests:
-                logger.info("✅ No unassigned files to process")
-                return True
-
-            if not miner_profiles:
-                logger.error("❌ No available miners found")
-                return False
-
             # Process individual files using ValidatorWorkflow
             (
                 user_profiles,

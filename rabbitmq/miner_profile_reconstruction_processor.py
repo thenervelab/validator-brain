@@ -81,8 +81,8 @@ class MinerProfileReconstructionProcessor:
             miners_rows = await conn.fetch(
                 """
                 SELECT DISTINCT node_id
-                FROM pending_miner_profile 
-                WHERE node_id IS NOT NULL 
+                FROM pending_miner_profile
+                WHERE node_id IS NOT NULL
                 ORDER BY node_id
             """
             )
