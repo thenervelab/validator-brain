@@ -902,7 +902,9 @@ class EpochOrchestrator:
             # Verify profile reconstruction actually completed
             async with self.db_pool.acquire() as conn:
                 # Check pending profiles that should be ready
-                pending_miner_profiles = await conn.fetchval("SELECT COUNT(*) FROM 1 WHERE status = 'published'")
+                pending_miner_profiles = await conn.fetchval(
+                    "SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'"
+                )
                 pending_user_profiles = await conn.fetchval(
                     "SELECT COUNT(*) FROM pending_user_profile WHERE status = 'published'"
                 )
