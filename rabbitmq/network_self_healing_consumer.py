@@ -35,7 +35,9 @@ load_dotenv()
 # Setup logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -117,14 +119,20 @@ class NetworkSelfHealingConsumer:
                     break
 
             if len(healthy_miners) < needed_count:
-                logger.warning(f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria")
-                logger.warning(f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB")
+                logger.warning(
+                    f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria"
+                )
+                logger.warning(
+                    f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB"
+                )
                 logger.warning(f"   Excluded miners: {len(exclude_set)}")
 
                 # Additional debugging info
                 offline_count = len([m for m in all_miners if m["health_score"] < 20.0])
                 overloaded_count = len([m for m in all_miners if m["total_size"] >= 10737418240])
-                logger.warning(f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded")
+                logger.warning(
+                    f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded"
+                )
 
             return healthy_miners
 
@@ -155,10 +163,14 @@ class NetworkSelfHealingConsumer:
                 async with conn.transaction():
                     # 1. Acquire advisory lock for this specific file (prevents parallel processing)
                     cid_hash = hash(cid) % 2147483647  # Convert CID to integer for advisory lock
-                    lock_acquired = await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", cid_hash)
+                    lock_acquired = await conn.fetchval(
+                        "SELECT pg_try_advisory_xact_lock($1)", cid_hash
+                    )
 
                     if not lock_acquired:
-                        logger.info(f"🔒 File {cid[:16]}... is being processed by another consumer, skipping")
+                        logger.info(
+                            f"🔒 File {cid[:16]}... is being processed by another consumer, skipping"
+                        )
                         return True  # Not an error, just skip
 
                     # 2. Get current assignment state (now protected by advisory lock)
@@ -282,9 +294,13 @@ class NetworkSelfHealingConsumer:
                 success = await self.process_file_healing(healing_data)
 
                 if success:
-                    logger.debug(f"✅ Successfully processed healing for {healing_data.get('cid', 'unknown')}")
+                    logger.debug(
+                        f"✅ Successfully processed healing for {healing_data.get('cid', 'unknown')}"
+                    )
                 else:
-                    logger.error(f"❌ Failed to process healing for {healing_data.get('cid', 'unknown')}")
+                    logger.error(
+                        f"❌ Failed to process healing for {healing_data.get('cid', 'unknown')}"
+                    )
 
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to decode message: {e}")

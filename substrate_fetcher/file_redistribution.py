@@ -30,7 +30,8 @@ class RedistributionResult(BaseModel):
 
 
 async def identify_files_for_redistribution(
-    offline_miners: List[Dict], miner_profiles: List[Dict],
+    offline_miners: List[Dict],
+    miner_profiles: List[Dict],
 ) -> List[FileToRedistribute]:
     """
     Identify files that need to be redistributed from offline miners.

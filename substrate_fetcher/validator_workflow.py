@@ -7,7 +7,6 @@ organizing the validation process into distinct phases based on epoch position.
 import asyncio
 import json
 import os
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -25,7 +24,11 @@ from app.services.storage_processor import (
 from app.services.substrate_client import fetch_current_block
 from app.services.substrate_fetcher import fetch_and_store_blockchain_data
 from app.utils.config import get_epoch_block_interval
-from app.utils.epoch_validator import get_epoch_block_position, calculate_epoch_from_block, get_epoch_start_block
+from app.utils.epoch_validator import (
+    calculate_epoch_from_block,
+    get_epoch_block_position,
+    get_epoch_start_block,
+)
 from app.utils.logging import logger
 
 
@@ -101,7 +104,8 @@ class NodeRegistration(BaseModel):
             # Tuple: (node_id, reg_data)
             return cls(
                 node_id=data[0],
-                ipfs_node_id=data[0],  # Default to node_id if no specific IPFS ID
+                ipfs_node_id=data[0],
+                # Default to node_id if no specific IPFS ID
             )
         # Dictionary format
         if isinstance(data, dict):
@@ -121,7 +125,7 @@ class MinerProfile(BaseModel):
 
     node_id: str
     ipfs_peer_id: str
-    profile_cid: Optional[str] = None
+    profile_cid: str | None = None
     storage_capacity_bytes: int = 1000000000  # 1GB default
     total_files_pinned: int = 0
     total_files_size_bytes: int = 0
@@ -440,7 +444,7 @@ class ValidatorWorkflow:
 
         return user_profiles, miner_profiles
 
-    async def prepare_pin_requests(self, user_profiles: List[Dict]) -> List[Dict]:
+    async def prepare_pin_requests(self, user_profiles: list[dict]) -> list[dict]:
         """
         Prepare pin requests for blockchain submission directly from user profiles.
 
@@ -511,7 +515,7 @@ class ValidatorWorkflow:
         logger.info(f"Prepared {len(pin_requests)} pin requests for blockchain submission")
         return pin_requests
 
-    async def process_blockchain_data(self, substrate_data: Dict) -> Dict[str, List]:
+    async def process_blockchain_data(self, substrate_data: dict) -> dict[str, list]:
         """
         Process and standardize blockchain data for validator operations.
 
@@ -685,9 +689,9 @@ class ValidatorWorkflow:
 
     async def perform_early_epoch_actions(
         self,
-        substrate_data: Dict,
+        substrate_data: dict,
         block_position: int = None,
-    ) -> Dict:
+    ) -> dict:
         """
         Perform actions for early epoch position (blocks 0-5).
         Refresh profile tables and prepare for data fetching.
@@ -760,9 +764,9 @@ class ValidatorWorkflow:
 
     async def perform_mid_epoch_actions(
         self,
-        substrate_data: Dict,
+        substrate_data: dict,
         block_position: int = None,
-    ) -> Dict:
+    ) -> dict:
         """
         Perform actions for mid-epoch position (blocks 5-40).
         Fetch IPFS-related data from blockchain.
@@ -789,10 +793,10 @@ class ValidatorWorkflow:
 
     async def perform_assignment_epoch_actions(
         self,
-        substrate_data: Dict,
-        results: Dict,
+        substrate_data: dict,
+        results: dict,
         block_position: int = None,
-    ) -> Dict:
+    ) -> dict:
         """
         Perform actions for assignment epoch position (blocks 40-98).
         Process storage requests, assign miners, and prepare blockchain submissions.
@@ -1023,10 +1027,10 @@ class ValidatorWorkflow:
 
     async def perform_cleanup_epoch_actions(
         self,
-        _substrate_data: Dict,
-        _results: Dict,
+        _substrate_data: dict,
+        _results: dict,
         block_position: int = None,
-    ) -> Dict:
+    ) -> dict:
         """
         Perform actions for cleanup epoch position (block 98+).
         Clear profile tables and prepare for next epoch.
@@ -1053,7 +1057,7 @@ class ValidatorWorkflow:
 
         return {"profile_tables_cleared": True, "block_position": block_position}
 
-    async def get_local_data_from_db(self, db_pool) -> Dict:
+    async def get_local_data_from_db(self, db_pool) -> dict:
         """
         Get local data from the database for synchronization with blockchain.
 
@@ -1195,7 +1199,8 @@ class ValidatorWorkflow:
                                     await conn.execute(
                                         load_query("store_miner_registration"),
                                         miner.node_id,
-                                        miner.ipfs_peer_id,  # Use ipfs_peer_id from profile
+                                        miner.ipfs_peer_id,
+                                        # Use ipfs_peer_id from profile
                                         current_block.number,  # registered_at
                                         "miner",  # node_type
                                         "",  # owner - empty since we don't have this info
@@ -1206,7 +1211,8 @@ class ValidatorWorkflow:
                                     load_query("store_miner_profile"),
                                     miner.node_id,
                                     miner.profile_cid,
-                                    0,  # file_size_bytes - using 0 for profile CID
+                                    0,
+                                    # file_size_bytes - using 0 for profile CID
                                     current_block.number,  # created_at
                                     self.validator_account_id,  # selected_validator
                                 )

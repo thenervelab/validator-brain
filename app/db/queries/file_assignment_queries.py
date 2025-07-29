@@ -11,11 +11,11 @@ async def get_files_by_offline_miner(
     """
     Get all files hosted by a specific miner with file details.
     Useful when a miner goes offline and we need to reassign their files.
-    
+
     Args:
         conn: Database connection
         miner_node_id: Node ID of the offline miner
-        
+
     Returns:
         List of file assignments with file details
     """
@@ -44,7 +44,7 @@ async def get_files_by_offline_miner(
         WHERE fa.miner1 = $1 OR fa.miner2 = $1 OR fa.miner3 = $1 OR fa.miner4 = $1 OR fa.miner5 = $1
         ORDER BY fa.updated_at DESC
     """
-    
+
     rows = await conn.fetch(query, miner_node_id)
     return [dict(row) for row in rows]
 
@@ -55,11 +55,11 @@ async def get_files_needing_replication(
 ) -> List[Dict[str, Any]]:
     """
     Get files that have fewer than the minimum required replicas.
-    
+
     Args:
         conn: Database connection
         min_replicas: Minimum number of replicas required
-        
+
     Returns:
         List of files needing more replicas
     """
@@ -82,7 +82,7 @@ async def get_files_needing_replication(
                CASE WHEN fa.miner5 IS NOT NULL THEN 1 ELSE 0 END) < $1
         ORDER BY current_replicas ASC, fa.updated_at DESC
     """
-    
+
     rows = await conn.fetch(query, min_replicas)
     return [dict(row) for row in rows]
 
@@ -93,11 +93,11 @@ async def remove_miner_from_assignments(
 ) -> int:
     """
     Remove a miner from all file assignments (e.g., when they go offline).
-    
+
     Args:
         conn: Database connection
         miner_node_id: Node ID of the miner to remove
-        
+
     Returns:
         Number of assignments updated
     """
@@ -112,7 +112,7 @@ async def remove_miner_from_assignments(
         WHERE miner1 = $1 OR miner2 = $1 OR miner3 = $1 OR miner4 = $1 OR miner5 = $1
         RETURNING id
     """
-    
+
     result = await conn.fetch(query, miner_node_id)
     return len(result)
 
@@ -123,11 +123,11 @@ async def get_miner_file_count(
 ) -> Dict[str, int]:
     """
     Get statistics about files hosted by a miner.
-    
+
     Args:
         conn: Database connection
         miner_node_id: Node ID of the miner
-        
+
     Returns:
         Dictionary with file count and total size
     """
@@ -139,12 +139,9 @@ async def get_miner_file_count(
         JOIN files f ON fa.cid = f.cid
         WHERE fa.miner1 = $1 OR fa.miner2 = $1 OR fa.miner3 = $1 OR fa.miner4 = $1 OR fa.miner5 = $1
     """
-    
+
     row = await conn.fetchrow(query, miner_node_id)
-    return {
-        "file_count": row["file_count"],
-        "total_size": row["total_size"]
-    }
+    return {"file_count": row["file_count"], "total_size": row["total_size"]}
 
 
 async def reassign_miner_slot(
@@ -155,13 +152,13 @@ async def reassign_miner_slot(
 ) -> bool:
     """
     Replace a specific miner with a new one in a file assignment.
-    
+
     Args:
         conn: Database connection
         cid: Content ID of the file
         old_miner: Node ID of the miner to replace
         new_miner: Node ID of the new miner
-        
+
     Returns:
         True if successful, False otherwise
     """
@@ -176,6 +173,6 @@ async def reassign_miner_slot(
         WHERE cid = $1 AND (miner1 = $2 OR miner2 = $2 OR miner3 = $2 OR miner4 = $2 OR miner5 = $2)
         RETURNING id
     """
-    
+
     result = await conn.fetchrow(query, cid, old_miner, new_miner)
-    return result is not None 
+    return result is not None

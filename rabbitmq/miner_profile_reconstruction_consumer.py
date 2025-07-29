@@ -27,7 +27,9 @@ from app.db.models.pending_miner_profile import PendingMinerProfile
 # Setup logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +78,11 @@ class MinerProfileReconstructionConsumer:
             raise
 
     async def process_file_parallel(
-        self, file_data: Dict[str, Any], node_id: str, block_number: int, selected_validator: str
+        self,
+        file_data: Dict[str, Any],
+        node_id: str,
+        block_number: int,
+        selected_validator: str,
     ) -> Optional[Dict[str, Any]]:
         """Process a single file with potential IPFS size re-fetching"""
         # Convert CID back to hex-encoded byte array
@@ -97,7 +103,9 @@ class MinerProfileReconstructionConsumer:
             logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
             correct_file_size = await fetch_ipfs_file_size(cid)
             if not correct_file_size:
-                logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+                logger.warning(
+                    f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
+                )
             else:
                 file_size = correct_file_size
 
@@ -127,7 +135,8 @@ class MinerProfileReconstructionConsumer:
 
         # Create tasks for parallel processing
         tasks = [
-            self.process_file_parallel(file_data, node_id, block_number, selected_validator) for file_data in files_data
+            self.process_file_parallel(file_data, node_id, block_number, selected_validator)
+            for file_data in files_data
         ]
 
         async def process_with_semaphore(task):
@@ -184,7 +193,9 @@ class MinerProfileReconstructionConsumer:
                 # Check if already processed by node_id
                 existing = await PendingMinerProfile.get_by_node_id(node_id)
                 if existing and existing.status == "published":
-                    logger.info(f"Profile for miner {node_id} already published (CID: {existing.cid}), skipping")
+                    logger.info(
+                        f"Profile for miner {node_id} already published (CID: {existing.cid}), skipping"
+                    )
                     return
 
                 # Reconstruct the profile JSON

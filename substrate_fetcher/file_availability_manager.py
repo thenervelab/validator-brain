@@ -16,7 +16,9 @@ from typing import Dict, List, Any
 import asyncpg
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -40,7 +42,12 @@ class FileAvailabilityManager:
         self.rules = rules or AvailabilityRules()
 
     async def record_failure(
-        self, cid: str, miner_id: str, epoch: int, failure_type: str, failure_reason: str = None
+        self,
+        cid: str,
+        miner_id: str,
+        epoch: int,
+        failure_type: str,
+        failure_reason: str = None,
     ) -> None:
         """Record a file availability failure."""
         async with self.db_pool.acquire() as conn:
@@ -279,7 +286,9 @@ class FileAvailabilityManager:
                     failed_miners,
                 )
 
-                logger.info(f"Reassigned replicas for {cid}: removed {failed_miners}, added {new_miners}")
+                logger.info(
+                    f"Reassigned replicas for {cid}: removed {failed_miners}, added {new_miners}"
+                )
                 return True
 
         except Exception as e:

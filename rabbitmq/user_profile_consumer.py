@@ -35,7 +35,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +52,9 @@ class UserProfileConsumer:
             rabbitmq_url: URL of the RabbitMQ server
             ipfs_gateway: URL of the IPFS gateway
         """
-        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
+        self.rabbitmq_url = rabbitmq_url or os.getenv(
+            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
+        )
         # Use the centralized config for IPFS URL
         self.ipfs_gateway = get_ipfs_node_url()
         self.queue_name = "user_profile"
@@ -130,7 +134,9 @@ class UserProfileConsumer:
             )
 
             if existing:
-                logger.info(f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files")
+                logger.info(
+                    f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files"
+                )
                 return existing["file_count"]
 
         # Fetch profile from IPFS
@@ -161,7 +167,9 @@ class UserProfileConsumer:
                     miner_ids = file_info.get("miner_ids", [])
 
                     if not file_hash_bytes:
-                        logger.warning(f"File without file_hash in profile for {account}: {file_info}")
+                        logger.warning(
+                            f"File without file_hash in profile for {account}: {file_info}"
+                        )
                         continue
 
                     # Convert byte array to CID string, handle both byte arrays and strings
@@ -172,7 +180,9 @@ class UserProfileConsumer:
                         # It's already a string CID
                         file_cid = file_hash_bytes
                     else:
-                        logger.warning(f"Unknown file_hash type {type(file_hash_bytes)} for {account}")
+                        logger.warning(
+                            f"Unknown file_hash type {type(file_hash_bytes)} for {account}"
+                        )
                         continue
 
                     if not file_cid:
@@ -234,7 +244,9 @@ class UserProfileConsumer:
                     processed_count += 1
 
                 except Exception:
-                    logger.exception(f"Error processing file in profile for {account}, {file_info=}")
+                    logger.exception(
+                        f"Error processing file in profile for {account}, {file_info=}"
+                    )
                     continue
 
         logger.info(f"Successfully processed {processed_count} files for {account}")

@@ -1,9 +1,12 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: 23.9.1
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
     hooks:
-      - id: black
-        args: [--config=pyproject.toml]
+      # Run the linter
+      - id: ruff
+        args: [ --fix ]
+      # Run the formatter
+      - id: ruff-format
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -21,15 +24,15 @@ repos:
     rev: v1.6.1
     hooks:
       - id: mypy
-        additional_dependencies: [types-requests, types-PyYAML]
+        additional_dependencies: [ types-requests, types-PyYAML ]
 
   - repo: https://github.com/sqlfluff/sqlfluff
     rev: 2.3.4
     hooks:
       - id: sqlfluff-lint
-        args: [--dialect, postgres]
+        args: [ --dialect, postgres ]
         files: ^app/db/migrations/.*\.sql$
 
       - id: sqlfluff-fix
-        args: [--dialect, postgres]
+        args: [ --dialect, postgres ]
         files: ^app/db/migrations/.*\.sql$

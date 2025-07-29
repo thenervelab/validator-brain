@@ -34,7 +34,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -151,7 +153,9 @@ class EpochHealthProcessor:
                     logger.info(
                         f"ℹ️ No health data from PREVIOUS epoch {previous_epoch} found to mark as stale, or already marked."
                     )
-                logger.info(f"   This maintains historical health data for trend analysis and debugging")
+                logger.info(
+                    f"   This maintains historical health data for trend analysis and debugging"
+                )
 
             except Exception as e:
                 logger.error(f"Error preserving epoch health data for epoch {previous_epoch}: {e}")

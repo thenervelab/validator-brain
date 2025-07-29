@@ -163,7 +163,9 @@ class HealthCheck:
         # Check validation metrics
         validation_count = await conn.fetchval("SELECT COUNT(*) FROM validation_metrics")
         await record_metric(
-            PerformanceMetric(name="validation_metrics_count", value=validation_count, unit="count"),
+            PerformanceMetric(
+                name="validation_metrics_count", value=validation_count, unit="count"
+            ),
         )
 
         # Check success rate

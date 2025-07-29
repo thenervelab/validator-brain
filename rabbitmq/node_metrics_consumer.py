@@ -27,7 +27,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # Cap values at BIGINT maximum to prevent overflow
@@ -114,7 +116,9 @@ class NodeMetricsConsumer:
                             """,
                             metrics["miner_id"],
                         )
-                        logger.info(f"Set miner {metrics['miner_id']} status to inactive due to insufficient storage")
+                        logger.info(
+                            f"Set miner {metrics['miner_id']} status to inactive due to insufficient storage"
+                        )
 
                         # Null out file assignments where this miner was assigned so they can be reassigned
                         result = await conn.execute(
@@ -170,7 +174,9 @@ class NodeMetricsConsumer:
             try:
                 # Parse the message body
                 metrics_data = json.loads(message.body.decode())
-                logger.info(f"Processing metrics for miner {metrics_data.get('miner_id', 'unknown')}")
+                logger.info(
+                    f"Processing metrics for miner {metrics_data.get('miner_id', 'unknown')}"
+                )
 
                 # Store the metrics
                 success = await self.store_node_metrics(metrics_data)

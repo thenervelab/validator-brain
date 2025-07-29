@@ -29,7 +29,9 @@ load_dotenv()
 # Setup logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -111,7 +113,9 @@ async def grace(node_ids) -> None:
         node_ids.discard(node_id)
 
     if nodes_to_remove:
-        logger.info(f"🕐 Graced {len(nodes_to_remove)} nodes, {len(node_ids)} remaining for processing")
+        logger.info(
+            f"🕐 Graced {len(nodes_to_remove)} nodes, {len(node_ids)} remaining for processing"
+        )
 
 
 class NetworkSelfHealingProcessor:
@@ -182,7 +186,9 @@ class NetworkSelfHealingProcessor:
                 # Clean up orphaned monitoring records first
                 await conn.execute("DELETE FROM node_metrics WHERE miner_id = $1", miner_node_id)
                 await conn.execute("DELETE FROM file_failures WHERE miner_id = $1", miner_node_id)
-                await conn.execute("DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id)
+                await conn.execute(
+                    "DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id
+                )
 
                 # Remove miner from file assignments (set miner columns to NULL)
                 await conn.execute(
@@ -199,7 +205,9 @@ class NetworkSelfHealingProcessor:
                 )
 
                 # Delete from registration table
-                result = await conn.execute("DELETE FROM registration WHERE node_id = $1", miner_node_id)
+                result = await conn.execute(
+                    "DELETE FROM registration WHERE node_id = $1", miner_node_id
+                )
                 if result == "DELETE 1":
                     total_cleaned += 1
                     logger.info(f"Cleaned up deregistered miner: {miner_node_id}")
@@ -252,7 +260,9 @@ class NetworkSelfHealingProcessor:
                         f"Submitting deregistration report to Hippius using account: {keypair.ss58_address} for {len(dereged_node_ids)} node ids"
                     )
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                    receipt = submit_deregistration_report(hippius_substrate, keypair, dereged_node_ids)
+                    receipt = submit_deregistration_report(
+                        hippius_substrate, keypair, dereged_node_ids
+                    )
                     if receipt and receipt.is_success:
                         logger.info("✅ Hippius deregistration report submitted successfully")
                     else:

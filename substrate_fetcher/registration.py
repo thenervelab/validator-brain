@@ -21,16 +21,22 @@ def _query_storage_map(substrate: SubstrateInterface, module: str, storage_funct
         return {}
 
 
-def _query_storage_double_map(substrate: SubstrateInterface, module: str, storage_function: str, netuid: int) -> Dict:
+def _query_storage_double_map(
+    substrate: SubstrateInterface, module: str, storage_function: str, netuid: int
+) -> Dict:
     """Query all entries in a storage double map for a specific netuid."""
     try:
-        result = substrate.query_map(module=module, storage_function=storage_function, params=[netuid])
+        result = substrate.query_map(
+            module=module, storage_function=storage_function, params=[netuid]
+        )
         return {entry[0].value: entry[1].value for entry in result}
     except SubstrateRequestException:
         return {}
 
 
-def _fetch_bittensor_coldkeys(bittensor_substrate: SubstrateInterface, netuid: int = 75) -> Set[str]:
+def _fetch_bittensor_coldkeys(
+    bittensor_substrate: SubstrateInterface, netuid: int = 75
+) -> Set[str]:
     """Fetch all registered coldkeys (hotkeys) from Bittensor."""
     uids_data = _query_storage_double_map(bittensor_substrate, "SubtensorModule", "Uids", netuid)
     return set(uids_data.keys())
@@ -42,7 +48,9 @@ def _fetch_primary_nodes(registration_substrate: SubstrateInterface) -> Dict[str
     Returns:
         Dict mapping node_id -> owner (coldkey)
     """
-    coldkey_reg_data = _query_storage_map(registration_substrate, "Registration", "ColdkeyNodeRegistration")
+    coldkey_reg_data = _query_storage_map(
+        registration_substrate, "Registration", "ColdkeyNodeRegistration"
+    )
 
     primary_nodes = {}
     for node_id, node_info in coldkey_reg_data.items():
@@ -52,14 +60,18 @@ def _fetch_primary_nodes(registration_substrate: SubstrateInterface) -> Dict[str
     return primary_nodes
 
 
-def _fetch_linked_nodes(registration_substrate: SubstrateInterface) -> Dict[str, List[str]]:
+def _fetch_linked_nodes(
+    registration_substrate: SubstrateInterface,
+) -> Dict[str, List[str]]:
     """Fetch linked nodes from Registration.LinkedNodes.
 
     Returns:
         Dict mapping primary_node_id -> [linked_node1, linked_node2, ...]
     """
     try:
-        result = registration_substrate.query_map(module="Registration", storage_function="LinkedNodes")
+        result = registration_substrate.query_map(
+            module="Registration", storage_function="LinkedNodes"
+        )
         linked_nodes = {}
 
         for entry in result:
@@ -80,7 +92,9 @@ def _fetch_linked_nodes(registration_substrate: SubstrateInterface) -> Dict[str,
 
 
 def get_deregistered_coldkeys(
-    bittensor_substrate: SubstrateInterface, registration_substrate: SubstrateInterface, netuid: int = 75
+    bittensor_substrate: SubstrateInterface,
+    registration_substrate: SubstrateInterface,
+    netuid: int = 75,
 ) -> Dict[str, List[str]]:
     """Get coldkeys that are deregistered from Bittensor with their associated node IDs.
 

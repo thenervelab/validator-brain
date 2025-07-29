@@ -44,7 +44,9 @@ async def verify_file_sizes(storage_requests: List[Dict]) -> List[FileSizeVerifi
 
         # Initialize verification result
         verification = FileSizeVerification(
-            file_hash=file_hash, claimed_size=claimed_size, owner=owner,
+            file_hash=file_hash,
+            claimed_size=claimed_size,
+            owner=owner,
         )
 
         try:
@@ -74,7 +76,9 @@ async def verify_file_sizes(storage_requests: List[Dict]) -> List[FileSizeVerifi
     return verification_results
 
 
-def get_slashing_recommendations(verifications: List[FileSizeVerification]) -> List[Dict]:
+def get_slashing_recommendations(
+    verifications: List[FileSizeVerification],
+) -> List[Dict]:
     """
     Get slashing recommendations for users who lied about file sizes.
 

@@ -6,31 +6,29 @@ import subprocess
 import sys
 import time
 from datetime import datetime
-from typing import List
 
-from rabbitmq import pinning_request_processor
 from rabbitmq import (
-    user_profile_processor,
+    availability_manager_processor,
     file_assignment_processor,
-    user_profile_reconstruction_processor,
     miner_profile_reconstruction_processor,
     network_self_healing_processor,
-    availability_manager_processor,
-    registration_processor,
     node_metrics_processor,
+    pinning_request_processor,
+    registration_processor,
+    user_profile_processor,
+    user_profile_reconstruction_processor,
 )
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 from app.utils.epoch_validator import (
+    connect_substrate,
     get_current_epoch_info,
     get_epoch_block_position,
-    is_epoch_validator,
     get_validator_account_from_env,
-    connect_substrate,
+    is_epoch_validator,
 )
-from app.db.connection import init_db_pool, close_db_pool, get_db_pool
 
 ORCHESTRATOR_VERSION = "2.2.0"
 logger = logging.getLogger("epoch-orchestrator")
@@ -71,8 +69,7 @@ class EpochOrchestrator:
             "last_known_epoch": None,
             "last_known_validator_status": False,
             "last_successful_connection": None,
-            "validator_epoch_start": None,
-            # Track when we became validator
+            "validator_epoch_start": None,  # Track when we became validator
         }
 
         # Safety mechanism for mid-epoch startup
@@ -207,7 +204,6 @@ class EpochOrchestrator:
             and cache["validator_epoch_start"] == current_epoch
             and self.waiting_for_next_epoch
         ):  # Only if we're actually waiting
-
             logger.info(
                 f"🔄 Connection recovery detected: Was validator in epoch {current_epoch} before connection failure"
             )
@@ -279,7 +275,7 @@ class EpochOrchestrator:
             logger.exception(f"Full traceback for {description} error:")
             return False
 
-    async def wait_for_queues_empty(self, queue_names: List[str], timeout: int = 300) -> bool:
+    async def wait_for_queues_empty(self, queue_names: list[str], timeout: int = 300) -> bool:
         """
         Wait for specified queues to be empty by actually checking RabbitMQ.
 
@@ -293,8 +289,9 @@ class EpochOrchestrator:
         logger.info(f"⏳ Waiting for queues to be empty: {', '.join(queue_names)}")
 
         try:
-            import aio_pika
             import os
+
+            import aio_pika
 
             # Get RabbitMQ connection URL
             rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@rabbitmq-service:5672/")
@@ -382,8 +379,9 @@ class EpochOrchestrator:
 
     async def refresh_miner_profiles(self):
         """Refresh miner profiles data."""
-        logger.info("🔄 Refreshing miner profiles (removed - using pending_miner_profile only)")
-        # Removed miner_profile_processor - using pending_miner_profile table only
+        logger.info(
+            "🔄 Refreshing miner profiles (removed - using pending_miner_profile only)"
+        )  # Removed miner_profile_processor - using pending_miner_profile table only
 
     async def perform_health_checks(self) -> bool:
         """Perform miner health checks."""
@@ -407,8 +405,7 @@ class EpochOrchestrator:
         try:
             async with self.db_pool.acquire() as conn:
                 # Get most recent health data per miner (avoiding duplicates from multiple epochs)
-                health_calculations = await conn.fetch(
-                    """
+                health_calculations = await conn.fetch("""
                     SELECT DISTINCT ON (meh.node_id)
                         meh.node_id,
                         meh.epoch,
@@ -426,8 +423,7 @@ class EpochOrchestrator:
                     FROM miner_epoch_health meh
                     WHERE meh.last_activity_at >= NOW() - INTERVAL '24 hours'
                     ORDER BY meh.node_id, meh.last_activity_at DESC
-                """
-                )
+                """)
 
                 if not health_calculations:
                     logger.warning("⚠️ No recent health data found to process")
@@ -473,19 +469,15 @@ class EpochOrchestrator:
                     updated_count += 1
 
                 # Verify health scores were calculated
-                healthy_miners = await conn.fetchval(
-                    """
+                healthy_miners = await conn.fetchval("""
                     SELECT COUNT(*) FROM miner_stats 
                     WHERE health_score > 0 AND updated_at >= NOW() - INTERVAL '10 minutes'
-                """
-                )
+                """)
 
-                avg_health = await conn.fetchval(
-                    """
+                avg_health = await conn.fetchval("""
                     SELECT ROUND(AVG(health_score), 1) FROM miner_stats 
                     WHERE health_score > 0 AND updated_at >= NOW() - INTERVAL '10 minutes'
-                """
-                )
+                """)
 
                 logger.info("✅ Health score processing completed:")
                 logger.info(f"   📊 Updated {updated_count} miner records")
@@ -544,8 +536,7 @@ class EpochOrchestrator:
             # Get individual files from file_assignments (already extracted from manifests by pinning consumer)
             storage_requests = []
             async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
+                rows = await conn.fetch("""
                     SELECT 
                         fa.owner, 
                         fa.cid as file_hash,  -- Use individual file CID, not manifest CID
@@ -560,8 +551,7 @@ class EpochOrchestrator:
                     WHERE (fa.miner1 IS NULL OR fa.miner2 IS NULL OR fa.miner3 IS NULL 
                        OR fa.miner4 IS NULL OR fa.miner5 IS NULL)  -- Any missing assignments
                     ORDER BY fa.created_at ASC
-                """
-                )
+                """)
 
                 for row in rows:
                     # Convert to the format expected by ValidatorWorkflow (using file CID as request_hash)
@@ -584,8 +574,7 @@ class EpochOrchestrator:
             # Get miner profiles from database
             miner_profiles = []
             async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
+                rows = await conn.fetch("""
                     SELECT 
                         r.node_id, 
                         r.ipfs_peer_id, 
@@ -609,8 +598,7 @@ class EpochOrchestrator:
                     AND COALESCE(ms.health_score, 100) >= 1.0
                     AND COALESCE(nm.ipfs_storage_max, 0) >= 2199023255552
                     ORDER BY COALESCE(ms.health_score, 100) DESC
-                """
-                )
+                """)
 
                 # DEBUG LOGGING: Print raw miner profiles from DB
                 logger.info(f"DEBUG: Raw miner profiles from DB: {len(rows)} miners")
@@ -633,13 +621,11 @@ class EpochOrchestrator:
             # Get node registration data
             node_registration = []
             async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
+                rows = await conn.fetch("""
                     SELECT node_id, ipfs_peer_id
                     FROM registration 
                     WHERE node_type = 'StorageMiner' AND status = 'active'
-                """
-                )
+                """)
 
                 for row in rows:
                     # Convert to expected format
@@ -662,7 +648,10 @@ class EpochOrchestrator:
                 return False
 
             # Process individual files using ValidatorWorkflow
-            user_profiles, processed_miner_profiles = await workflow.process_storage_requests(
+            (
+                user_profiles,
+                processed_miner_profiles,
+            ) = await workflow.process_storage_requests(
                 storage_requests=storage_requests,
                 miner_profiles=miner_profiles,
                 node_registration=node_registration,
@@ -761,7 +750,8 @@ class EpochOrchestrator:
                                 profile.get("file_name", ""),
                                 profile["file_size_in_bytes"],
                                 len(assigned_miners),
-                                timestamp,  # last_charged_at
+                                timestamp,
+                                # last_charged_at
                                 timestamp,  # created_at
                                 assigned_miners,
                                 self.our_validator_account,
@@ -800,13 +790,11 @@ class EpochOrchestrator:
             # CRITICAL ENHANCEMENT: Verify no unassigned files remain before declaring success
             logger.info("🔍 Step 4: Verifying assignment completion...")
             async with self.db_pool.acquire() as conn:
-                unassigned_count = await conn.fetchval(
-                    """
+                unassigned_count = await conn.fetchval("""
                     SELECT COUNT(*) FROM file_assignments 
                     WHERE miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
                       AND miner4 IS NULL AND miner5 IS NULL
-                """
-                )
+                """)
 
                 if unassigned_count > 0:
                     logger.warning(f"⚠️ Found {unassigned_count} files still unassigned after assignment process")
@@ -881,9 +869,9 @@ class EpochOrchestrator:
         try:
             # Import submission utilities
             from app.utils.blockchain_submission import (
-                collect_storage_requests_for_submission,
-                collect_miner_profiles_for_submission,
                 call_update_pin_and_storage_requests,
+                collect_miner_profiles_for_submission,
+                collect_storage_requests_for_submission,
                 mark_submissions_as_completed,
                 submit_health_metrics_to_blockchain,
             )
@@ -914,13 +902,11 @@ class EpochOrchestrator:
                 )
 
                 # Check file assignments that should exist
-                assigned_files = await conn.fetchval(
-                    """
+                assigned_files = await conn.fetchval("""
                     SELECT COUNT(*) FROM file_assignments 
                     WHERE miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
                       OR miner4 IS NOT NULL OR miner5 IS NOT NULL
-                """
-                )
+                """)
 
                 logger.info("📊 Pre-submission data check:")
                 logger.info(f"   - {pending_miner_profiles} miner profiles published")
@@ -1120,7 +1106,10 @@ class EpochOrchestrator:
 
         # PERIODIC DATABASE CLEANUP: Run comprehensive miner records cleanup (every 4 hours)
         # Use block position to determine timing - run at specific intervals to avoid validator interference
-        cleanup_interval = 240  # Approximately 4 hours (240 blocks * 6 seconds = 1440 seconds = 24 minutes actual)
+        cleanup_interval = (
+            240
+            # Approximately 4 hours (240 blocks * 6 seconds = 1440 seconds = 24 minutes actual)
+        )
         if (self.current_block % cleanup_interval == 0) and block_position > 20:  # Avoid early epoch interference
             logger.info("🧹 Non-validator: Starting periodic database cleanup (every ~4 hours)...")
             logger.info("   This runs on non-validators to avoid impacting validator performance")
@@ -1168,15 +1157,13 @@ class EpochOrchestrator:
 
                 # Check if we have recent health data to skip checks
                 async with self.db_pool.acquire() as conn:
-                    health_data_count = await conn.fetchval(
-                        """
+                    health_data_count = await conn.fetchval("""
                         SELECT COUNT(DISTINCT node_id) 
                         FROM miner_epoch_health 
-                        WHERE last_activity_at >= NOW() - INTERVAL '48 hours'
-                    """
-                    )
+                        WHERE last_activity_at >= NOW() - INTERVAL '2 hours'
+                    """)
 
-                    logger.info(f"📊 Found {health_data_count} miners with recent health data (< 48 hours)")
+                    logger.info(f"📊 Found {health_data_count} miners with recent health data (< 2 hours)")
 
                     if health_data_count >= 400:  # High threshold for validators
                         self.health_checks_completed = True
@@ -1227,7 +1214,6 @@ class EpochOrchestrator:
             await self.network_self_healing_routine()
 
             return
-
 
         # Phase 3: SEQUENTIAL File Assignment (immediately after self-healing complete)
         elif not self.assignment_completed:
@@ -1299,7 +1285,10 @@ class EpochOrchestrator:
         self.initialization_completed = False
         self.health_checks_completed = False
         self.health_scores_processed = False  # CRITICAL: Health score processing
-        self.assignment_completed = False  # CRITICAL: Always reset to ensure fresh storage request processing
+        self.assignment_completed = (
+            False
+            # CRITICAL: Always reset to ensure fresh storage request processing
+        )
         self.profiles_completed = False  # NEW
         self.submission_completed = False  # NEW
         self.cleanup_completed = False  # NEW
@@ -1670,15 +1659,13 @@ class EpochOrchestrator:
             if self.assignment_completed:
                 async with self.db_pool.acquire() as conn:
                     # Check file assignment coverage
-                    assignment_stats = await conn.fetchrow(
-                        """
+                    assignment_stats = await conn.fetchrow("""
                         SELECT 
                             COUNT(*) as total_files,
                             COUNT(CASE WHEN miner1 IS NOT NULL OR miner2 IS NOT NULL OR miner3 IS NOT NULL 
                                        OR miner4 IS NOT NULL OR miner5 IS NOT NULL THEN 1 END) as assigned_files
                         FROM file_assignments
-                    """
-                    )
+                    """)
 
                     if assignment_stats:
                         total = assignment_stats["total_files"]
@@ -1767,31 +1754,25 @@ class EpochOrchestrator:
                     return True
 
                 # Count what will be cleaned
-                very_old_count = await conn.fetchval(
-                    """
+                very_old_count = await conn.fetchval("""
                     SELECT COUNT(*) FROM miner_epoch_health 
                     WHERE last_activity_at < NOW() - INTERVAL '3 days'
-                """
-                )
+                """)
 
-                old_duplicates_count = await conn.fetchval(
-                    """
+                old_duplicates_count = await conn.fetchval("""
                     SELECT COUNT(*) - COUNT(DISTINCT node_id) FROM miner_epoch_health 
                     WHERE last_activity_at < NOW() - INTERVAL '24 hours' 
                     AND last_activity_at >= NOW() - INTERVAL '3 days'
-                """
-                )
+                """)
 
-                orphaned_count = await conn.fetchval(
-                    """
+                orphaned_count = await conn.fetchval("""
                     SELECT COUNT(*) FROM miner_epoch_health meh
                     WHERE NOT EXISTS (
                         SELECT 1 FROM registration r 
                         WHERE r.node_id = meh.node_id 
                         AND r.node_type = 'StorageMiner'
                     )
-                """
-                )
+                """)
 
                 total_to_clean = very_old_count + old_duplicates_count + orphaned_count
 
@@ -1810,20 +1791,17 @@ class EpochOrchestrator:
 
                     # 1. Delete very old records
                     if very_old_count > 0:
-                        result = await conn.execute(
-                            """
+                        result = await conn.execute("""
                             DELETE FROM miner_epoch_health 
                             WHERE last_activity_at < NOW() - INTERVAL '3 days'
-                        """
-                        )
+                        """)
                         deleted = int(result.split()[-1])
                         cleaned_count += deleted
                         logger.info(f"   ✅ Deleted {deleted:,} very old health records")
 
                     # 2. Delete old duplicates (keep most recent per miner)
                     if old_duplicates_count > 0:
-                        result = await conn.execute(
-                            """
+                        result = await conn.execute("""
                             DELETE FROM miner_epoch_health 
                             WHERE last_activity_at < NOW() - INTERVAL '24 hours' 
                             AND last_activity_at >= NOW() - INTERVAL '3 days'
@@ -1834,24 +1812,21 @@ class EpochOrchestrator:
                                 AND last_activity_at >= NOW() - INTERVAL '3 days'
                                 ORDER BY node_id, last_activity_at DESC
                             )
-                        """
-                        )
+                        """)
                         deleted = int(result.split()[-1])
                         cleaned_count += deleted
                         logger.info(f"   ✅ Deleted {deleted:,} old duplicate records")
 
                     # 3. Delete orphaned records
                     if orphaned_count > 0:
-                        result = await conn.execute(
-                            """
+                        result = await conn.execute("""
                             DELETE FROM miner_epoch_health 
                             WHERE NOT EXISTS (
                                 SELECT 1 FROM registration r 
                                 WHERE r.node_id = miner_epoch_health.node_id 
                                 AND r.node_type = 'StorageMiner'
                             )
-                        """
-                        )
+                        """)
                         deleted = int(result.split()[-1])
                         cleaned_count += deleted
                         logger.info(f"   ✅ Deleted {deleted:,} orphaned health records")
@@ -1862,12 +1837,10 @@ class EpochOrchestrator:
                 reduction_pct = (reduction / total_health_before * 100) if total_health_before > 0 else 0
 
                 # Verify data preservation
-                recent_miners = await conn.fetchval(
-                    """
+                recent_miners = await conn.fetchval("""
                     SELECT COUNT(DISTINCT node_id) FROM miner_epoch_health 
                     WHERE last_activity_at >= NOW() - INTERVAL '24 hours'
-                """
-                )
+                """)
 
                 coverage_pct = (recent_miners / registered_miners * 100) if registered_miners > 0 else 0
 
@@ -1957,32 +1930,27 @@ class EpochOrchestrator:
 
                 async with conn.transaction():
                     # 1. Clean up inactive miner registrations (status != 'active' and old)
-                    result = await conn.execute(
-                        """
+                    result = await conn.execute("""
                         DELETE FROM registration 
                         WHERE node_type = 'StorageMiner' 
                           AND status != 'active'
                           AND updated_at < NOW() - INTERVAL '3 days'
-                    """
-                    )
+                    """)
                     cleanup_stats["inactive_registrations"] = int(result.split()[-1])
 
                     # 2. Clean up old node metrics (>7 days) - only if table exists
                     if node_metrics_exists:
-                        result = await conn.execute(
-                            """
+                        result = await conn.execute("""
                             DELETE FROM node_metrics 
                             WHERE created_at < NOW() - INTERVAL '7 days'
-                        """
-                        )
+                        """)
                         cleanup_stats["old_node_metrics"] = int(result.split()[-1])
                     else:
                         logger.info("   ⚠️ Skipping node_metrics cleanup - table doesn't exist")
 
                     # 3. Clean up orphaned miner_stats (miners not in registration) - only if table exists
                     if miner_stats_exists:
-                        result = await conn.execute(
-                            """
+                        result = await conn.execute("""
                             DELETE FROM miner_stats 
                             WHERE NOT EXISTS (
                                 SELECT 1 FROM registration r 
@@ -1990,20 +1958,17 @@ class EpochOrchestrator:
                                   AND r.node_type = 'StorageMiner'
                                   AND r.status = 'active'
                             )
-                        """
-                        )
+                        """)
                         cleanup_stats["orphaned_miner_stats"] = int(result.split()[-1])
                     else:
                         logger.info("   ⚠️ Skipping miner_stats cleanup - table doesn't exist")
 
                     # 4. Clean up old system events (>30 days) - only if table exists
                     if system_events_exists:
-                        result = await conn.execute(
-                            """
+                        result = await conn.execute("""
                             DELETE FROM system_events 
                             WHERE created_at < NOW() - INTERVAL '30 days'
-                        """
-                        )
+                        """)
                         cleanup_stats["old_system_events"] = int(result.split()[-1])
                     else:
                         logger.info("   ⚠️ Skipping system_events cleanup - table doesn't exist")

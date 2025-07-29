@@ -24,7 +24,9 @@ class SubmissionResult(BaseModel):
 
 
 async def submit_pending_data_to_blockchain(
-    db_pool, current_block: int, current_epoch: int,
+    db_pool,
+    current_block: int,
+    current_epoch: int,
 ) -> SubmissionResult:
     """
     Submit pending data to blockchain with transaction management.
@@ -230,7 +232,10 @@ async def submit_pending_data_to_blockchain(
 
             # Submit transactions with retry and rollback
             transaction_results = await batch_submit(
-                submissions, submit_to_blockchain, max_batch_size=5, max_retries=3,
+                submissions,
+                submit_to_blockchain,
+                max_batch_size=5,
+                max_retries=3,
             )
 
             # Process results

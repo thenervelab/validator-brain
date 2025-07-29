@@ -7,17 +7,17 @@ class PendingMinerProfile:
     """Model for pending miner profile records"""
 
     def __init__(
-            self,
-            id: Optional[int] = None,
-            cid: Optional[str] = None,
-            node_id: Optional[str] = None,
-            created_at: Optional[datetime] = None,
-            published_at: Optional[datetime] = None,
-            status: Optional[str] = 'pending',
-            error_message: Optional[str] = None,
-            files_count: Optional[int] = 0,
-            files_size: Optional[int] = 0,
-            block_number: Optional[int] = 0
+        self,
+        id: Optional[int] = None,
+        cid: Optional[str] = None,
+        node_id: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+        published_at: Optional[datetime] = None,
+        status: Optional[str] = "pending",
+        error_message: Optional[str] = None,
+        files_count: Optional[int] = 0,
+        files_size: Optional[int] = 0,
+        block_number: Optional[int] = 0,
     ):
         self.id = id
         self.cid = cid
@@ -31,8 +31,14 @@ class PendingMinerProfile:
         self.block_number = block_number
 
     @classmethod
-    async def create(cls, cid: str, node_id: str, files_count: int = 0, files_size: int = 0,
-                     block_number: int = 0) -> 'PendingMinerProfile':
+    async def create(
+        cls,
+        cid: str,
+        node_id: str,
+        files_count: int = 0,
+        files_size: int = 0,
+        block_number: int = 0,
+    ) -> "PendingMinerProfile":
         """Create a new pending miner profile record"""
         pool = get_db_pool()
         async with pool.acquire() as conn:
@@ -42,34 +48,34 @@ class PendingMinerProfile:
                 VALUES ($1, $2, $3, $4, $5)
                 RETURNING *
                 """,
-                cid, node_id, files_count, files_size, block_number
+                cid,
+                node_id,
+                files_count,
+                files_size,
+                block_number,
             )
             return cls(**dict(row))
 
     @classmethod
-    async def get_by_cid(cls, cid: str) -> Optional['PendingMinerProfile']:
+    async def get_by_cid(cls, cid: str) -> Optional["PendingMinerProfile"]:
         """Get a pending miner profile by CID"""
         pool = get_db_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM pending_miner_profile WHERE cid = $1",
-                cid
-            )
+            row = await conn.fetchrow("SELECT * FROM pending_miner_profile WHERE cid = $1", cid)
             return cls(**dict(row)) if row else None
 
     @classmethod
-    async def get_by_node_id(cls, node_id: str) -> Optional['PendingMinerProfile']:
+    async def get_by_node_id(cls, node_id: str) -> Optional["PendingMinerProfile"]:
         """Get a pending miner profile by node_id"""
         pool = get_db_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM pending_miner_profile WHERE node_id = $1",
-                node_id
+                "SELECT * FROM pending_miner_profile WHERE node_id = $1", node_id
             )
             return cls(**dict(row)) if row else None
 
     @classmethod
-    async def get_pending(cls, limit: int = 100) -> List['PendingMinerProfile']:
+    async def get_pending(cls, limit: int = 100) -> List["PendingMinerProfile"]:
         """Get pending profiles that need to be published"""
         pool = get_db_pool()
         async with pool.acquire() as conn:
@@ -80,7 +86,7 @@ class PendingMinerProfile:
                 ORDER BY created_at ASC
                 LIMIT $1
                 """,
-                limit
+                limit,
             )
             return [cls(**dict(row)) for row in rows]
 
@@ -94,9 +100,9 @@ class PendingMinerProfile:
                 SET status = 'published', published_at = CURRENT_TIMESTAMP
                 WHERE id = $1
                 """,
-                self.id
+                self.id,
             )
-            self.status = 'published'
+            self.status = "published"
             self.published_at = datetime.utcnow()
 
     async def mark_failed(self, error_message: str) -> None:
@@ -109,7 +115,8 @@ class PendingMinerProfile:
                 SET status = 'failed', error_message = $2
                 WHERE id = $1
                 """,
-                self.id, error_message
+                self.id,
+                error_message,
             )
-            self.status = 'failed'
-            self.error_message = error_message 
+            self.status = "failed"
+            self.error_message = error_message

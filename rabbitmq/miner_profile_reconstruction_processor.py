@@ -19,7 +19,9 @@ from substrateinterface import SubstrateInterface
 # Setup logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -168,8 +170,15 @@ class MinerProfileReconstructionProcessor:
             # Send to queue
             await self.send_to_queue(message_data)
 
-            logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
-            return {"status": "success", "node_id": node_id, "file_count": file_count, "total_size": total_size}
+            logger.info(
+                f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes"
+            )
+            return {
+                "status": "success",
+                "node_id": node_id,
+                "file_count": file_count,
+                "total_size": total_size,
+            }
 
         except Exception as e:
             logger.error(f"❌ Error processing profile for miner {profile['node_id']}: {e}")
@@ -188,7 +197,7 @@ class MinerProfileReconstructionProcessor:
 
         # Process profiles in parallel with concurrency limit
         semaphore = asyncio.Semaphore(20)  # Limit concurrent profile processing
-        
+
         async def process_with_semaphore(profile):
             async with semaphore:
                 return await self.process_single_profile_parallel(profile)
@@ -213,7 +222,9 @@ class MinerProfileReconstructionProcessor:
         if successful_profiles == 0:
             if failed_profiles > 0:
                 logger.error(f"🚨 CRITICAL: All {failed_profiles} profile(s) failed to process!")
-                logger.error("   This indicates a systematic issue (database, query, or data problems)")
+                logger.error(
+                    "   This indicates a systematic issue (database, query, or data problems)"
+                )
             elif skipped_profiles > 0:
                 logger.warning(f"⚠️ All {skipped_profiles} miner(s) have no assigned files")
                 logger.warning("   This may indicate file assignment issues")
@@ -259,7 +270,9 @@ async def main():
         if successful_count == 0:
             logger.error("🚨 PROCESSOR FAILED: No profiles were successfully queued!")
             logger.error("   This indicates a systematic issue that needs investigation")
-            raise RuntimeError("Miner profile reconstruction processor completed but queued 0 profiles")
+            raise RuntimeError(
+                "Miner profile reconstruction processor completed but queued 0 profiles"
+            )
 
         logger.info(f"✅ Processor completed successfully - queued {successful_count} profiles")
 

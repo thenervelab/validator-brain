@@ -2,4 +2,4 @@
 
 from .pending_miner_profile import PendingMinerProfile
 
-__all__ = ['PendingMinerProfile'] 
+__all__ = ["PendingMinerProfile"]

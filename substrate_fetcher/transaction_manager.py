@@ -86,7 +86,11 @@ async def with_retry(
 
 
 async def submit_with_rollback(
-    submit_func: Callable, rollback_func: Callable, *args, max_retries: int = 3, **kwargs,
+    submit_func: Callable,
+    rollback_func: Callable,
+    *args,
+    max_retries: int = 3,
+    **kwargs,
 ) -> TransactionResult:
     """
     Submit a transaction with rollback capability.
@@ -117,7 +121,10 @@ async def submit_with_rollback(
 
 
 async def batch_submit(
-    transactions: List[Dict], submit_func: Callable, max_batch_size: int = 10, **kwargs,
+    transactions: List[Dict],
+    submit_func: Callable,
+    max_batch_size: int = 10,
+    **kwargs,
 ) -> List[TransactionResult]:
     """
     Submit transactions in batches.

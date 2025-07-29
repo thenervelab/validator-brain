@@ -36,7 +36,9 @@ load_dotenv()
 # Setup logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -76,12 +78,14 @@ class FileAssignmentConsumer:
             file_size_bytes = assignment_data.get("file_size_bytes", 0)
             assigned_miners = assignment_data.get("assigned_miners", [])
             pending_file_id = assignment_data.get("pending_file_id")
-            
+
             # Filter out None values from assigned miners
             valid_miners = [m for m in assigned_miners if m is not None and m.strip()]
 
             # CRITICAL VALIDATION: Require minimum miners
-            min_required_miners = int(os.getenv("MIN_REQUIRED_MINERS", "3"))  # Default 3, can be configured
+            min_required_miners = int(
+                os.getenv("MIN_REQUIRED_MINERS", "3")
+            )  # Default 3, can be configured
 
             if len(valid_miners) < min_required_miners:
                 logger.error(
@@ -164,7 +168,7 @@ class FileAssignmentConsumer:
                     for miner in miners_padded:
                         if miner:
                             affected_miners.add(miner)
-                    
+
                     if affected_miners:
                         await conn.executemany(
                             """
@@ -174,7 +178,7 @@ class FileAssignmentConsumer:
                                 status = 'needs_reconstruction',
                                 created_at = NOW()
                             """,
-                            [(miner_id,) for miner_id in affected_miners]
+                            [(miner_id,) for miner_id in affected_miners],
                         )
 
                     # 4. Update pending_assignment_file status if we have the ID
@@ -235,7 +239,9 @@ class FileAssignmentConsumer:
         null_miner_count = assignment_data.get("null_miner_count", 0)  # From enhanced processor
 
         if not cid or not owner or not new_miners:
-            logger.error(f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}")
+            logger.error(
+                f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}"
+            )
             return False
 
         # Enhanced logging for NULL miner fixes
@@ -281,7 +287,9 @@ class FileAssignmentConsumer:
 
                     # Debug: Log current state
                     current_null_count = sum(1 for m in current_list if m is None)
-                    logger.debug(f"Current assignment state: {current_null_count} NULL slots out of 5")
+                    logger.debug(
+                        f"Current assignment state: {current_null_count} NULL slots out of 5"
+                    )
 
                     # 3. Fill empty slots with new miners
                     new_miner_index = 0
@@ -291,13 +299,13 @@ class FileAssignmentConsumer:
                         if current_miner is None and new_miner_index < len(new_miners):
                             # Fill empty slot with new miner
                             updated_miners.append(new_miners[new_miner_index])
-                            logger.debug(f"   Slot {i+1}: NULL → {new_miners[new_miner_index]}")
+                            logger.debug(f"   Slot {i + 1}: NULL → {new_miners[new_miner_index]}")
                             new_miner_index += 1
                         else:
                             # Keep existing miner (or None if no new miners left)
                             updated_miners.append(current_miner)
                             if current_miner:
-                                logger.debug(f"   Slot {i+1}: Keeping {current_miner}")
+                                logger.debug(f"   Slot {i + 1}: Keeping {current_miner}")
 
                     # 4. Update file assignments with race condition protection
                     result = await conn.execute(
@@ -329,7 +337,7 @@ class FileAssignmentConsumer:
                     for miner in updated_miners:
                         if miner:
                             affected_miners.add(miner)
-                    
+
                     if affected_miners:
                         await conn.executemany(
                             """
@@ -339,7 +347,7 @@ class FileAssignmentConsumer:
                                 status = 'needs_reconstruction',
                                 created_at = NOW()
                             """,
-                            [(miner_id,) for miner_id in affected_miners]
+                            [(miner_id,) for miner_id in affected_miners],
                         )
 
                     # 5. Batch update miner stats for newly assigned miners
@@ -368,7 +376,7 @@ class FileAssignmentConsumer:
                         )
                     else:
                         logger.info(
-                            f"✅ Successfully reassigned file {cid[:16]}... - {5-final_null_count}/5 slots filled ({final_null_count} still empty)"
+                            f"✅ Successfully reassigned file {cid[:16]}... - {5 - final_null_count}/5 slots filled ({final_null_count} still empty)"
                         )
 
                     logger.info(f"   Added miners: {', '.join(new_miners)}")
@@ -460,7 +468,7 @@ class FileAssignmentConsumer:
                     for miner in failing_miners:
                         if miner:
                             affected_miners.add(miner)
-                    
+
                     if affected_miners:
                         await conn.executemany(
                             """
@@ -470,7 +478,7 @@ class FileAssignmentConsumer:
                                 status = 'needs_reconstruction',
                                 created_at = NOW()
                             """,
-                            [(miner_id,) for miner_id in affected_miners]
+                            [(miner_id,) for miner_id in affected_miners],
                         )
 
                     # 3. Update miner stats for newly assigned miners (add)
@@ -542,7 +550,9 @@ class FileAssignmentConsumer:
         reason = assignment_data.get("reason", "Network rebalancing")
 
         if not cid or not from_miner or not to_miner:
-            logger.error(f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}")
+            logger.error(
+                f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}"
+            )
             return False
 
         logger.info(
@@ -586,14 +596,18 @@ class FileAssignmentConsumer:
                             # Replace the first occurrence of from_miner with to_miner
                             updated_miners.append(to_miner)
                             found_miner = True
-                            logger.debug(f"   Replaced {from_miner[:12]}... with {to_miner[:12]}...")
+                            logger.debug(
+                                f"   Replaced {from_miner[:12]}... with {to_miner[:12]}..."
+                            )
                         else:
                             # Keep existing miner
                             updated_miners.append(current_miner)
 
                     # 4. Verify the replacement was made
                     if not found_miner:
-                        logger.error(f"Miner {from_miner} not found in current assignment for file {cid}")
+                        logger.error(
+                            f"Miner {from_miner} not found in current assignment for file {cid}"
+                        )
                         logger.error(f"Current miners: {current_list}")
                         return False
 
@@ -632,8 +646,10 @@ class FileAssignmentConsumer:
 
                     # Flag affected miners for profile reconstruction
                     affected_miners = {from_miner, to_miner}
-                    affected_miners = {miner for miner in affected_miners if miner}  # Remove None values
-                    
+                    affected_miners = {
+                        miner for miner in affected_miners if miner
+                    }  # Remove None values
+
                     if affected_miners:
                         await conn.executemany(
                             """
@@ -643,7 +659,7 @@ class FileAssignmentConsumer:
                                 status = 'needs_reconstruction',
                                 created_at = NOW()
                             """,
-                            [(miner_id,) for miner_id in affected_miners]
+                            [(miner_id,) for miner_id in affected_miners],
                         )
 
                     # 7. Update miner stats for the new miner (add)

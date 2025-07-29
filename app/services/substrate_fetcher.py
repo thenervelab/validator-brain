@@ -40,7 +40,9 @@ async def fetch_and_store_blockchain_data(block_hash):
 
     storage = {}
     # ===== STORAGE REQUEST TRACING - SUBSTRATE FETCHER START =====
-    logger.info(f"🔗 SUBSTRATE_FETCHER: Starting blockchain data fetch at block hash: {block_hash[:16]}...")
+    logger.info(
+        f"🔗 SUBSTRATE_FETCHER: Starting blockchain data fetch at block hash: {block_hash[:16]}..."
+    )
 
     # Fetch storage maps (collections)
     for module, function in STORAGE_MAPS_TO_FETCH:
@@ -51,11 +53,13 @@ async def fetch_and_store_blockchain_data(block_hash):
             block_hash=block_hash,
         )
         storage[f"{module}.{function}"] = result
-        
+
         # ===== STORAGE REQUEST TRACING - SUBSTRATE FETCHER =====
         if module == "IpfsPallet" and function == "UserStorageRequests":
-            logger.info(f"🔗 SUBSTRATE_FETCHER: Fetched {len(result) if result else 0} UserStorageRequests from blockchain at block {block_hash[:16]}...")
-            
+            logger.info(
+                f"🔗 SUBSTRATE_FETCHER: Fetched {len(result) if result else 0} UserStorageRequests from blockchain at block {block_hash[:16]}..."
+            )
+
             # Log sample storage requests for tracing
             if result:
                 for i, item in enumerate(result[:3]):
@@ -66,12 +70,16 @@ async def fetch_and_store_blockchain_data(block_hash):
                             if isinstance(key_data, (list, tuple)) and len(key_data) >= 2:
                                 account = str(key_data[0])[:16] + "..."
                                 request_hash = str(key_data[1])[:16] + "..."
-                                logger.info(f"🔗 SUBSTRATE_FETCHER[{i+1}]: account={account} request_hash={request_hash}")
+                                logger.info(
+                                    f"🔗 SUBSTRATE_FETCHER[{i + 1}]: account={account} request_hash={request_hash}"
+                                )
                     except Exception as e:
                         logger.debug(f"Could not log storage request details: {e}")
-                
+
                 if len(result) > 3:
-                    logger.info(f"🔗 SUBSTRATE_FETCHER: ... and {len(result) - 3} more UserStorageRequests fetched")
+                    logger.info(
+                        f"🔗 SUBSTRATE_FETCHER: ... and {len(result) - 3} more UserStorageRequests fetched"
+                    )
 
     # Fetch storage values (single items)
     for module, function in STORAGE_VALUES_TO_FETCH:
@@ -85,6 +93,8 @@ async def fetch_and_store_blockchain_data(block_hash):
 
     # ===== STORAGE REQUEST TRACING - SUBSTRATE FETCHER COMPLETE =====
     total_user_storage_requests = len(storage.get("IpfsPallet.UserStorageRequests", []))
-    logger.info(f"🔗 SUBSTRATE_FETCHER_COMPLETE: Fetched all blockchain data including {total_user_storage_requests} UserStorageRequests")
-    
+    logger.info(
+        f"🔗 SUBSTRATE_FETCHER_COMPLETE: Fetched all blockchain data including {total_user_storage_requests} UserStorageRequests"
+    )
+
     return storage

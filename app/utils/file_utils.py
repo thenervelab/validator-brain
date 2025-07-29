@@ -34,23 +34,21 @@ async def fetch_ipfs_file_size(file_hash: str) -> int:
         Exception: If there's an error fetching or parsing the file stats.
     """
     await rate_limiter.acquire()
-    
+
     # Try the /files/stat endpoint first (works for both files and directories)
     url = f"{IPFS_NODE_URL}/api/v0/files/stat?arg=/ipfs/{file_hash}"
-    
+
     logger.debug(f"Fetching IPFS file size for {file_hash[:16]}... from {url}")
 
     try:
         response = await ipfs_client.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=10.0
+            url, headers={"Content-Type": "application/json"}, timeout=10.0
         )
         response.raise_for_status()
 
         json_data = response.json()
         size = json_data.get("Size")
-        
+
         logger.debug(f"IPFS /files/stat response for {file_hash[:16]}...: {json_data}")
 
         if size is None:
@@ -71,12 +69,14 @@ async def fetch_ipfs_file_size(file_hash: str) -> int:
         logger.error(f"Request timed out for file hash: {file_hash}")
         raise
     except httpx.ConnectError:
-        logger.error(f"Connection error for file hash: {file_hash} - Check IPFS node URL: {IPFS_NODE_URL}")
+        logger.error(
+            f"Connection error for file hash: {file_hash} - Check IPFS node URL: {IPFS_NODE_URL}"
+        )
         raise
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP {e.response.status_code} error for file hash: {file_hash}")
         logger.error(f"Response text: {e.response.text}")
-        
+
         # If /files/stat fails, try fallback method
         if e.response.status_code in [400, 500]:
             logger.info(f"Trying fallback method for {file_hash}")
@@ -88,13 +88,13 @@ async def fetch_ipfs_file_size(file_hash: str) -> int:
         raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while fetching file size for {file_hash}: {e}")
-        raise 
+        raise
 
 
 async def fetch_ipfs_file_size_with_state(state: "AppState", file_hash: str) -> int:
     """
     Fetches the size of an IPFS file given its hash using AppState configuration.
-    
+
     This version matches the original user's signature and uses the AppState's
     IPFS node URL, HTTP client, and rate limiter.
 
@@ -112,63 +112,57 @@ async def fetch_ipfs_file_size_with_state(state: "AppState", file_hash: str) -> 
     await state.rate_limiter.until_ready()
 
     url = f"{state.ipfs_node_url}/api/v0/files/stat?arg=/ipfs/{file_hash}"
-    
+
     logger.debug(f"Fetching IPFS file size for {file_hash[:16]}... from {url}")
 
     try:
         response = await state.ipfs_client.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=5
+            url, headers={"Content-Type": "application/json"}, timeout=5
         )
         response.raise_for_status()  # Raises HTTPStatusError for bad responses (4xx or 5xx)
 
     except httpx.TimeoutException:
         raise Exception(f"Request timed out for file hash: {file_hash}")
     except httpx.ConnectError:
-        raise Exception(
-            f"Connection error for file hash: {file_hash} - Check IPFS node URL"
-        )
+        raise Exception(f"Connection error for file hash: {file_hash} - Check IPFS node URL")
     except httpx.HTTPStatusError as e:
         # Try fallback method for HTTP errors
         if e.response.status_code in [400, 500]:
-            logger.info(f"Trying fallback method for {file_hash} due to HTTP {e.response.status_code}")
+            logger.info(
+                f"Trying fallback method for {file_hash} due to HTTP {e.response.status_code}"
+            )
             return await _fetch_ipfs_file_size_fallback_with_state(state, file_hash)
-        
+
         raise Exception(
             f"Unexpected status code: {e.response.status_code} for file hash: {file_hash}"
         )
     except httpx.RequestError as e:
-        raise Exception(
-            f"Failed to send request for file hash: {file_hash} - Error: {e}"
-        )
+        raise Exception(f"Failed to send request for file hash: {file_hash} - Error: {e}")
 
     try:
         body = response.text
         json_data = json.loads(body)
-        
+
         logger.debug(f"IPFS /files/stat response for {file_hash[:16]}...: {json_data}")
-        
+
     except json.JSONDecodeError as e:
-        raise Exception(
-            f"Failed to parse JSON response for file hash {file_hash}: {e}"
-        )
+        raise Exception(f"Failed to parse JSON response for file hash {file_hash}: {e}")
     except Exception as e:
-        raise Exception(
-            f"Failed to read response body for file hash {file_hash}: {e}"
-        )
+        raise Exception(f"Failed to read response body for file hash {file_hash}: {e}")
 
     size = json_data.get("Size")
 
     if size is not None:
-        if isinstance(size, (int, float)): # IPFS API typically returns integer, but checking for robustness
+        if isinstance(
+            size, (int, float)
+        ):  # IPFS API typically returns integer, but checking for robustness
             # Python integers handle arbitrary size, so we'll check against u32 max explicitly
             U32_MAX = 2**32 - 1
             if size > U32_MAX:
                 raise Exception(
                     f"File size {size} exceeds u32 maximum ({U32_MAX}) for file hash: {file_hash}"
                 )
-            
+
             file_size = int(size)
             logger.info(f"✅ IPFS file size for {file_hash[:16]}...: {file_size:,} bytes")
             return file_size
@@ -185,36 +179,36 @@ async def _fetch_ipfs_file_size_fallback_with_state(state: "AppState", file_hash
     """Fallback method using /block/stat endpoint with AppState."""
     url = f"{state.ipfs_node_url}/api/v0/block/stat?arg={file_hash}"
     logger.info(f"Using fallback /block/stat endpoint for {file_hash}")
-    
+
     try:
         response = await state.ipfs_client.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=5
+            url, headers={"Content-Type": "application/json"}, timeout=5
         )
         response.raise_for_status()
-        
+
         json_data = response.json()
         size = json_data.get("Size")
-        
+
         logger.debug(f"IPFS /block/stat response for {file_hash[:16]}...: {json_data}")
-        
+
         if size is None:
             raise Exception(f"No 'Size' field in /block/stat response for {file_hash}")
-        
+
         if isinstance(size, (int, float)) and size >= 0:
             U32_MAX = 2**32 - 1
             if size > U32_MAX:
                 raise Exception(
                     f"File size {size} exceeds u32 maximum ({U32_MAX}) for file hash: {file_hash}"
                 )
-            
+
             file_size = int(size)
-            logger.info(f"✅ IPFS block size (fallback) for {file_hash[:16]}...: {file_size:,} bytes")
+            logger.info(
+                f"✅ IPFS block size (fallback) for {file_hash[:16]}...: {file_size:,} bytes"
+            )
             return file_size
         else:
             raise Exception(f"Invalid size value in fallback for {file_hash}: {size}")
-    
+
     except Exception as e:
         raise Exception(f"Both /files/stat and /block/stat failed for file hash: {file_hash} - {e}")
 
@@ -222,27 +216,25 @@ async def _fetch_ipfs_file_size_fallback_with_state(state: "AppState", file_hash
 async def _fetch_ipfs_file_size_fallback(file_hash: str) -> int:
     """
     Fallback method using /block/stat endpoint.
-    
+
     Args:
         file_hash: The hash of the IPFS file.
-        
+
     Returns:
         The size of the IPFS block in bytes.
     """
     url = f"{IPFS_NODE_URL}/api/v0/block/stat?arg={file_hash}"
     logger.info(f"Using fallback /block/stat endpoint for {file_hash}")
-    
+
     try:
         response = await ipfs_client.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=10.0
+            url, headers={"Content-Type": "application/json"}, timeout=10.0
         )
         response.raise_for_status()
 
         json_data = response.json()
         size = json_data.get("Size")
-        
+
         logger.debug(f"IPFS /block/stat response for {file_hash[:16]}...: {json_data}")
 
         if size is None:
@@ -251,7 +243,9 @@ async def _fetch_ipfs_file_size_fallback(file_hash: str) -> int:
 
         if isinstance(size, (int, float)) and size >= 0:
             file_size = int(size)
-            logger.info(f"✅ IPFS block size (fallback) for {file_hash[:16]}...: {file_size:,} bytes")
+            logger.info(
+                f"✅ IPFS block size (fallback) for {file_hash[:16]}...: {file_size:,} bytes"
+            )
             return file_size
         else:
             logger.error(f"Invalid size value in fallback for {file_hash}: {size}")
@@ -259,4 +253,4 @@ async def _fetch_ipfs_file_size_fallback(file_hash: str) -> int:
 
     except Exception as e:
         logger.error(f"Fallback method also failed for {file_hash}: {e}")
-        return 0 
+        return 0

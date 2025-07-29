@@ -35,7 +35,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -57,10 +59,14 @@ def load_hips_keypair(keystore_path: str = None) -> Keypair:
         logger.info(f"Loading keypair from keystore: {keystore_path}")
         # Implementation would depend on keystore format
         # For now, raise an error if no seed phrase is available
-        raise ValueError("Keystore loading not implemented. Please set VALIDATOR_SEED_PHRASE environment variable.")
+        raise ValueError(
+            "Keystore loading not implemented. Please set VALIDATOR_SEED_PHRASE environment variable."
+        )
 
     # If no seed phrase or keystore, raise error
-    raise ValueError("No keypair source available. Please set VALIDATOR_SEED_PHRASE environment variable.")
+    raise ValueError(
+        "No keypair source available. Please set VALIDATOR_SEED_PHRASE environment variable."
+    )
 
 
 def call_update_pin_check_metrics(miners_metrics: List[Dict[str, Any]]) -> bool:
@@ -136,7 +142,9 @@ class EpochHealthConsumer:
         self.stop_event = asyncio.Event()
 
         # Configuration for epoch health checks
-        self.max_files_per_miner = int(os.getenv("EPOCH_MAX_FILES_PER_MINER", "50"))  # Higher limit for epoch checks
+        self.max_files_per_miner = int(
+            os.getenv("EPOCH_MAX_FILES_PER_MINER", "50")
+        )  # Higher limit for epoch checks
 
         # Track completion for blockchain submission
         self.current_epoch = None
@@ -171,7 +179,9 @@ class EpochHealthConsumer:
         if self.db_pool:
             await close_db_pool()
 
-    async def ensure_miner_in_health_table(self, node_id: str, ipfs_peer_id: str, epoch: int) -> None:
+    async def ensure_miner_in_health_table(
+        self, node_id: str, ipfs_peer_id: str, epoch: int
+    ) -> None:
         """Ensure the miner exists in the miner_epoch_health table."""
         async with self.db_pool.acquire() as conn:
             try:
@@ -214,11 +224,15 @@ class EpochHealthConsumer:
                 """,
                 )
 
-                logger.info(f"Epoch {epoch} progress: {processed_count}/{expected_count} miners processed")
+                logger.info(
+                    f"Epoch {epoch} progress: {processed_count}/{expected_count} miners processed"
+                )
 
                 # Check if all miners are processed
                 if processed_count >= expected_count and processed_count > 0:
-                    logger.info(f"All miners processed for epoch {epoch}! Preparing blockchain submission...")
+                    logger.info(
+                        f"All miners processed for epoch {epoch}! Preparing blockchain submission..."
+                    )
 
                     # Get all health data for this epoch
                     health_data = await conn.fetch(
@@ -247,7 +261,9 @@ class EpochHealthConsumer:
                                 }
                             )
 
-                        logger.info(f"Submitting {len(miners_metrics)} miner metrics to blockchain for epoch {epoch}")
+                        logger.info(
+                            f"Submitting {len(miners_metrics)} miner metrics to blockchain for epoch {epoch}"
+                        )
 
                         # Submit to blockchain
                         success = call_update_pin_check_metrics(miners_metrics)
@@ -267,9 +283,13 @@ class EpochHealthConsumer:
                                 len(miners_metrics),
                             )
 
-                            logger.info(f"✅ Successfully submitted epoch {epoch} health metrics to blockchain!")
+                            logger.info(
+                                f"✅ Successfully submitted epoch {epoch} health metrics to blockchain!"
+                            )
                         else:
-                            logger.error(f"❌ Failed to submit epoch {epoch} health metrics to blockchain")
+                            logger.error(
+                                f"❌ Failed to submit epoch {epoch} health metrics to blockchain"
+                            )
 
                             # Mark as failed submission
                             await conn.execute(
@@ -285,7 +305,9 @@ class EpochHealthConsumer:
                                 len(miners_metrics),
                             )
                     else:
-                        logger.warning(f"No health data found for epoch {epoch} - skipping blockchain submission")
+                        logger.warning(
+                            f"No health data found for epoch {epoch} - skipping blockchain submission"
+                        )
 
             except Exception as e:
                 logger.error(f"Error checking completion for epoch {epoch}: {e}")
@@ -355,7 +377,9 @@ class EpochHealthConsumer:
                         logger.warning(f"Stop event detected, stopping file checks for {node_id}")
                         break
 
-                    logger.debug(f"Checking file {i}/{len(files_to_check)} for {node_id}: {file_cid}")
+                    logger.debug(
+                        f"Checking file {i}/{len(files_to_check)} for {node_id}: {file_cid}"
+                    )
 
                     try:
                         await perform_ipfs_pin_check(
@@ -378,7 +402,9 @@ class EpochHealthConsumer:
                 )
 
                 # Update summary statistics in miner_epoch_health
-                await self.update_epoch_summary(node_id, epoch, successful_checks, failed_checks, total_files)
+                await self.update_epoch_summary(
+                    node_id, epoch, successful_checks, failed_checks, total_files
+                )
 
             elif not ping_successful:
                 logger.warning(f"Skipping pin tests for {node_id} due to ping failure")
@@ -396,7 +422,9 @@ class EpochHealthConsumer:
             return True
 
         except Exception as e:
-            logger.error(f"Error processing epoch health check for {message_data.get('node_id', 'unknown')}: {e}")
+            logger.error(
+                f"Error processing epoch health check for {message_data.get('node_id', 'unknown')}: {e}"
+            )
             logger.exception("Full traceback:")
             return False
 
@@ -448,7 +476,9 @@ class EpochHealthConsumer:
                         f"Successfully processed epoch health check for {message_data.get('node_id', 'unknown')}"
                     )
                 else:
-                    logger.error(f"Failed to process epoch health check for {message_data.get('node_id', 'unknown')}")
+                    logger.error(
+                        f"Failed to process epoch health check for {message_data.get('node_id', 'unknown')}"
+                    )
 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to decode message: {e}")
@@ -464,7 +494,9 @@ class EpochHealthConsumer:
 
             logger.info(f"Starting to consume from queue '{self.queue_name}'")
             logger.info(f"Max files per miner for epoch checks: {self.max_files_per_miner}")
-            logger.info("🔗 Blockchain submission enabled - will auto-submit when all miners are processed")
+            logger.info(
+                "🔗 Blockchain submission enabled - will auto-submit when all miners are processed"
+            )
 
             # Start consuming
             await queue.consume(self.message_handler)

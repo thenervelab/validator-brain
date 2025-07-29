@@ -102,10 +102,14 @@ def update_miner_scores(scored_miners: List[Dict], selected_miner_ids: List[str]
             miner["file_count"] += 1
 
             # Recalculate score
-            storage_score = miner["available_storage"] / miner["max_storage"] if miner["max_storage"] > 0 else 0
+            storage_score = (
+                miner["available_storage"] / miner["max_storage"] if miner["max_storage"] > 0 else 0
+            )
             file_count_normalized = min(1.0, miner["file_count"] / 1000)
             file_score = 1.0 - file_count_normalized
-            miner["score"] = (storage_score * 0.6) + (file_score * 0.3) + (miner["success_rate"] * 0.1)
+            miner["score"] = (
+                (storage_score * 0.6) + (file_score * 0.3) + (miner["success_rate"] * 0.1)
+            )
 
     # Re-sort miners by updated scores
     scored_miners.sort(key=lambda m: m["score"], reverse=True)

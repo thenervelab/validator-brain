@@ -21,15 +21,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
 from app.db.connection import init_db_pool, close_db_pool, get_db_pool
-from substrate_fetcher.file_availability_manager import FileAvailabilityManager, AvailabilityRules
+from substrate_fetcher.file_availability_manager import (
+    FileAvailabilityManager,
+    AvailabilityRules,
+)
 
 # Load environment variables
 load_dotenv()
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,9 @@ class AvailabilityManagerProcessor:
         self.availability_manager = None
 
         # Configuration
-        self.enable_reassignments = os.getenv("ENABLE_AUTOMATIC_REASSIGNMENTS", "true").lower() == "true"
+        self.enable_reassignments = (
+            os.getenv("ENABLE_AUTOMATIC_REASSIGNMENTS", "true").lower() == "true"
+        )
         self.max_files_per_run = int(os.getenv("MAX_AVAILABILITY_FILES_PER_RUN", "50"))
 
         # Availability rules configuration
@@ -190,7 +194,9 @@ class AvailabilityManagerProcessor:
             logger.info(f"   Total miners: {overall.get('total_miners', 0)}")
             logger.info(f"   Active miners: {overall.get('active_miners', 0)}")
             logger.info(f"   Reliable miners: {overall.get('reliable_miners', 0)}")
-            logger.info(f"   Avg availability score: {overall.get('avg_availability_score', 0):.3f}")
+            logger.info(
+                f"   Avg availability score: {overall.get('avg_availability_score', 0):.3f}"
+            )
             logger.info(f"   Files with failures: {failures.get('files_with_failures', 0)}")
             logger.info(f"   Recent failures: {failures.get('total_failures', 0)}")
 
@@ -238,7 +244,9 @@ class AvailabilityManagerProcessor:
 
             logger.info("✅ Availability maintenance complete")
             logger.info(f"   Empty assignments fixed: {total_stats['empty_assignments_fixed']}")
-            logger.info(f"   Availability reassignments: {total_stats['availability_reassignments']}")
+            logger.info(
+                f"   Availability reassignments: {total_stats['availability_reassignments']}"
+            )
             logger.info(f"   Total failures: {total_stats['total_failures']}")
             logger.info(f"   Execution time: {total_stats['execution_time_seconds']:.1f} seconds")
 

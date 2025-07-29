@@ -30,7 +30,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +64,9 @@ class NodeMetricsProcessor:
 
         logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
 
-    def parse_node_metrics(self, miner_id: str, metrics_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def parse_node_metrics(
+        self, miner_id: str, metrics_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse node metrics data from substrate.
 
@@ -168,7 +172,9 @@ class NodeMetricsProcessor:
                     metrics_count += 1
                     logger.debug(f"Sent metrics for miner {miner_id}")
 
-            logger.info(f"Successfully processed {metrics_count} node metrics at block {block_number}")
+            logger.info(
+                f"Successfully processed {metrics_count} node metrics at block {block_number}"
+            )
 
         except Exception as e:
             logger.error(f"Error fetching/queuing node metrics: {e}")

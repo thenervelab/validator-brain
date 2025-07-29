@@ -20,7 +20,9 @@ from substrateinterface import SubstrateInterface
 # Setup logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +77,9 @@ class UserProfileReconstructionProcessor:
             # Use a default block number if we can't fetch it
             self.current_block = 0
 
-    async def assign_fallback_miners(self, owner: str, unassigned_files: List[Dict[str, Any]], conn) -> None:
+    async def assign_fallback_miners(
+        self, owner: str, unassigned_files: List[Dict[str, Any]], conn
+    ) -> None:
         """
         Assign miners to unassigned files as a fallback during profile reconstruction.
         This ensures no files are lost if the main file assignment process missed them.
@@ -157,7 +161,9 @@ class UserProfileReconstructionProcessor:
                         continue
 
                     # Calculate score based on available storage and current assignments
-                    storage_score = available_storage / storage_capacity if storage_capacity > 0 else 0
+                    storage_score = (
+                        available_storage / storage_capacity if storage_capacity > 0 else 0
+                    )
                     health_score = min(1.0, float(miner["health_score"]) / 100.0)
 
                     # Penalize miners that have been assigned files in this fallback session
@@ -180,11 +186,17 @@ class UserProfileReconstructionProcessor:
                         f"No miners with sufficient capacity for file {cid} (size: {file_size:,}, need: {required_space:,} with safety margin)"
                     )
                     # Use first available miners as last resort
-                    selected_miners = [m["node_id"] for m in available_miners[: min(3, len(available_miners))]]
-                    logger.warning(f"Using {len(selected_miners)} miners as last resort for file {cid}")
+                    selected_miners = [
+                        m["node_id"] for m in available_miners[: min(3, len(available_miners))]
+                    ]
+                    logger.warning(
+                        f"Using {len(selected_miners)} miners as last resort for file {cid}"
+                    )
                 else:
                     # Use weighted random selection for better distribution
-                    selected_miners = self._fallback_weighted_selection(scored_miners, needed_miners)
+                    selected_miners = self._fallback_weighted_selection(
+                        scored_miners, needed_miners
+                    )
 
                 # Update fallback assignment tracking
                 for miner_id in selected_miners:
@@ -257,7 +269,9 @@ class UserProfileReconstructionProcessor:
         except Exception as e:
             logger.exception(f"Error in fallback miner assignment for user {owner}")
 
-    def _fallback_weighted_selection(self, scored_miners: List[Dict[str, Any]], count: int) -> List[str]:
+    def _fallback_weighted_selection(
+        self, scored_miners: List[Dict[str, Any]], count: int
+    ) -> List[str]:
         """Weighted random selection for fallback assignments."""
         import random
 
@@ -285,7 +299,9 @@ class UserProfileReconstructionProcessor:
                 selected_miner = random.choice(remaining_miners)
             else:
                 probabilities = [m["score"] / current_total for m in remaining_miners]
-                selected_idx = random.choices(range(len(remaining_miners)), weights=probabilities)[0]
+                selected_idx = random.choices(range(len(remaining_miners)), weights=probabilities)[
+                    0
+                ]
                 selected_miner = remaining_miners[selected_idx]
 
             selected_miners.append(selected_miner["node_id"])
@@ -408,14 +424,18 @@ class UserProfileReconstructionProcessor:
                         f"size {row['last_profile_total_size']} -> {row['current_total_size']}"
                     )
                     if row["new_pending_files"] > 0:
-                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
+                        logger.info(
+                            f"  - Including {row['new_pending_files']} NEW files from storage requests"
+                        )
                 else:
                     logger.info(
                         f"User {row['owner']} needs initial profile: "
                         f"{row['current_file_count']} files, {row['current_total_size']} bytes"
                     )
                     if row["new_pending_files"] > 0:
-                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
+                        logger.info(
+                            f"  - Including {row['new_pending_files']} NEW files from storage requests"
+                        )
 
             return [{"owner": row["owner"]} for row in users_rows]
 
@@ -533,13 +553,17 @@ class UserProfileReconstructionProcessor:
 
             # Log file sources breakdown
             assigned_with_miners = sum(
-                1 for f in assigned_files if any([f["miner1"], f["miner2"], f["miner3"], f["miner4"], f["miner5"]])
+                1
+                for f in assigned_files
+                if any([f["miner1"], f["miner2"], f["miner3"], f["miner4"], f["miner5"]])
             )
             assigned_without_miners = assigned_count - assigned_with_miners
             if assigned_without_miners > 0:
                 logger.warning(f"   ⚠️  {assigned_without_miners} assigned files have NO miners")
             if pending_count > 0:
-                logger.info(f"   📋 {pending_count} files from pending_assignment_file (new storage requests)")
+                logger.info(
+                    f"   📋 {pending_count} files from pending_assignment_file (new storage requests)"
+                )
 
             return files
 

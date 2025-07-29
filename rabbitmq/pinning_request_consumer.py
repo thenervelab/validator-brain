@@ -30,7 +30,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +66,7 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
     # Use local IPFS service by default
     if ipfs_node_url is None:
         from app.utils.config import get_ipfs_node_url
+
         ipfs_node_url = get_ipfs_node_url()
 
     # Try local IPFS node first
@@ -89,6 +92,7 @@ async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
 
     # Use centralized IPFS node URL function
     from app.utils.config import get_ipfs_node_url
+
     ipfs_node_url = get_ipfs_node_url()
     stat_url = f"{ipfs_node_url}/api/v0/files/stat"
     params = {"arg": f"/ipfs/{cid}"}
@@ -103,10 +107,14 @@ async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
             size = stats.get("CumulativeSize")
 
             if size is not None:
-                logger.critical(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
+                logger.critical(
+                    f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)"
+                )
                 return int(size)
             else:
-                logger.warning(f"Could not determine size from files/stat for CID {cid}. Stats: {stats}")
+                logger.warning(
+                    f"Could not determine size from files/stat for CID {cid}. Stats: {stats}"
+                )
                 return 0
         except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError):
             logger.exception(f"Error fetching file size for CID {cid} via local files/stat")
@@ -123,7 +131,9 @@ class PinningRequestConsumer:
         Args:
             rabbitmq_url: URL of the RabbitMQ server
         """
-        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
+        self.rabbitmq_url = rabbitmq_url or os.getenv(
+            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
+        )
         self.queue_name = "pinning_request"
 
         self.rabbitmq_connection = None
@@ -159,7 +169,9 @@ class PinningRequestConsumer:
         for i, file_info in enumerate(manifest_data):
             if isinstance(file_info, dict):
                 file_cid = file_info.get("cid")
-                file_name = file_info.get("filename") or file_info.get("name") or f"file_{i+1}.bin"
+                file_name = (
+                    file_info.get("filename") or file_info.get("name") or f"file_{i + 1}.bin"
+                )
 
                 if file_cid:
                     file_assignments.append(
@@ -171,10 +183,10 @@ class PinningRequestConsumer:
                         }
                     )
                 else:
-                    logger.warning(f"Skipping manifest entry {i+1}: missing 'cid' field")
+                    logger.warning(f"Skipping manifest entry {i + 1}: missing 'cid' field")
 
             elif isinstance(file_info, str):
-                file_name = f"file_{i+1}.bin"
+                file_name = f"file_{i + 1}.bin"
                 file_assignments.append(
                     {
                         "cid": file_info,
@@ -184,7 +196,7 @@ class PinningRequestConsumer:
                     }
                 )
             else:
-                logger.warning(f"Skipping invalid manifest entry {i+1}: {file_info}")
+                logger.warning(f"Skipping invalid manifest entry {i + 1}: {file_info}")
 
         if not file_assignments:
             logger.warning("No valid file assignments found in manifest")
@@ -210,7 +222,9 @@ class PinningRequestConsumer:
                 )
 
         # Fetch all file sizes in parallel
-        logger.info(f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)")
+        logger.info(
+            f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)"
+        )
         tasks = [fetch_file_size_with_semaphore(assignment) for assignment in file_assignments]
         results = await asyncio.gather(*tasks)
 
@@ -253,7 +267,9 @@ class PinningRequestConsumer:
                         assignments_data,
                     )
 
-                    logger.info(f"📏 Successfully processed {len(valid_results)} files with valid sizes")
+                    logger.info(
+                        f"📏 Successfully processed {len(valid_results)} files with valid sizes"
+                    )
 
                 return len(valid_results)
 
@@ -265,7 +281,9 @@ class PinningRequestConsumer:
         owner = request_data.get("owner")
 
         if not request_hash or not owner:
-            logger.error(f"Invalid request data: missing request_hash or owner. Data: {request_data}")
+            logger.error(
+                f"Invalid request data: missing request_hash or owner. Data: {request_data}"
+            )
             return False
 
         async with self.db_pool.acquire() as conn:

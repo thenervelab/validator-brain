@@ -25,7 +25,9 @@ from app.db.connection import init_db_pool, close_db_pool
 from app.db.models.pending_user_profile import PendingUserProfile
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +59,11 @@ class UserProfileReconstructionConsumer:
             raise
 
     async def process_file_parallel(
-        self, file_data: Dict[str, Any], owner: str, block_number: int, selected_validator: str
+        self,
+        file_data: Dict[str, Any],
+        owner: str,
+        block_number: int,
+        selected_validator: str,
     ) -> Dict[str, Any]:
         """Process a single file with potential IPFS size re-fetching"""
         try:
@@ -74,7 +80,9 @@ class UserProfileReconstructionConsumer:
                 logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
                 correct_file_size = await fetch_ipfs_file_size(cid)
                 if not correct_file_size:
-                    logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+                    logger.warning(
+                        f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
+                    )
                 else:
                     file_size = correct_file_size
 
@@ -113,7 +121,8 @@ class UserProfileReconstructionConsumer:
 
         # Create tasks for parallel processing
         tasks = [
-            self.process_file_parallel(file_data, owner, block_number, selected_validator) for file_data in files_data
+            self.process_file_parallel(file_data, owner, block_number, selected_validator)
+            for file_data in files_data
         ]
 
         # Execute all file processing in parallel with concurrency limit
@@ -132,7 +141,9 @@ class UserProfileReconstructionConsumer:
         # Log if files were dropped
         dropped_count = len(profile_files_raw) - len(profile_files)
         if dropped_count > 0:
-            logger.warning(f"Dropped {dropped_count} files due to processing errors for user {owner}")
+            logger.warning(
+                f"Dropped {dropped_count} files due to processing errors for user {owner}"
+            )
 
         logger.info(f"Successfully processed {len(profile_files)} files for user {owner}")
         return profile_files
@@ -148,7 +159,9 @@ class UserProfileReconstructionConsumer:
 
             # Send to IPFS API
             response = await self.http_client.post(
-                f"{self.remote_ipfs_url}/api/v0/add", files=files, params={"pin": "true"}
+                f"{self.remote_ipfs_url}/api/v0/add",
+                files=files,
+                params={"pin": "true"},
             )
 
             if response.status_code == 200:
@@ -204,7 +217,9 @@ class UserProfileReconstructionConsumer:
                                 message_data.get("block_number", 0),
                                 existing.id,
                             )
-                        logger.info(f"Updated existing profile for user {owner}: {existing.cid} -> {published_cid}")
+                        logger.info(
+                            f"Updated existing profile for user {owner}: {existing.cid} -> {published_cid}"
+                        )
                     else:
                         # Create new profile record
                         files_count = message_data.get("file_count", 0)
@@ -220,7 +235,9 @@ class UserProfileReconstructionConsumer:
                         await profile_record.mark_published()
                         logger.info(f"Created new profile for user {owner}: {published_cid}")
 
-                    logger.info(f"Successfully processed user profile {profile_cid} -> {published_cid}")
+                    logger.info(
+                        f"Successfully processed user profile {profile_cid} -> {published_cid}"
+                    )
                 else:
                     # Mark as failed
                     error_msg = "Failed to publish to IPFS"

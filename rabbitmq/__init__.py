@@ -1,1 +1,1 @@
-"""RabbitMQ processors and consumers for IPFS service validator.""" 
+"""RabbitMQ processors and consumers for IPFS service validator."""

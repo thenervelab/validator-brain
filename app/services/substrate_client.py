@@ -92,9 +92,7 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
     """Converts a BoundedVec (list of integers, bytes, or hex string) to a UTF-8 string, with double-decoding for hex strings."""
     try:
         # Handle list/tuple of integers (BoundedVec as list of bytes)
-        if isinstance(bounded_vec, (list, tuple)) and all(
-            isinstance(x, int) for x in bounded_vec
-        ):
+        if isinstance(bounded_vec, (list, tuple)) and all(isinstance(x, int) for x in bounded_vec):
             logger.debug(f"BoundedVec is list of integers: {bounded_vec}")
             byte_data = bytes(bounded_vec)
             return byte_data.decode("utf-8")
@@ -114,9 +112,7 @@ def bounded_vec_to_string(bounded_vec: Any) -> str:
                 return bounded_vec
 
     except Exception as e:
-        logger.warning(
-            f"Error converting BoundedVec to string: {e}, returning str representation"
-        )
+        logger.warning(f"Error converting BoundedVec to string: {e}, returning str representation")
         return str(bounded_vec)
 
 
@@ -171,9 +167,7 @@ class SubstrateClient:
         if not self.connected:
             await self.connect()
 
-        logger.info(
-            f"Fetching entire storage for block {block_hash} to filter {module}.{function}"
-        )
+        logger.info(f"Fetching entire storage for block {block_hash} to filter {module}.{function}")
 
         # First, get the storage key prefix for IpfsPallet::UserStorageRequests
         # Substrate uses two x128 hash for pallet and storage function names
@@ -200,9 +194,7 @@ class SubstrateClient:
         )
 
         if "error" in values_result:
-            raise RuntimeError(
-                f"Error fetching storage values: {values_result['error']}"
-            )
+            raise RuntimeError(f"Error fetching storage values: {values_result['error']}")
 
         # Process the results without complex decoding - mimic query_map format
         processed_results = []
@@ -230,9 +222,7 @@ class SubstrateClient:
                     # Return in query_map format: (key_tuple, value_obj)
                     processed_results.append((decoded_keys, value_obj))
 
-        logger.info(
-            f"Successfully processed {len(processed_results)} {module}.{function} entries"
-        )
+        logger.info(f"Successfully processed {len(processed_results)} {module}.{function} entries")
         return processed_results
 
     def _get_storage_key_prefix(self, module, function):
@@ -297,11 +287,7 @@ class SubstrateClient:
         processed_result = []
         for key_storage_obj, value_storage_obj in result:
             # Convert ScaleType objects to Python dictionaries where possible
-            key = (
-                key_storage_obj.value
-                if hasattr(key_storage_obj, "value")
-                else key_storage_obj
-            )
+            key = key_storage_obj.value if hasattr(key_storage_obj, "value") else key_storage_obj
             value = (
                 value_storage_obj.value
                 if hasattr(value_storage_obj, "value")
@@ -311,10 +297,7 @@ class SubstrateClient:
             # Special handling for UserStorageRequests double map keys (like working version)
             if module == "IpfsPallet" and function == "UserStorageRequests":
                 # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
-                if (
-                    isinstance(key_storage_obj, (tuple, list))
-                    and len(key_storage_obj) == 2
-                ):
+                if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
                     owner_account_id = str(key_storage_obj[0])  # SS58 address
                     file_hash = str(
                         key_storage_obj[1],
@@ -328,9 +311,7 @@ class SubstrateClient:
 
             processed_result.append((key, value))
 
-        logger.info(
-            f"Found {len(processed_result)} results for map {module}.{function}"
-        )
+        logger.info(f"Found {len(processed_result)} results for map {module}.{function}")
         return processed_result
 
     async def query_storage_value(self, module, function, block_hash=None, **kwargs):
@@ -389,7 +370,7 @@ class SubstrateClient:
 
         try:
             balance_value = result.value
-            if hasattr(balance_value, 'value'):
+            if hasattr(balance_value, "value"):
                 balance_value = balance_value.value
             return int(balance_value)
         except Exception as e:
@@ -399,10 +380,10 @@ class SubstrateClient:
     async def check_multiple_user_balances(self, account_ids: list[str]) -> dict[str, int]:
         """
         Check balances for multiple users in parallel.
-        
+
         Args:
             account_ids: List of account IDs to check
-            
+
         Returns:
             Dictionary mapping account_id -> balance (0 if account doesn't exist)
         """
@@ -415,7 +396,9 @@ class SubstrateClient:
             try:
                 balance = await self.check_user_balance(account_id)
             except Exception as e:
-                logger.error(f"Failed to check credits for {account_id} because {e}.. reconnecting...")
+                logger.error(
+                    f"Failed to check credits for {account_id} because {e}.. reconnecting..."
+                )
                 self.connected = False
                 await self.connect()
                 logger.info("Reconnected...")

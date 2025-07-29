@@ -29,7 +29,9 @@ load_dotenv()
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -170,9 +172,15 @@ class HealthScoreProcessor:
 
             logger.info("📊 Sample updated health scores:")
             for miner in sample_health:
-                node_short = miner["node_id"][:20] + "..." if len(miner["node_id"]) > 20 else miner["node_id"]
+                node_short = (
+                    miner["node_id"][:20] + "..."
+                    if len(miner["node_id"]) > 20
+                    else miner["node_id"]
+                )
                 score = miner["health_score"] or 0
-                updated = miner["updated_at"].strftime("%H:%M:%S") if miner["updated_at"] else "unknown"
+                updated = (
+                    miner["updated_at"].strftime("%H:%M:%S") if miner["updated_at"] else "unknown"
+                )
                 logger.info(f"   ✅ {node_short} - {score:.1f}% @ {updated}")
 
             return {"updated_count": updated_count, "healthy_miners": healthy_miners}
@@ -188,7 +196,9 @@ class HealthScoreProcessor:
             current_epoch = self.get_current_epoch()
             current_block = self.substrate.get_block_number(None) if self.substrate else None
 
-            logger.info(f"🏥 Processing health scores for epoch {current_epoch} (block: {current_block})")
+            logger.info(
+                f"🏥 Processing health scores for epoch {current_epoch} (block: {current_block})"
+            )
 
             # Update health scores from epoch health data
             results = await self.update_health_scores_from_epoch_data()

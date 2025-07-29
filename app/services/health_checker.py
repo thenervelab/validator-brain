@@ -18,19 +18,19 @@ async def check_miner_health(miners: list):
     """Check the health of multiple miners in parallel."""
     if not miners:
         return []
-    
+
     semaphore = asyncio.Semaphore(20)
-    
+
     async def _check_miner_with_semaphore(miner):
         async with semaphore:
             return await check_single_miner(miner)
-    
+
     tasks = [_check_miner_with_semaphore(miner) for miner in miners]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     successful_results = [r for r in results if not isinstance(r, Exception)]
     failed_count = len(results) - len(successful_results)
-    
+
     if failed_count > 0:
         logger.warning(f"Health checks: {len(successful_results)} succeeded, {failed_count} failed")
     else:
@@ -67,17 +67,15 @@ async def check_single_miner(miner) -> Dict:
 
     ping_task = ping_ipfs_node(ipfs_peer_id)
     profile_task = get_child_cids(profile_cid) if profile_cid else []
-    
+
     ping_result, cids_to_check = await asyncio.gather(
-        ping_task, 
-        profile_task if profile_cid else [],
-        return_exceptions=True
+        ping_task, profile_task if profile_cid else [], return_exceptions=True
     )
-    
+
     if isinstance(ping_result, Exception):
         logger.error(f"Ping failed for {ipfs_peer_id}: {ping_result}")
         return health_results
-        
+
     health_results["ping_success"] = ping_result.success
     health_results["ping_time_ms"] = ping_result.time_ms or 0.0
 

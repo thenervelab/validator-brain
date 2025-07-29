@@ -143,8 +143,6 @@ class PendingAssignmentFile:
             "filename": self.filename,
             "file_size_bytes": self.file_size_bytes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "processed_at": (
-                self.processed_at.isoformat() if self.processed_at else None
-            ),
+            "processed_at": (self.processed_at.isoformat() if self.processed_at else None),
             "status": self.status,
         }

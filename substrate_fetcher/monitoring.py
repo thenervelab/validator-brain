@@ -222,7 +222,9 @@ class PerformanceTracker:
         )
 
     def complete(
-        self, success: bool = True, error_message: Optional[str] = None,
+        self,
+        success: bool = True,
+        error_message: Optional[str] = None,
     ) -> ValidationMetrics:
         """Complete the tracking and return validation metrics."""
         end_time = time.time()
@@ -270,7 +272,11 @@ async def shutdown_monitoring():
 
 
 def create_performance_tracker(
-    name: str, validator_id: str, epoch: int, block_number: int, phase: str,
+    name: str,
+    validator_id: str,
+    epoch: int,
+    block_number: int,
+    phase: str,
 ) -> PerformanceTracker:
     """Create a performance tracker for an operation."""
     return PerformanceTracker(name, validator_id, epoch, block_number, phase)

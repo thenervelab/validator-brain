@@ -6,7 +6,9 @@ import os
 import asyncpg
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 db_pool = None
@@ -33,7 +35,9 @@ async def init_db_pool():
     command_timeout = int(os.getenv("DB_COMMAND_TIMEOUT", "60"))
 
     logger.info(f"Initializing database pool with DSN: {dsn}")
-    logger.info(f"Pool settings: min_size={min_size}, max_size={max_size}, command_timeout={command_timeout}")
+    logger.info(
+        f"Pool settings: min_size={min_size}, max_size={max_size}, command_timeout={command_timeout}"
+    )
 
     db_pool = await asyncpg.create_pool(
         dsn=dsn,

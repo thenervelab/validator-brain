@@ -35,7 +35,9 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 
 # Create rotating file handler (50MB per file, keep 3 previous files = 200MB total)
 file_handler = RotatingFileHandler(
-    filename="chain_data_pinner.log", maxBytes=50 * 1024 * 1024, backupCount=3  # 50MB  # Keep 3 previous files
+    filename="chain_data_pinner.log",
+    maxBytes=50 * 1024 * 1024,
+    backupCount=3,  # 50MB  # Keep 3 previous files
 )
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(formatter)
@@ -57,6 +59,7 @@ class ChainDataPinner:
         self.substrate_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
         self.ipfs_api_url = os.getenv("IPFS_API_URL", "http://127.0.0.1:5001")
         from app.utils.config import get_ipfs_node_url
+
         self.ipfs_gateway_url = get_ipfs_node_url()
         self.db_path = os.getenv("PINNING_DB_PATH", "/home/ubuntu/hippius/pinning_status.db")
         self.substrate = None
@@ -111,7 +114,8 @@ class ChainDataPinner:
     def should_retry_pin(self, owner: str, cid: str) -> bool:
         """Check if we should retry pinning this CID based on database status."""
         cursor = self.db_conn.execute(
-            "SELECT pinned_status, processed_at, attempts FROM pinning_status WHERE owner = ? AND cid = ?", (owner, cid)
+            "SELECT pinned_status, processed_at, attempts FROM pinning_status WHERE owner = ? AND cid = ?",
+            (owner, cid),
         )
         result = cursor.fetchone()
 
@@ -140,7 +144,10 @@ class ChainDataPinner:
         now = datetime.now().isoformat()
 
         # Get current attempts count
-        cursor = self.db_conn.execute("SELECT attempts FROM pinning_status WHERE owner = ? AND cid = ?", (owner, cid))
+        cursor = self.db_conn.execute(
+            "SELECT attempts FROM pinning_status WHERE owner = ? AND cid = ?",
+            (owner, cid),
+        )
         result = cursor.fetchone()
 
         if result is None:
@@ -186,7 +193,9 @@ class ChainDataPinner:
             logger.info("Fetching user storage requests from IpfsPallet::UserStorageRequests...")
 
             # Query the storage double map
-            result = self.substrate.query_map(module="IpfsPallet", storage_function="UserStorageRequests")
+            result = self.substrate.query_map(
+                module="IpfsPallet", storage_function="UserStorageRequests"
+            )
 
             storage_requests = []
             for key, value in result:
@@ -194,7 +203,9 @@ class ChainDataPinner:
                     # Handle double map key (owner_account_id, file_hash)
                     if isinstance(key, (tuple, list)) and len(key) >= 2:
                         account = str(key[0].value) if hasattr(key[0], "value") else str(key[0])
-                        file_hash_hex = str(key[1].value) if hasattr(key[1], "value") else str(key[1])
+                        file_hash_hex = (
+                            str(key[1].value) if hasattr(key[1], "value") else str(key[1])
+                        )
 
                         # Convert hex-encoded file_hash to CID string
                         cid = self.hex_to_cid(file_hash_hex) if file_hash_hex else None
@@ -232,7 +243,9 @@ class ChainDataPinner:
         """Convert hex-encoded string to IPFS CID."""
         try:
             # If it's already a valid CID string, return as-is
-            if isinstance(hex_string, str) and (hex_string.startswith("Qm") or hex_string.startswith("b")):
+            if isinstance(hex_string, str) and (
+                hex_string.startswith("Qm") or hex_string.startswith("b")
+            ):
                 return hex_string
 
             # Convert hex string to bytes then to ASCII string (CID)
@@ -325,11 +338,15 @@ class ChainDataPinner:
                                 cid_string = cid_bytes.decode("utf-8", errors="ignore")
 
                                 # Validate it looks like a CID
-                                if cid_string and (cid_string.startswith("Qm") or cid_string.startswith("b")):
+                                if cid_string and (
+                                    cid_string.startswith("Qm") or cid_string.startswith("b")
+                                ):
                                     file_cids.append(cid_string)
                                     logger.debug(f"Extracted file CID: {cid_string}")
                             except Exception as e:
-                                logger.warning(f"Error converting file_hash to CID: {file_hash}, error: {e}")
+                                logger.warning(
+                                    f"Error converting file_hash to CID: {file_hash}, error: {e}"
+                                )
 
                         elif isinstance(file_hash, str) and file_hash:
                             # Already a string CID
@@ -376,15 +393,21 @@ class ChainDataPinner:
             # Try direct pin first (attempt to pin from IPFS network)
             try:
                 response = await self.http_client.post(
-                    f"{self.ipfs_api_url}/api/v0/pin/add", params={"arg": cid}, timeout=timeout
+                    f"{self.ipfs_api_url}/api/v0/pin/add",
+                    params={"arg": cid},
+                    timeout=timeout,
                 )
                 if response.status_code == 200:
                     response_data = response.json()
                     pinned_cid = response_data.get("Pins", [])
-                    logger.info(f"Successfully pinned CID from network: {cid} - Response: {response.text}")
+                    logger.info(
+                        f"Successfully pinned CID from network: {cid} - Response: {response.text}"
+                    )
                     return True
                 else:
-                    logger.debug(f"Direct pin failed for {cid}: {response.status_code} - {response.text}")
+                    logger.debug(
+                        f"Direct pin failed for {cid}: {response.status_code} - {response.text}"
+                    )
             except Exception as e:
                 logger.debug(f"Exception during direct pin for {cid}: {e}")
 
@@ -402,9 +425,13 @@ class ChainDataPinner:
                     gateway_url = f"{gateway_base_url}/ipfs/{cid}"
 
                     # Stream from gateway and add to IPFS simultaneously (reduced timeout)
-                    async with self.http_client.stream("GET", gateway_url, timeout=timeout) as gateway_stream:
+                    async with self.http_client.stream(
+                        "GET", gateway_url, timeout=timeout
+                    ) as gateway_stream:
                         if gateway_stream.status_code != 200:
-                            logger.warning(f"Gateway {i} failed for CID {cid}: {gateway_stream.status_code}")
+                            logger.warning(
+                                f"Gateway {i} failed for CID {cid}: {gateway_stream.status_code}"
+                            )
                             continue  # Try next gateway
 
                         # Prepare multipart form data for IPFS add API
@@ -442,7 +469,9 @@ class ChainDataPinner:
                                 )
                                 return True
                             else:
-                                logger.warning(f"CID mismatch from gateway {i}: expected {cid}, got {added_cid}")
+                                logger.warning(
+                                    f"CID mismatch from gateway {i}: expected {cid}, got {added_cid}"
+                                )
                                 continue  # Try next gateway
                         else:
                             logger.warning(
@@ -463,7 +492,11 @@ class ChainDataPinner:
             return False
 
     async def pin_cid_with_semaphore(
-        self, semaphore: asyncio.Semaphore, item: Dict[str, str], progress_counter: dict, total_count: int
+        self,
+        semaphore: asyncio.Semaphore,
+        item: Dict[str, str],
+        progress_counter: dict,
+        total_count: int,
     ) -> Dict[str, Any]:
         """Pin a single CID with semaphore concurrency control."""
         async with semaphore:
@@ -473,7 +506,9 @@ class ChainDataPinner:
 
             # Check if we should retry this pin based on database
             if not self.should_retry_pin(account, cid):
-                logger.debug(f"Skipping CID {cid} for {account} - already processed or too recent failure")
+                logger.debug(
+                    f"Skipping CID {cid} for {account} - already processed or too recent failure"
+                )
 
                 # Update progress counter and log
                 progress_counter["count"] += 1
@@ -483,7 +518,13 @@ class ChainDataPinner:
                     f"Skipped {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
                 )
 
-                return {"cid": cid, "account": account, "type": item_type, "success": False, "skipped": True}
+                return {
+                    "cid": cid,
+                    "account": account,
+                    "type": item_type,
+                    "success": False,
+                    "skipped": True,
+                }
 
             success = await self.pin_cid(cid, timeout=10)
 
@@ -527,7 +568,13 @@ class ChainDataPinner:
                         f"Failed to pin {item_type} CID {cid} for {account} - Remaining: {remaining} ({remaining_pct:.1f}%)"
                     )
 
-            result = {"cid": cid, "account": account, "type": item_type, "success": success, "skipped": False}
+            result = {
+                "cid": cid,
+                "account": account,
+                "type": item_type,
+                "success": success,
+                "skipped": False,
+            }
 
             # Add extra info for profile files
             if item_type == "profile_file" and "profile_cid" in item:
@@ -561,7 +608,13 @@ class ChainDataPinner:
             for profile in user_profiles:
                 profile_cid = profile["cid"]
                 if profile_cid not in pinned_cids:
-                    all_cids_to_pin.append({"cid": profile_cid, "type": "user_profile", "account": profile["account"]})
+                    all_cids_to_pin.append(
+                        {
+                            "cid": profile_cid,
+                            "type": "user_profile",
+                            "account": profile["account"],
+                        }
+                    )
 
             # Then fetch profile contents and extract individual file CIDs in parallel
             logger.info("Fetching user profile contents to extract file CIDs...")
@@ -594,19 +647,27 @@ class ChainDataPinner:
                                         }
                                     )
 
-                            logger.info(f"Profile {profile_cid} for {account}: extracted {len(file_cids)} file CIDs")
+                            logger.info(
+                                f"Profile {profile_cid} for {account}: extracted {len(file_cids)} file CIDs"
+                            )
                             return profile_files
                         else:
-                            logger.warning(f"No data fetched for profile {profile_cid} for {account}")
+                            logger.warning(
+                                f"No data fetched for profile {profile_cid} for {account}"
+                            )
                             return []
 
                     except Exception as e:
-                        logger.warning(f"Error processing profile {profile['cid']} for {profile['account']}: {e}")
+                        logger.warning(
+                            f"Error processing profile {profile['cid']} for {profile['account']}: {e}"
+                        )
                         return []
 
             # Process all profiles in parallel
             if user_profiles:
-                profile_tasks = [process_profile_with_semaphore(profile) for profile in user_profiles]
+                profile_tasks = [
+                    process_profile_with_semaphore(profile) for profile in user_profiles
+                ]
                 profile_results = await asyncio.gather(*profile_tasks, return_exceptions=True)
 
                 # Flatten results and add to pin list
@@ -617,15 +678,23 @@ class ChainDataPinner:
                     elif isinstance(result, list):
                         all_cids_to_pin.extend(result)
 
-                total_profile_files = sum(len(result) for result in profile_results if isinstance(result, list))
-                logger.info(f"Extracted {total_profile_files} file CIDs from {len(user_profiles)} user profiles")
+                total_profile_files = sum(
+                    len(result) for result in profile_results if isinstance(result, list)
+                )
+                logger.info(
+                    f"Extracted {total_profile_files} file CIDs from {len(user_profiles)} user profiles"
+                )
 
             # Add storage request CIDs
             for request in storage_requests:
                 request_cid = request["cid"]
                 if request_cid not in pinned_cids:
                     all_cids_to_pin.append(
-                        {"cid": request_cid, "type": "storage_request", "account": request["account"]}
+                        {
+                            "cid": request_cid,
+                            "type": "storage_request",
+                            "account": request["account"],
+                        }
                     )
 
             total_cids_to_pin = len(all_cids_to_pin)
