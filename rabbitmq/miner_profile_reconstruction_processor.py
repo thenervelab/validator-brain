@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Dict, List, Any
+from typing import Any
 
 import aio_pika
 import asyncpg
@@ -19,9 +19,7 @@ from substrateinterface import SubstrateInterface
 # Setup logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +74,7 @@ class MinerProfileReconstructionProcessor:
             # Use a default block number if we can't fetch it
             self.current_block = 0
 
-    async def fetch_miner_profiles_to_reconstruct(self) -> List[Dict[str, Any]]:
+    async def fetch_miner_profiles_to_reconstruct(self) -> list[dict[str, Any]]:
         """Fetch miner profiles that need to be reconstructed from pending_miner_profile table"""
         async with self.db_pool.acquire() as conn:
             # Only get miners explicitly flagged for reconstruction
@@ -92,7 +90,7 @@ class MinerProfileReconstructionProcessor:
 
             return [dict(row) for row in miners_rows]
 
-    async def fetch_miner_profile_files(self, node_id: str) -> List[Dict[str, Any]]:
+    async def fetch_miner_profile_files(self, node_id: str) -> list[dict[str, Any]]:
         """Fetch all files assigned to a specific miner and convert to proper format"""
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
@@ -126,7 +124,7 @@ class MinerProfileReconstructionProcessor:
 
             return files
 
-    async def send_to_queue(self, profile_data: Dict[str, Any]) -> None:
+    async def send_to_queue(self, profile_data: dict[str, Any]) -> None:
         """Send profile data to RabbitMQ queue"""
         message_body = json.dumps(profile_data)
         message = Message(body=message_body.encode(), delivery_mode=2)  # Make message persistent
@@ -135,7 +133,7 @@ class MinerProfileReconstructionProcessor:
 
         logger.debug(f"Sent profile to queue: {profile_data['node_id']} -> {profile_data['cid']}")
 
-    async def process_single_profile_parallel(self, profile: Dict[str, Any]) -> Dict[str, str]:
+    async def process_single_profile_parallel(self, profile: dict[str, Any]) -> dict[str, str]:
         """Process a single profile in parallel"""
         try:
             node_id = profile["node_id"]
@@ -170,9 +168,7 @@ class MinerProfileReconstructionProcessor:
             # Send to queue
             await self.send_to_queue(message_data)
 
-            logger.info(
-                f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes"
-            )
+            logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
             return {
                 "status": "success",
                 "node_id": node_id,
@@ -181,8 +177,7 @@ class MinerProfileReconstructionProcessor:
             }
 
         except Exception as e:
-            logger.error(f"❌ Error processing profile for miner {profile['node_id']}: {e}")
-            logger.exception(f"Full traceback for miner {profile['node_id']} error:")
+            logger.exception(f"❌ Error processing profile for miner {profile['node_id']}")
             return {"status": "failed", "node_id": profile["node_id"], "error": str(e)}
 
     async def process_profiles(self):
@@ -212,7 +207,7 @@ class MinerProfileReconstructionProcessor:
         skipped_profiles = sum(1 for r in results if r["status"] == "skipped")
 
         # Enhanced summary logging
-        logger.info(f"📊 Profile reconstruction summary:")
+        logger.info("📊 Profile reconstruction summary:")
         logger.info(f"   ✅ Successfully queued: {successful_profiles}")
         logger.info(f"   ❌ Failed: {failed_profiles}")
         logger.info(f"   ⏭️ Skipped (no files): {skipped_profiles}")
@@ -222,9 +217,7 @@ class MinerProfileReconstructionProcessor:
         if successful_profiles == 0:
             if failed_profiles > 0:
                 logger.error(f"🚨 CRITICAL: All {failed_profiles} profile(s) failed to process!")
-                logger.error(
-                    "   This indicates a systematic issue (database, query, or data problems)"
-                )
+                logger.error("   This indicates a systematic issue (database, query, or data problems)")
             elif skipped_profiles > 0:
                 logger.warning(f"⚠️ All {skipped_profiles} miner(s) have no assigned files")
                 logger.warning("   This may indicate file assignment issues")
@@ -270,9 +263,7 @@ async def main():
         if successful_count == 0:
             logger.error("🚨 PROCESSOR FAILED: No profiles were successfully queued!")
             logger.error("   This indicates a systematic issue that needs investigation")
-            raise RuntimeError(
-                "Miner profile reconstruction processor completed but queued 0 profiles"
-            )
+            raise RuntimeError("Miner profile reconstruction processor completed but queued 0 profiles")
 
         logger.info(f"✅ Processor completed successfully - queued {successful_count} profiles")
 

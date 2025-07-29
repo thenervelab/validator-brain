@@ -7,6 +7,13 @@ import sys
 import time
 from datetime import datetime
 
+from app.utils.blockchain_submission import (
+    call_update_pin_and_storage_requests,
+    collect_miner_profiles_for_submission,
+    collect_storage_requests_for_submission,
+    mark_submissions_as_completed,
+    submit_health_metrics_to_blockchain,
+)
 from rabbitmq import (
     availability_manager_processor,
     file_assignment_processor,
@@ -30,7 +37,7 @@ from app.utils.epoch_validator import (
     is_epoch_validator,
 )
 
-ORCHESTRATOR_VERSION = "2.2.0"
+ORCHESTRATOR_VERSION = "0.2"
 logger = logging.getLogger("epoch-orchestrator")
 
 
@@ -56,7 +63,6 @@ class EpochOrchestrator:
         self.health_scores_processed = False  # CRITICAL: Transfer health data to miner_stats
         self.health_metrics_submitted = False
         self.availability_completed = False  # Track availability maintenance
-        self.profiles_reconstructed = False
         self.blockchain_submitted = False
 
         # New state variables for enhanced workflow tracking
@@ -852,7 +858,6 @@ class EpochOrchestrator:
             logger.info("✅ Profile reconstruction completed successfully...")
 
             return True
-
         except Exception:
             logger.exception("Error during profile reconstruction:")
             return False
@@ -864,18 +869,9 @@ class EpochOrchestrator:
 
         ENHANCED: Comprehensive verification before submission to prevent empty profiles.
         """
-        logger.info("🚀 Starting blockchain submission phase (ENHANCED: Pre-submission verification)")
+        logger.info("🚀 Starting blockchain submission phase")
 
         try:
-            # Import submission utilities
-            from app.utils.blockchain_submission import (
-                call_update_pin_and_storage_requests,
-                collect_miner_profiles_for_submission,
-                collect_storage_requests_for_submission,
-                mark_submissions_as_completed,
-                submit_health_metrics_to_blockchain,
-            )
-
             # Step 1: Submit health metrics FIRST (if not already done)
             if self.health_checks_completed and not self.health_metrics_submitted:
                 logger.info("📊 Step 1: Submitting health metrics to blockchain...")
@@ -888,7 +884,6 @@ class EpochOrchestrator:
             else:
                 logger.info("✅ Step 1: Health metrics already submitted or not needed")
 
-            # Step 2: PRE-SUBMISSION VERIFICATION - Critical to prevent empty submissions
             logger.info("🔍 Step 2: Pre-submission verification...")
 
             # Verify profile reconstruction actually completed
@@ -923,7 +918,6 @@ class EpochOrchestrator:
                     logger.warning("⚠️ No files assigned - might be normal if no storage requests")
 
             # Step 3: Collect data for main submission with verification
-            logger.info("📦 Step 3: Collecting data for blockchain submission...")
             logger.info("🔍 Step 3a: Collecting storage requests...")
 
             storage_requests = await collect_storage_requests_for_submission(self.db_pool)
@@ -1230,17 +1224,14 @@ class EpochOrchestrator:
         # Phase 4: SEQUENTIAL Profile Reconstruction (immediately after assignment completes)
         elif self.assignment_completed and not self.profiles_completed:
             logger.info(f"🔧 Starting profile reconstruction at block {block_position}/99")
-            logger.info("Assignment completed - starting profile reconstruction immediately")
             await self.reconstruct_profiles()
             self.profiles_completed = True
-            self.profiles_reconstructed = True  # Keep legacy variable for compatibility
 
         # Phase 5: Submit to blockchain IMMEDIATELY when profiles are ready
         elif self.profiles_completed and not self.submission_completed:
             # Add circuit breaker for late submissions
             if block_position >= 95:
                 logger.error(f"❌ CRITICAL: Too late for blockchain submission (block {block_position}/99)")
-                logger.error("   Marking submission as complete to prevent epoch overrun")
                 return
 
             if await self.submit_to_blockchain():
@@ -1295,7 +1286,6 @@ class EpochOrchestrator:
 
         # Legacy state variables (keeping for compatibility)
         self.pinning_completed = False
-        self.profiles_reconstructed = False
         self.blockchain_submitted = False
         self.availability_completed = False
         self.health_metrics_submitted = False

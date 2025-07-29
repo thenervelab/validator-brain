@@ -7,17 +7,15 @@ and storage request submissions during validator epochs.
 
 import logging
 import os
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from substrateinterface import SubstrateInterface, Keypair
+from substrateinterface import Keypair, SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
 
 from app.utils.epoch_validator import get_current_epoch_info, get_epoch_block_position
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +24,7 @@ def string_to_bounded_vec(s: str, max_length: int = 256) -> bytes:
     return s.encode("utf-8")[:max_length]
 
 
-def load_validator_keypair() -> Optional[Keypair]:
+def load_validator_keypair() -> Keypair | None:
     """Load validator keypair from environment variable. Supports proxy account configurations."""
     validator_seed = os.getenv("VALIDATOR_SEED")
     expected_account = os.getenv("VALIDATOR_ACCOUNT_ID")
@@ -41,14 +39,12 @@ def load_validator_keypair() -> Optional[Keypair]:
 
         # Check if this is a proxy account setup
         if expected_account and keypair.ss58_address != expected_account:
-            logger.info(f"🔗 Proxy account setup detected:")
+            logger.info("🔗 Proxy account setup detected:")
             logger.info(f"   Epoch validator account: {expected_account}")
             logger.info(f"   Proxy signing account: {keypair.ss58_address}")
-            logger.info(
-                f"   This is a secure configuration - proxy account will sign on behalf of validator"
-            )
+            logger.info("   This is a secure configuration - proxy account will sign on behalf of validator")
         elif expected_account and keypair.ss58_address == expected_account:
-            logger.info(f"✅ Direct validator account setup:")
+            logger.info("✅ Direct validator account setup:")
             logger.info(f"   Validator account: {keypair.ss58_address}")
         else:
             logger.info(f"✅ Loaded signing keypair for account: {keypair.ss58_address}")
@@ -63,14 +59,12 @@ def load_validator_keypair() -> Optional[Keypair]:
 
             # Check if this is a proxy account setup
             if expected_account and keypair.ss58_address != expected_account:
-                logger.info(f"🔗 Proxy account setup detected:")
+                logger.info("🔗 Proxy account setup detected:")
                 logger.info(f"   Epoch validator account: {expected_account}")
                 logger.info(f"   Proxy signing account: {keypair.ss58_address}")
-                logger.info(
-                    f"   This is a secure configuration - proxy account will sign on behalf of validator"
-                )
+                logger.info("   This is a secure configuration - proxy account will sign on behalf of validator")
             elif expected_account and keypair.ss58_address == expected_account:
-                logger.info(f"✅ Direct validator account setup:")
+                logger.info("✅ Direct validator account setup:")
                 logger.info(f"   Validator account: {keypair.ss58_address}")
             else:
                 logger.info(f"✅ Loaded signing keypair for account: {keypair.ss58_address}")
@@ -83,8 +77,8 @@ def load_validator_keypair() -> Optional[Keypair]:
 
 
 def call_update_pin_and_storage_requests(
-    requests: List[Dict[str, Any]], miner_profiles: List[Dict[str, Any]]
-) -> tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
+    requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]
+) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Calls the update_pin_and_storage_requests extrinsic on the Substrate node.
     Submits all data in a single transaction.
@@ -96,8 +90,8 @@ def call_update_pin_and_storage_requests(
     Returns:
         tuple: (success: bool, submitted_requests: List, submitted_profiles: List)
     """
-    logger.info(f"🚀 STARTING BLOCKCHAIN SUBMISSION:")
-    logger.info(f"📋 Data to submit:")
+    logger.info("🚀 STARTING BLOCKCHAIN SUBMISSION:")
+    logger.info("📋 Data to submit:")
     logger.info(f"   - {len(requests)} original storage requests (to close)")
     logger.info(f"   - {len(miner_profiles)} miner profiles (all reconstructed)")
 
@@ -137,18 +131,14 @@ def call_update_pin_and_storage_requests(
     return False, [], []
 
 
-def _submit_single_batch(
-    requests: List[Dict[str, Any]], miner_profiles: List[Dict[str, Any]]
-) -> bool:
+def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]) -> bool:
     """Submit a single batch to the blockchain."""
     substrate = None
 
     try:
         # CRITICAL: Check timing to avoid late submission errors
         try:
-            temp_substrate = SubstrateInterface(
-                url=os.getenv("NODE_URL", "wss://rpc.hippius.network")
-            )
+            temp_substrate = SubstrateInterface(url=os.getenv("NODE_URL", "wss://rpc.hippius.network"))
             current_epoch, current_block, temp_substrate = get_current_epoch_info(temp_substrate)
             block_position = get_epoch_block_position(current_block)
             temp_substrate.close()
@@ -156,13 +146,14 @@ def _submit_single_batch(
             # Warn if submitting very late in epoch (after block 90)
             if block_position > 90:
                 logger.warning(f"⚠️ LATE SUBMISSION WARNING: Block position {block_position}/99")
-                logger.warning(f"   Submitting after block 90 may cause runtime deadline errors")
-                logger.warning(f"   Consider submitting earlier in epoch (blocks 76-90)")
+                logger.warning("   Submitting after block 90 may cause runtime deadline errors")
+                logger.warning("   Consider submitting earlier in epoch (blocks 76-90)")
             elif block_position > 95:
                 logger.error(f"🚨 CRITICAL: Submitting at block position {block_position}/99")
-                logger.error(f"   This is very likely to fail due to runtime deadlines!")
-                logger.error(f"   Blockchain submissions should complete before block 95")
-                # Still attempt submission but warn user
+                logger.error("   This is very likely to fail due to runtime deadlines!")
+                logger.error(
+                    "   Blockchain submissions should complete before block 95"
+                )  # Still attempt submission but warn user
             else:
                 logger.info(f"✅ Good timing: Submitting at block position {block_position}/99")
 
@@ -203,19 +194,13 @@ def _submit_single_batch(
             validator_seed = os.getenv("VALIDATOR_SEED")
             validator_account = os.getenv("VALIDATOR_ACCOUNT_ID")
             logger.error(f"   - VALIDATOR_SEED: {'✅ SET' if validator_seed else '❌ MISSING'}")
-            logger.error(
-                f"   - VALIDATOR_ACCOUNT_ID: {'✅ SET' if validator_account else '❌ MISSING'}"
-            )
+            logger.error(f"   - VALIDATOR_ACCOUNT_ID: {'✅ SET' if validator_account else '❌ MISSING'}")
             if not validator_seed:
-                logger.error(
-                    "🔥 VALIDATOR_SEED environment variable is required for transaction signing!"
-                )
-                logger.error(
-                    "🔥 No blockchain transactions can be sent without a valid signing key!"
-                )
+                logger.error("🔥 VALIDATOR_SEED environment variable is required for transaction signing!")
+                logger.error("🔥 No blockchain transactions can be sent without a valid signing key!")
             return False
 
-        logger.info(f"✅ Validator keypair loaded successfully")
+        logger.info("✅ Validator keypair loaded successfully")
         logger.info(f"🔑 Using account {keypair.ss58_address} for signing")
 
         # Log expected vs actual account for transparency
@@ -235,9 +220,7 @@ def _submit_single_batch(
             logger.info(f"{req=}")
             formatted_req = {
                 "storage_request_owner": req["storage_request_owner"],
-                "storage_request_file_hash": string_to_bounded_vec(
-                    req["storage_request_file_hash"]
-                ),
+                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
                 "file_size": int(req["file_size"]),
                 "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
             }
@@ -293,16 +276,12 @@ def _submit_single_batch(
 
                 # Check for empty strings after stripping
                 if not miner_node_id or not cid:
-                    logger.warning(
-                        f"Skipping miner profile {i}: empty miner_node_id or cid after sanitization"
-                    )
+                    logger.warning(f"Skipping miner profile {i}: empty miner_node_id or cid after sanitization")
                     continue
 
                 # Validate string lengths to prevent bounded vector overflow
                 if len(miner_node_id) > 256:
-                    logger.warning(
-                        f"Truncating miner_node_id from {len(miner_node_id)} to 256 chars"
-                    )
+                    logger.warning(f"Truncating miner_node_id from {len(miner_node_id)} to 256 chars")
                     miner_node_id = miner_node_id[:256]
 
                 if len(cid) > 256:
@@ -372,11 +351,11 @@ def _submit_single_batch(
 
         # Create and sign the extrinsic
         extrinsic = substrate.create_signed_extrinsic(call, keypair)
-        logger.info(f"✅ Created and signed extrinsic")
-        logger.info(f"📋 Transaction details:")
+        logger.info("✅ Created and signed extrinsic")
+        logger.info("📋 Transaction details:")
         logger.info(f"   - Signing account: {keypair.ss58_address}")
-        logger.info(f"   - Call module: IpfsPallet")
-        logger.info(f"   - Call function: update_pin_and_storage_requests")
+        logger.info("   - Call module: IpfsPallet")
+        logger.info("   - Call function: update_pin_and_storage_requests")
         logger.info(f"   - Storage requests: {len(formatted_requests)}")
         logger.info(f"   - Miner profiles: {len(formatted_miner_profiles)}")
 
@@ -393,33 +372,27 @@ def _submit_single_batch(
         logger.info(f"🚀 Submitting transaction {extrinsic_hash_hex} to blockchain...")
 
         # Submit the extrinsic and wait for finalization
-        receipt = substrate.submit_extrinsic(
-            extrinsic, wait_for_inclusion=True, wait_for_finalization=True
-        )
+        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True, wait_for_finalization=True)
 
         if receipt.is_success:
             # Convert block hash to hex string for logging
             block_hash_hex = (
-                "0x" + receipt.block_hash.hex()
-                if isinstance(receipt.block_hash, bytes)
-                else str(receipt.block_hash)
+                "0x" + receipt.block_hash.hex() if isinstance(receipt.block_hash, bytes) else str(receipt.block_hash)
             )
 
-            logger.info(f"✅ ✨ TRANSACTION SUCCESSFUL! ✨")
+            logger.info("✅ ✨ TRANSACTION SUCCESSFUL! ✨")
             logger.info(f"🔗 Transaction Hash: {extrinsic_hash_hex}")
             logger.info(f"📦 Block Hash: {block_hash_hex}")
-            logger.info(f"📊 Submitted Data:")
+            logger.info("📊 Submitted Data:")
             logger.info(f"   - {len(formatted_requests)} original storage requests (for closing)")
             logger.info(f"   - {len(formatted_miner_profiles)} miner profiles")
-            logger.info(
-                f"🎯 IpfsPallet::UpdatePinAndStorageRequests transaction completed successfully!"
-            )
+            logger.info("🎯 IpfsPallet::UpdatePinAndStorageRequests transaction completed successfully!")
             return True
         else:
-            logger.error(f"❌ TRANSACTION FAILED!")
+            logger.error("❌ TRANSACTION FAILED!")
             logger.error(f"🔗 Transaction Hash: {extrinsic_hash_hex}")
             logger.error(f"❌ Error: {receipt.error_message}")
-            logger.error(f"📋 Failed transaction details:")
+            logger.error("📋 Failed transaction details:")
             logger.error(f"   - Storage requests: {len(formatted_requests)}")
             logger.error(f"   - Miner profiles: {len(formatted_miner_profiles)}")
             return False
@@ -438,7 +411,7 @@ def _submit_single_batch(
                 pass  # Ignore errors when closing
 
 
-async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any]]:
+async def collect_storage_requests_for_submission(db_pool) -> list[dict[str, Any]]:
     """
     Collect storage requests that need to be submitted to the blockchain for closing.
 
@@ -452,48 +425,50 @@ async def collect_storage_requests_for_submission(db_pool) -> List[Dict[str, Any
         async with db_pool.acquire() as conn:
             query = """
             SELECT DISTINCT
-                pr.owner as storage_request_owner,
-                pr.request_hash as storage_request_file_hash,
+                pup.owner as storage_request_owner,
+                COALESCE(pr.request_hash, '') as storage_request_file_hash,
                 COALESCE(
                     (SELECT SUM(f.size) 
                      FROM file_assignments fa 
                      JOIN files f ON fa.cid = f.cid 
-                     WHERE fa.owner = pr.owner 
+                     WHERE fa.owner = pup.owner 
                      AND f.size IS NOT NULL), 
                     0
                 ) as file_size,
                 pup.cid as user_profile_cid
-            FROM pinning_requests pr
-            LEFT JOIN pending_user_profile pup ON pr.owner = pup.owner AND pup.status = 'published'
-            WHERE pr.request_hash IS NOT NULL
-            ORDER BY pr.owner
+            FROM pending_user_profile pup
+            LEFT JOIN pinning_requests pr ON pup.owner = pr.owner
+            WHERE pup.status = 'published'
+            ORDER BY pup.owner
             """
 
             rows = await conn.fetch(query)
 
-            requests = []
+            user_profiles = []
             for row in rows:
-                logger.info(f"New storage request: {row}")
+                user = row["storage_request_owner"]
+                if row["storage_request_file_hash"]:
+                    logger.info(f"New storage request processed for {user}, triggering user profile refresh")
+                else:
+                    logger.info(f"Triggering user profile refresh for {user}")
                 request = {
-                    "storage_request_owner": row["storage_request_owner"],
+                    "storage_request_owner": user,
                     "storage_request_file_hash": row["storage_request_file_hash"],
                     "file_size": row["file_size"] or 0,
                     "user_profile_cid": row["user_profile_cid"],
                 }
-                requests.append(request)
+                user_profiles.append(request)
 
-            logger.info(
-                f"✅ Collected {len(requests)} processed storage requests to close on blockchain"
-            )
+            logger.info(f"✅ Collected {len(user_profiles)} refreshes to submit to blockchain...")
 
-            return requests
+            return user_profiles
 
     except Exception as e:
         logger.error(f"Error collecting storage requests for submission: {e}")
         return []
 
 
-async def collect_miner_profiles_for_submission(db_pool) -> List[Dict[str, Any]]:
+async def collect_miner_profiles_for_submission(db_pool) -> list[dict[str, Any]]:
     """
     Collect miner profiles that need to be submitted to the blockchain.
 
@@ -556,7 +531,7 @@ async def collect_miner_profiles_for_submission(db_pool) -> List[Dict[str, Any]]
 
 
 async def mark_submissions_as_completed(
-    db_pool, requests: List[Dict[str, Any]], miner_profiles: List[Dict[str, Any]]
+    db_pool, requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]
 ) -> bool:
     """
     Mark the submitted requests and profiles as completed in the database.
@@ -609,7 +584,7 @@ async def mark_submissions_as_completed(
         return False
 
 
-async def collect_health_metrics_for_submission(db_pool) -> List[Dict[str, Any]]:
+async def collect_health_metrics_for_submission(db_pool) -> list[dict[str, Any]]:
     """
     Collect health check metrics that need to be submitted to the blockchain.
 
@@ -653,7 +628,7 @@ async def collect_health_metrics_for_submission(db_pool) -> List[Dict[str, Any]]
         return []
 
 
-def call_update_pin_check_metrics(miner_metrics: List[Dict[str, Any]]) -> bool:
+def call_update_pin_check_metrics(miner_metrics: list[dict[str, Any]]) -> bool:
     """
     Calls the updatePinCheckMetrics extrinsic on the Substrate node.
 
@@ -729,9 +704,7 @@ def call_update_pin_check_metrics(miner_metrics: List[Dict[str, Any]]) -> bool:
 
         # Submit the extrinsic and wait for finalization
         logger.info("Submitting health metrics extrinsic to blockchain...")
-        receipt = substrate.submit_extrinsic(
-            extrinsic, wait_for_inclusion=True, wait_for_finalization=True
-        )
+        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True, wait_for_finalization=True)
 
         if receipt.is_success:
             logger.info(f"✅ Health metrics extrinsic successful in block {receipt.block_hash}")
