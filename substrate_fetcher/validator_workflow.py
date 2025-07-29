@@ -7,6 +7,7 @@ organizing the validation process into distinct phases based on epoch position.
 import asyncio
 import json
 import os
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -125,7 +126,7 @@ class MinerProfile(BaseModel):
 
     node_id: str
     ipfs_peer_id: str
-    profile_cid: str | None = None
+    profile_cid: Optional[str] = None
     storage_capacity_bytes: int = 1000000000  # 1GB default
     total_files_pinned: int = 0
     total_files_size_bytes: int = 0
