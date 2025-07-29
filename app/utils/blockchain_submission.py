@@ -24,7 +24,7 @@ def string_to_bounded_vec(s: str, max_length: int = 256) -> bytes:
     return s.encode("utf-8")[:max_length]
 
 
-def load_validator_keypair() -> Optional[Keypair]:
+def load_validator_keypair() -> Keypair | None:
     """Load validator keypair from environment variable. Supports proxy account configurations."""
     validator_seed = os.getenv("VALIDATOR_SEED")
     expected_account = os.getenv("VALIDATOR_ACCOUNT_ID")
