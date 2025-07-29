@@ -25,6 +25,7 @@ from rabbitmq import (
     user_profile_processor,
     user_profile_reconstruction_processor,
 )
+from substrate_fetcher.validator_workflow import ValidatorWorkflow
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -527,15 +528,28 @@ class EpochOrchestrator:
         Phase 3: File assignment (blocks 36-60)"""
         logger.info("📋 Starting file assignment phase")
 
+        # CRITICAL: Always process pinning requests first to get the latest data
+        logger.info("📌 Step 1: Processing pinning requests for new files before assignment...")
+        pinning_success = await self.process_pinning_requests()
+        if pinning_success:
+            logger.info("✅ Pinning requests processed successfully")
+
+            # CRITICAL: Wait for pinning request queue to be empty
+            logger.info("⏳ Step 1a: Waiting for pinning request queue to be empty...")
+            pinning_queue_empty = await self.wait_for_queues_empty(["pinning_request"], 300)
+            if pinning_queue_empty:
+                logger.info("✅ Pinning request queue is empty")
+            else:
+                logger.warning("⚠️ Pinning request queue not empty after timeout")
+        else:
+            logger.warning("⚠️ Pinning requests processing failed, assignment may use stale data.")
+
         # Validate that health checks completed
         if not self.health_checks_completed:
             logger.error("❌ Health checks must complete before file assignment")
             return False
 
         try:
-            # Import the previous ValidatorWorkflow
-            from substrate_fetcher.validator_workflow import ValidatorWorkflow
-
             # Create workflow instance
             workflow = ValidatorWorkflow(validator_account_id=self.our_validator_account)
 
@@ -1221,7 +1235,7 @@ class EpochOrchestrator:
                 self.assignment_completed = True
             return
 
-        # Phase 4: SEQUENTIAL Profile Reconstruction (immediately after assignment completes)
+        # Phase 4: SEQUENTIAL Profile Reconstruction
         elif self.assignment_completed and not self.profiles_completed:
             logger.info(f"🔧 Starting profile reconstruction at block {block_position}/99")
             await self.reconstruct_profiles()
