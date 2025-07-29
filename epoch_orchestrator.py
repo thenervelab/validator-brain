@@ -534,7 +534,6 @@ class EpochOrchestrator:
         if pinning_success:
             logger.info("✅ Pinning requests processed successfully")
 
-            # CRITICAL: Wait for pinning request queue to be empty
             logger.info("⏳ Step 1a: Waiting for pinning request queue to be empty...")
             pinning_queue_empty = await self.wait_for_queues_empty(["pinning_request"], 300)
             if pinning_queue_empty:
@@ -1083,8 +1082,6 @@ class EpochOrchestrator:
 
     async def non_validator_workflow(self):
         """Execute non-validator workflow."""
-        logger.info("👤 Executing NON-VALIDATOR workflow")
-
         # Get current position for context
         current_block = self.current_block
         block_position = get_epoch_block_position(current_block)
@@ -1289,14 +1286,11 @@ class EpochOrchestrator:
         """Reset epoch state for new epoch."""
         self.initialization_completed = False
         self.health_checks_completed = False
-        self.health_scores_processed = False  # CRITICAL: Health score processing
-        self.assignment_completed = (
-            False
-            # CRITICAL: Always reset to ensure fresh storage request processing
-        )
-        self.profiles_completed = False  # NEW
-        self.submission_completed = False  # NEW
-        self.cleanup_completed = False  # NEW
+        self.health_scores_processed = False
+        self.assignment_completed = False
+        self.profiles_completed = False
+        self.submission_completed = False
+        self.cleanup_completed = False
 
         # Legacy state variables (keeping for compatibility)
         self.pinning_completed = False
@@ -1304,17 +1298,7 @@ class EpochOrchestrator:
         self.availability_completed = False
         self.health_metrics_submitted = False
 
-        # CRITICAL FIX: Reset startup safety mechanism for new epoch
-        # This ensures validators can start processing if they become validator at epoch start
-        if hasattr(self, "waiting_for_next_epoch"):
-            self.waiting_for_next_epoch = False
-
-        # NOTE: Node metrics timing uses modulo - no state to preserve
-        # Node metrics refreshed every 300 blocks regardless of epoch boundaries
-
-        logger.info("🔄 Epoch state reset for new epoch")
-        logger.info("📊 Node metrics timing uses modulo (block % 300 == 0) - no state to preserve")
-        logger.info("🔄 ENFORCED: File assignment will run fresh to process new storage requests")
+        self.waiting_for_next_epoch = False
 
     def should_wait_for_next_epoch(self, current_epoch: int, block_position: int) -> bool:
         """

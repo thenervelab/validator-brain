@@ -83,7 +83,6 @@ class MinerProfileReconstructionProcessor:
                 SELECT DISTINCT node_id
                 FROM pending_miner_profile 
                 WHERE node_id IS NOT NULL 
-                AND status = 'needs_reconstruction'
                 ORDER BY node_id
             """
             )
