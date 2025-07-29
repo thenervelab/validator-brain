@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import sys
-from typing import List, Tuple, Dict, Any
+from typing import Any
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,17 +22,14 @@ import aio_pika
 from dotenv import load_dotenv
 from substrateinterface import SubstrateInterface
 
-from app.utils.config import NODE_URL
 from app.services.substrate_client import substrate_client
+from app.utils.config import NODE_URL
 
 # Load environment variables
 load_dotenv()
 
-
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Use pinning-specific node URL for reliable connection
@@ -67,9 +64,7 @@ class PinningRequestProcessor:
 
         logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
 
-    def parse_storage_request_data(
-        self, storage_data: List[Tuple[Any, Any]]
-    ) -> List[Dict[str, Any]]:
+    def parse_storage_request_data(self, storage_data: list[tuple[Any, Any]]) -> list[dict[str, Any]]:
         """
         Parse the raw storage data from substrate into structured format.
 
@@ -98,36 +93,24 @@ class PinningRequestProcessor:
                         request = {
                             "owner": owner,
                             "request_hash": request_hash,
-                            "file_hash": str(
-                                value_data.get("file_hash", value_data.get("fileHash", ""))
-                            ),
-                            "file_name": str(
-                                value_data.get("file_name", value_data.get("fileName", ""))
-                            ),
-                            "total_replicas": int(
-                                value_data.get("total_replicas", value_data.get("totalReplicas", 0))
-                            ),
-                            "is_assigned": bool(
-                                value_data.get("is_assigned", value_data.get("isAssigned", False))
-                            ),
+                            "file_hash": str(value_data.get("file_hash", value_data.get("fileHash", ""))),
+                            "file_name": str(value_data.get("file_name", value_data.get("fileName", ""))),
+                            "total_replicas": int(value_data.get("total_replicas", value_data.get("totalReplicas", 0))),
+                            "is_assigned": bool(value_data.get("is_assigned", value_data.get("isAssigned", False))),
                             "selected_validator": str(
                                 value_data.get(
                                     "selected_validator",
                                     value_data.get("selectedValidator", ""),
                                 )
                             ),
-                            "created_at": int(
-                                value_data.get("created_at", value_data.get("createdAt", 0))
-                            ),
+                            "created_at": int(value_data.get("created_at", value_data.get("createdAt", 0))),
                             "last_charged_at": int(
                                 value_data.get(
                                     "last_charged_at",
                                     value_data.get("lastChargedAt", 0),
                                 )
                             ),
-                            "miner_ids": value_data.get(
-                                "miner_ids", value_data.get("minerIds", [])
-                            ),
+                            "miner_ids": value_data.get("miner_ids", value_data.get("minerIds", [])),
                             "timestamp": asyncio.get_event_loop().time(),
                         }
 
@@ -214,9 +197,7 @@ class PinningRequestProcessor:
                                     "value": actual_value,
                                 }
                             )
-                            logger.debug(
-                                f"Collected storage request: {account} -> {request_hash[:16]}..."
-                            )
+                            logger.debug(f"Collected storage request: {account} -> {request_hash[:16]}...")
                         else:
                             null_entries += 1
                             logger.debug(f"Found null value for {account} -> {request_hash}")
@@ -245,26 +226,21 @@ class PinningRequestProcessor:
 
             if balance > 0:
                 # User has credits, include the request
-                storage_data.append(
-                    [[account, request_data["request_hash"]], request_data["value"]]
-                )
+                storage_data.append([[account, request_data["request_hash"]], request_data["value"]])
             else:
                 # User has no credits, filter out
                 zero_credit_users.add(account)
 
         filtered_by_credits = len(zero_credit_users)
         if filtered_by_credits > 0:
-            logger.info(
-                f"🔍 DEBUG: Filtered out storage requests from {filtered_by_credits} users with zero credits"
-            )
+            logger.info(f"🔍 DEBUG: Filtered out storage requests from {filtered_by_credits} users with zero credits")
             logger.info(f"🔍 DEBUG: Zero credit users: {list(zero_credit_users)[:5]}...")
 
-        logger.info(
-            f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering"
-        )
+        logger.info(f"🔍 DEBUG: Final result: {len(storage_data)} storage requests after credit filtering")
 
         # Parse the data
         parsed_requests = self.parse_storage_request_data(storage_data)
+        await self._publish_requests_parallel(parsed_requests)
 
         # Process ALL storage requests (assigned + unassigned)
         assigned_count = sum(1 for req in parsed_requests if req.get("is_assigned", False))
@@ -274,10 +250,10 @@ class PinningRequestProcessor:
 
         logger.info(f"Successfully processed {len(parsed_requests)} storage requests")
 
-    async def _publish_requests_parallel(self, requests: List[Dict[str, Any]]) -> None:
+    async def _publish_requests_parallel(self, requests: list[dict[str, Any]]) -> None:
         semaphore = asyncio.Semaphore(50)
 
-        async def _publish_single_request(request: Dict[str, Any]) -> None:
+        async def _publish_single_request(request: dict[str, Any]) -> None:
             async with semaphore:
                 message_body = json.dumps(request).encode()
                 await self.rabbitmq_channel.default_exchange.publish(
@@ -297,9 +273,7 @@ class PinningRequestProcessor:
         if failed > 0:
             logger.warning(f"Parallel publishing: {successful} succeeded, {failed} failed")
         else:
-            logger.info(
-                f"Parallel publishing: {successful}/{len(requests)} requests published successfully"
-            )
+            logger.info(f"Parallel publishing: {successful}/{len(requests)} requests published successfully")
 
     async def close(self):
         """Close all connections."""
