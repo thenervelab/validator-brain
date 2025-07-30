@@ -1233,7 +1233,7 @@ class EpochOrchestrator:
         # Phase 5: Submit to blockchain IMMEDIATELY when profiles are ready
         elif self.profiles_completed and not self.submission_completed:
             # Add circuit breaker for late submissions
-            if block_position >= 95:
+            if block_position >= 97:
                 logger.error(f"❌ CRITICAL: Too late for blockchain submission (block {block_position}/99)")
                 return
 
@@ -1250,7 +1250,7 @@ class EpochOrchestrator:
         # Phase 6: Monitoring after submission (blocks after submission until epoch end)
         elif self.submission_completed and not self.cleanup_completed:
             # Monitor until cleanup phase
-            if block_position >= 96:
+            if block_position >= 98:
                 await self.epoch_cleanup()
                 self.cleanup_completed = True
                 logger.info("✅ Cleanup complete!")

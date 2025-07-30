@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Dict, List, Any
+from typing import Any
 
 from substrate_fetcher.registration import get_deregistered_coldkeys
 
@@ -19,9 +19,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aio_pika
 from dotenv import load_dotenv
-from substrateinterface import SubstrateInterface, Keypair
+from substrateinterface import Keypair, SubstrateInterface
 
-from app.db.connection import init_db_pool, close_db_pool, get_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 
 # Load environment variables
 load_dotenv()
@@ -29,9 +29,7 @@ load_dotenv()
 # Setup logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -113,9 +111,7 @@ async def grace(node_ids) -> None:
         node_ids.discard(node_id)
 
     if nodes_to_remove:
-        logger.info(
-            f"🕐 Graced {len(nodes_to_remove)} nodes, {len(node_ids)} remaining for processing"
-        )
+        logger.info(f"🕐 Graced {len(nodes_to_remove)} nodes, {len(node_ids)} remaining for processing")
 
 
 class NetworkSelfHealingProcessor:
@@ -138,12 +134,11 @@ class NetworkSelfHealingProcessor:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def find_broken_assignments(self) -> List[Dict[str, Any]]:
+    async def find_broken_assignments(self) -> list[dict[str, Any]]:
         """Find files with broken assignments that need healing."""
         async with self.db_pool.acquire() as conn:
             # Find files with empty assignments
-            broken_files = await conn.fetch(
-                """
+            broken_files = await conn.fetch("""
                 SELECT 
                     fa.cid,
                     fa.owner, 
@@ -156,25 +151,22 @@ class NetworkSelfHealingProcessor:
                    OR fa.miner4 IS NULL OR fa.miner5 IS NULL
                 ORDER BY fa.updated_at ASC
                 LIMIT 100
-            """
-            )
+            """)
 
             return [dict(row) for row in broken_files]
 
-    async def get_known_miners(self) -> Dict:
+    async def get_known_miners(self) -> dict:
         """Get all miner node_ids we're currently tracking."""
         async with self.db_pool.acquire() as conn:
-            miners = await conn.fetch(
-                """
+            miners = await conn.fetch("""
                 SELECT node_id, owner_account
                 FROM registration 
                 WHERE node_id IS NOT NULL
-            """
-            )
-        logger.info("Found {} known miners".format(len(miners)))
+            """)
+        logger.info(f"Found {len(miners)} known miners")
         return {row["owner_account"]: row["node_id"] for row in miners}
 
-    async def cleanup_deregistered_miners(self, deregistered_miners: List[str]) -> int:
+    async def cleanup_deregistered_miners(self, deregistered_miners: list[str]) -> int:
         """Delete deregistered miners and cleanup orphaned records."""
         if not deregistered_miners:
             return 0
@@ -186,9 +178,7 @@ class NetworkSelfHealingProcessor:
                 # Clean up orphaned monitoring records first
                 await conn.execute("DELETE FROM node_metrics WHERE miner_id = $1", miner_node_id)
                 await conn.execute("DELETE FROM file_failures WHERE miner_id = $1", miner_node_id)
-                await conn.execute(
-                    "DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id
-                )
+                await conn.execute("DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id)
 
                 # Remove miner from file assignments (set miner columns to NULL)
                 await conn.execute(
@@ -205,9 +195,7 @@ class NetworkSelfHealingProcessor:
                 )
 
                 # Delete from registration table
-                result = await conn.execute(
-                    "DELETE FROM registration WHERE node_id = $1", miner_node_id
-                )
+                result = await conn.execute("DELETE FROM registration WHERE node_id = $1", miner_node_id)
                 if result == "DELETE 1":
                     total_cleaned += 1
                     logger.info(f"Cleaned up deregistered miner: {miner_node_id}")
@@ -261,7 +249,10 @@ class NetworkSelfHealingProcessor:
                     )
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
                     receipt = submit_deregistration_report(
-                        hippius_substrate, keypair, dereged_node_ids
+                        hippius_substrate,
+                        keypair,
+                        # remove any weird entries
+                        [n for n in dereged_node_ids if n.startswith("12D3Koo")],
                     )
                     if receipt and receipt.is_success:
                         logger.info("✅ Hippius deregistration report submitted successfully")
@@ -278,8 +269,8 @@ class NetworkSelfHealingProcessor:
 
             return True
 
-        except Exception as e:
-            logger.exception(f"❌ Error during self-healing processing")
+        except Exception:
+            logger.exception("❌ Error during self-healing processing")
             return False
         finally:
             if self.db_pool:
