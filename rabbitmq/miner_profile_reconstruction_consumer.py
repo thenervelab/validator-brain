@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 
 import aio_pika
 import httpx
@@ -21,15 +21,13 @@ from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.connection import init_db_pool, close_db_pool
+from app.db.connection import close_db_pool, init_db_pool
 from app.db.models.pending_miner_profile import PendingMinerProfile
 
 # Setup logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -79,11 +77,11 @@ class MinerProfileReconstructionConsumer:
 
     async def process_file_parallel(
         self,
-        file_data: Dict[str, Any],
+        file_data: dict[str, Any],
         node_id: str,
         block_number: int,
         selected_validator: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """Process a single file with potential IPFS size re-fetching"""
         # Convert CID back to hex-encoded byte array
         cid = file_data["cid"]
@@ -99,15 +97,14 @@ class MinerProfileReconstructionConsumer:
 
         file_size = file_data["size"]
 
-        if file_size == 0:
-            logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
-            correct_file_size = await fetch_ipfs_file_size(cid)
-            if not correct_file_size:
-                logger.warning(
-                    f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
-                )
-            else:
-                file_size = correct_file_size
+        if not os.getenv("DEBUG_IS_CHOSEN_VALI"):
+            if file_size == 0:
+                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+                correct_file_size = await fetch_ipfs_file_size(cid)
+                if not correct_file_size:
+                    logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+                else:
+                    file_size = correct_file_size
 
         return {
             "created_at": block_number,
@@ -118,7 +115,7 @@ class MinerProfileReconstructionConsumer:
             "selected_validator": selected_validator,
         }
 
-    async def reconstruct_profile_json(self, message_data: Dict[str, Any]) -> list:
+    async def reconstruct_profile_json(self, message_data: dict[str, Any]) -> list:
         """Reconstruct the miner profile as JSON in the original substrate format"""
         node_id = message_data["node_id"]
         block_number = message_data.get("block_number", 0)
@@ -135,7 +132,12 @@ class MinerProfileReconstructionConsumer:
 
         # Create tasks for parallel processing
         tasks = [
-            self.process_file_parallel(file_data, node_id, block_number, selected_validator)
+            self.process_file_parallel(
+                file_data,
+                node_id,
+                block_number,
+                selected_validator,
+            )
             for file_data in files_data
         ]
 
@@ -193,9 +195,7 @@ class MinerProfileReconstructionConsumer:
                 # Check if already processed by node_id
                 existing = await PendingMinerProfile.get_by_node_id(node_id)
                 if existing and existing.status == "published":
-                    logger.info(
-                        f"Profile for miner {node_id} already published (CID: {existing.cid}), skipping"
-                    )
+                    logger.info(f"Profile for miner {node_id} already published (CID: {existing.cid}), skipping")
                     return
 
                 # Reconstruct the profile JSON

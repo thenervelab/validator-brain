@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Dict, List, Any
+from typing import Any
 
 import aio_pika
 import aiofiles
@@ -20,9 +20,7 @@ from substrateinterface import SubstrateInterface
 # Setup logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -77,9 +75,7 @@ class UserProfileReconstructionProcessor:
             # Use a default block number if we can't fetch it
             self.current_block = 0
 
-    async def assign_fallback_miners(
-        self, owner: str, unassigned_files: List[Dict[str, Any]], conn
-    ) -> None:
+    async def assign_fallback_miners(self, owner: str, unassigned_files: list[dict[str, Any]], conn) -> None:
         """
         Assign miners to unassigned files as a fallback during profile reconstruction.
         This ensures no files are lost if the main file assignment process missed them.
@@ -161,9 +157,7 @@ class UserProfileReconstructionProcessor:
                         continue
 
                     # Calculate score based on available storage and current assignments
-                    storage_score = (
-                        available_storage / storage_capacity if storage_capacity > 0 else 0
-                    )
+                    storage_score = available_storage / storage_capacity if storage_capacity > 0 else 0
                     health_score = min(1.0, float(miner["health_score"]) / 100.0)
 
                     # Penalize miners that have been assigned files in this fallback session
@@ -186,17 +180,11 @@ class UserProfileReconstructionProcessor:
                         f"No miners with sufficient capacity for file {cid} (size: {file_size:,}, need: {required_space:,} with safety margin)"
                     )
                     # Use first available miners as last resort
-                    selected_miners = [
-                        m["node_id"] for m in available_miners[: min(3, len(available_miners))]
-                    ]
-                    logger.warning(
-                        f"Using {len(selected_miners)} miners as last resort for file {cid}"
-                    )
+                    selected_miners = [m["node_id"] for m in available_miners[: min(3, len(available_miners))]]
+                    logger.warning(f"Using {len(selected_miners)} miners as last resort for file {cid}")
                 else:
                     # Use weighted random selection for better distribution
-                    selected_miners = self._fallback_weighted_selection(
-                        scored_miners, needed_miners
-                    )
+                    selected_miners = self._fallback_weighted_selection(scored_miners, needed_miners)
 
                 # Update fallback assignment tracking
                 for miner_id in selected_miners:
@@ -251,7 +239,7 @@ class UserProfileReconstructionProcessor:
                 await conn.execute(
                     """
                     UPDATE pending_assignment_file
-                    SET status = 'assigned', processed_at = CURRENT_TIMESTAMP
+                    SET status = 'assigned', updated_at = CURRENT_TIMESTAMP
                     WHERE cid = $1 AND owner = $2
                 """,
                     cid,
@@ -266,12 +254,10 @@ class UserProfileReconstructionProcessor:
                     f"Fallback assignment stats for {owner}: {total_fallback} assignments across {unique_miners} miners"
                 )
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error in fallback miner assignment for user {owner}")
 
-    def _fallback_weighted_selection(
-        self, scored_miners: List[Dict[str, Any]], count: int
-    ) -> List[str]:
+    def _fallback_weighted_selection(self, scored_miners: list[dict[str, Any]], count: int) -> list[str]:
         """Weighted random selection for fallback assignments."""
         import random
 
@@ -299,9 +285,7 @@ class UserProfileReconstructionProcessor:
                 selected_miner = random.choice(remaining_miners)
             else:
                 probabilities = [m["score"] / current_total for m in remaining_miners]
-                selected_idx = random.choices(range(len(remaining_miners)), weights=probabilities)[
-                    0
-                ]
+                selected_idx = random.choices(range(len(remaining_miners)), weights=probabilities)[0]
                 selected_miner = remaining_miners[selected_idx]
 
             selected_miners.append(selected_miner["node_id"])
@@ -309,7 +293,7 @@ class UserProfileReconstructionProcessor:
 
         return selected_miners
 
-    async def fetch_user_profiles_to_reconstruct(self) -> List[Dict[str, Any]]:
+    async def fetch_user_profiles_to_reconstruct(self) -> list[dict[str, Any]]:
         """Fetch user profiles that need to be reconstructed from file_assignments and pending files"""
         # Get batch size from environment variable (0 means no limit)
         batch_size = int(os.getenv("USER_PROFILE_BATCH_SIZE", "100"))
@@ -337,7 +321,7 @@ class UserProfileReconstructionProcessor:
                     paf.owner,
                     COUNT(*) as pending_file_count,
                     SUM(COALESCE(paf.file_size_bytes, 0)) as pending_total_size,
-                    MAX(paf.processed_at) as latest_pending_update
+                    MAX(paf.updated_at) as latest_pending_update
                 FROM pending_assignment_file paf
                 WHERE paf.owner IS NOT NULL
                 AND paf.status = 'processed'
@@ -424,22 +408,18 @@ class UserProfileReconstructionProcessor:
                         f"size {row['last_profile_total_size']} -> {row['current_total_size']}"
                     )
                     if row["new_pending_files"] > 0:
-                        logger.info(
-                            f"  - Including {row['new_pending_files']} NEW files from storage requests"
-                        )
+                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
                 else:
                     logger.info(
                         f"User {row['owner']} needs initial profile: "
                         f"{row['current_file_count']} files, {row['current_total_size']} bytes"
                     )
                     if row["new_pending_files"] > 0:
-                        logger.info(
-                            f"  - Including {row['new_pending_files']} NEW files from storage requests"
-                        )
+                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
 
             return [{"owner": row["owner"]} for row in users_rows]
 
-    async def fetch_user_profile_files(self, owner: str) -> List[Dict[str, Any]]:
+    async def fetch_user_profile_files(self, owner: str) -> list[dict[str, Any]]:
         """Fetch all files owned by a specific user and assign miners to any unassigned files"""
         async with self.db_pool.acquire() as conn:
             # Get files from file_assignments table (already assigned files)
@@ -479,7 +459,7 @@ class UserProfileReconstructionProcessor:
                     NULL as miner3,
                     NULL as miner4,
                     NULL as miner5,
-                    paf.processed_at as updated_at,
+                    paf.updated_at as updated_at,
                     'pending' as source
                 FROM pending_assignment_file paf
                 WHERE paf.owner = $1
@@ -537,12 +517,33 @@ class UserProfileReconstructionProcessor:
 
                 files.append(file_data)
 
-            # Assign miners to unassigned files as fallback
-            if unassigned_files:
-                logger.warning(
-                    f"User {owner}: Found {len(unassigned_files)} files with incomplete assignments (< 5 miners) - assigning fallback miners"
+            # Move all pending files to file_assignments table and assign miners
+            pending_files_to_move = [f for f in all_rows if f["source"] == "pending"]
+            if pending_files_to_move:
+                logger.info(
+                    f"User {owner}: Moving {len(pending_files_to_move)} pending files to file_assignments and assigning miners"
                 )
-                await self.assign_fallback_miners(owner, unassigned_files, conn)
+                await self.assign_fallback_miners(
+                    owner,
+                    [
+                        {
+                            "cid": f["cid"],
+                            "name": f["name"] or "unknown",
+                            "size": f["size"] or 0,
+                            "miner_ids": [],  # Pending files have no miners yet
+                        }
+                        for f in pending_files_to_move
+                    ],
+                    conn,
+                )
+
+            # Also handle any assigned files that still need more miners
+            assigned_unassigned_files = [f for f in files if f["source"] == "assigned" and len(f["miner_ids"]) < 5]
+            if assigned_unassigned_files:
+                logger.warning(
+                    f"User {owner}: Found {len(assigned_unassigned_files)} assigned files with incomplete miners (< 5) - assigning fallback miners"
+                )
+                await self.assign_fallback_miners(owner, assigned_unassigned_files, conn)
 
             # Log what we found for debugging
             assigned_count = len(assigned_files)
@@ -553,21 +554,17 @@ class UserProfileReconstructionProcessor:
 
             # Log file sources breakdown
             assigned_with_miners = sum(
-                1
-                for f in assigned_files
-                if any([f["miner1"], f["miner2"], f["miner3"], f["miner4"], f["miner5"]])
+                1 for f in assigned_files if any([f["miner1"], f["miner2"], f["miner3"], f["miner4"], f["miner5"]])
             )
             assigned_without_miners = assigned_count - assigned_with_miners
             if assigned_without_miners > 0:
                 logger.warning(f"   ⚠️  {assigned_without_miners} assigned files have NO miners")
             if pending_count > 0:
-                logger.info(
-                    f"   📋 {pending_count} files from pending_assignment_file (new storage requests)"
-                )
+                logger.info(f"   📋 {pending_count} files from pending_assignment_file (new storage requests)")
 
             return files
 
-    async def send_to_queue(self, profile_data: Dict[str, Any]) -> None:
+    async def send_to_queue(self, profile_data: dict[str, Any]) -> None:
         """Send profile data to RabbitMQ queue"""
         message_body = json.dumps(profile_data)
         message = Message(body=message_body.encode(), delivery_mode=2)  # Make message persistent

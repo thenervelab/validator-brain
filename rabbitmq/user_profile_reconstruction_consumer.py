@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any, Optional, List
+from typing import Any, Optional
 
 import aio_pika
 import httpx
@@ -21,13 +21,11 @@ from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.connection import init_db_pool, close_db_pool
+from app.db.connection import close_db_pool, init_db_pool
 from app.db.models.pending_user_profile import PendingUserProfile
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -60,11 +58,11 @@ class UserProfileReconstructionConsumer:
 
     async def process_file_parallel(
         self,
-        file_data: Dict[str, Any],
+        file_data: dict[str, Any],
         owner: str,
         block_number: int,
         selected_validator: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Process a single file with potential IPFS size re-fetching"""
         try:
             # Convert CID to hex-encoded byte array
@@ -76,15 +74,14 @@ class UserProfileReconstructionConsumer:
             main_req_hash = file_name.encode("utf-8").hex()
             file_size = file_data["size"]
 
-            if file_size == 0:
-                logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
-                correct_file_size = await fetch_ipfs_file_size(cid)
-                if not correct_file_size:
-                    logger.warning(
-                        f"Got invalid {correct_file_size=} for {cid=}, will try again next time"
-                    )
-                else:
-                    file_size = correct_file_size
+            if not os.getenv("DEBUG_IS_CHOSEN_VALI"):
+                if file_size == 0:
+                    logger.warning(f"Found {cid=} with {file_size=}, re-fetching")
+                    correct_file_size = await fetch_ipfs_file_size(cid)
+                    if not correct_file_size:
+                        logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
+                    else:
+                        file_size = correct_file_size
 
             return {
                 "created_at": block_number,
@@ -104,24 +101,25 @@ class UserProfileReconstructionConsumer:
             # Return None for failed files - they'll be filtered out
             return None
 
-    async def reconstruct_profile_json(self, message_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def reconstruct_profile_json(self, message_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Reconstruct the user profile as JSON in the original substrate format"""
         owner = message_data["owner"]
         block_number = message_data.get("block_number", 0)
 
-        # Get validator address from environment - REQUIRED
         selected_validator = os.getenv("VALIDATOR_ACCOUNT_ID")
-        if not selected_validator:
-            raise ValueError("VALIDATOR_ACCOUNT_ID environment variable is required but not set")
 
-        # Process all files in parallel
         files_data = message_data.get("files", [])
         if not files_data:
             return []
 
         # Create tasks for parallel processing
         tasks = [
-            self.process_file_parallel(file_data, owner, block_number, selected_validator)
+            self.process_file_parallel(
+                file_data,
+                owner,
+                block_number,
+                selected_validator,
+            )
             for file_data in files_data
         ]
 
@@ -133,7 +131,14 @@ class UserProfileReconstructionConsumer:
                 return await task
 
         # Process files in parallel
-        profile_files_raw = await asyncio.gather(*[process_with_semaphore(task) for task in tasks])
+        profile_files_raw = await asyncio.gather(
+            *[
+                process_with_semaphore(
+                    task,
+                )
+                for task in tasks
+            ]
+        )
 
         # Filter out None values (failed files)
         profile_files = [f for f in profile_files_raw if f is not None]
@@ -141,14 +146,12 @@ class UserProfileReconstructionConsumer:
         # Log if files were dropped
         dropped_count = len(profile_files_raw) - len(profile_files)
         if dropped_count > 0:
-            logger.warning(
-                f"Dropped {dropped_count} files due to processing errors for user {owner}"
-            )
+            logger.warning(f"Dropped {dropped_count} files due to processing errors for user {owner}")
 
         logger.info(f"Successfully processed {len(profile_files)} files for user {owner}")
         return profile_files
 
-    async def publish_to_ipfs(self, profile_json: List[Dict[str, Any]]) -> Optional[str]:
+    async def publish_to_ipfs(self, profile_json: list[dict[str, Any]]) -> Optional[str]:
         """Publish the profile JSON to the remote IPFS node"""
         try:
             # Convert profile to JSON string
@@ -217,16 +220,15 @@ class UserProfileReconstructionConsumer:
                                 message_data.get("block_number", 0),
                                 existing.id,
                             )
-                        logger.info(
-                            f"Updated existing profile for user {owner}: {existing.cid} -> {published_cid}"
-                        )
+                        logger.info(f"Updated existing profile for user {owner}: {existing.cid} -> {published_cid}")
                     else:
                         # Create new profile record
                         files_count = message_data.get("file_count", 0)
                         total_size = message_data.get("total_size", 0)
                         block_number = message_data.get("block_number", 0)
                         profile_record = await PendingUserProfile.create(
-                            cid=published_cid,  # Use the actual IPFS CID
+                            cid=published_cid,
+                            # Use the actual IPFS CID
                             owner=owner,
                             files_count=files_count,
                             files_size=total_size,
@@ -235,9 +237,7 @@ class UserProfileReconstructionConsumer:
                         await profile_record.mark_published()
                         logger.info(f"Created new profile for user {owner}: {published_cid}")
 
-                    logger.info(
-                        f"Successfully processed user profile {profile_cid} -> {published_cid}"
-                    )
+                    logger.info(f"Successfully processed user profile {profile_cid} -> {published_cid}")
                 else:
                     # Mark as failed
                     error_msg = "Failed to publish to IPFS"
@@ -258,9 +258,8 @@ class UserProfileReconstructionConsumer:
 
                     logger.error(f"Failed to process user profile {profile_cid}")
 
-            except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                # Log error and continue processing
+            except Exception:
+                logger.exception("Error processing message:")
 
     async def start_consuming(self):
         """Start consuming messages from the queue"""

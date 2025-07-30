@@ -243,15 +243,24 @@ class PinningRequestConsumer:
                         files_data,
                     )
 
+                    # Write to pending_assignment_file instead of file_assignments
+                    # This ensures new storage request files trigger profile reconstruction
+                    pending_data = []
+                    for i, (cid, filename, file_size) in enumerate(files_data):
+                        owner = assignments_data[i][1]  # Get corresponding owner
+                        pending_data.append((cid, owner, filename, file_size))
+
                     await conn.executemany(
                         """
-                        INSERT INTO file_assignments (cid, owner, miner1, miner2, miner3, miner4, miner5)
-                        VALUES ($1, $2, NULL, NULL, NULL, NULL, NULL)
-                        ON CONFLICT (cid) DO UPDATE SET
-                            owner = EXCLUDED.owner,
+                        INSERT INTO pending_assignment_file (cid, owner, filename, file_size_bytes, status)
+                        VALUES ($1, $2, $3, $4, 'processed')
+                        ON CONFLICT (cid, owner) DO UPDATE SET
+                            filename = EXCLUDED.filename,
+                            file_size_bytes = EXCLUDED.file_size_bytes,
+                            status = 'processed',
                             updated_at = CURRENT_TIMESTAMP
                     """,
-                        assignments_data,
+                        pending_data,
                     )
 
                     logger.info(f"📏 Successfully processed {len(valid_results)} files with valid sizes")
@@ -272,7 +281,7 @@ class PinningRequestConsumer:
         async with self.db_pool.acquire() as conn:
             # Check if this request has already been processed to avoid re-work
             existing = await conn.fetchrow(
-                "SELECT id FROM processed_pinning_requests WHERE request_hash = $1",
+                "SELECT id FROM pinning_requests WHERE request_hash = $1",
                 request_hash,
             )
             if existing:
@@ -309,15 +318,8 @@ class PinningRequestConsumer:
                         request_data.get("file_name", ""),
                     )
 
-                # Record that we've processed this storage request
-                await conn.execute(
-                    """
-                    INSERT INTO processed_pinning_requests (request_hash, miner_count)
-                    VALUES ($1, $2) ON CONFLICT DO NOTHING
-                """,
-                    request_hash,
-                    files_processed,
-                )
+                # The request is now recorded in pinning_requests table above
+                logger.info(f"Successfully processed storage request {request_hash} with {files_processed} files")
 
             return True
 
