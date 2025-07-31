@@ -194,42 +194,14 @@ class PinningRequestConsumer:
         return await self._batch_process_file_assignments(file_assignments)
 
     async def _batch_process_file_assignments(self, file_assignments: list[dict]) -> int:
-        # Create semaphore for parallel file size fetching (limit to 20 concurrent)
-        semaphore = asyncio.Semaphore(20)
-
-        async def fetch_file_size_with_semaphore(assignment: dict) -> tuple:
-            async with semaphore:
-                fs = await fetch_ipfs_file_size(assignment["cid"])
-                # Only return valid file sizes - skip files that can't be fetched
-                if fs is None:
-                    logger.warning("📏 Failed to fetch size, setting to 0")
-                return (
-                    assignment["cid"],
-                    assignment["filename"],
-                    fs or 0,
-                    assignment["owner"],
-                )
-
-        # Fetch all file sizes in parallel
-        logger.info(f"📏 Fetching file sizes for {len(file_assignments)} files in parallel (max 20 concurrent)")
-        tasks = [fetch_file_size_with_semaphore(assignment) for assignment in file_assignments]
-        results = await asyncio.gather(*tasks)
-
-        # Filter out None results (files that couldn't be fetched)
-        valid_results = [r for r in results if r is not None]
-        skipped_count = len(results) - len(valid_results)
-
-        if skipped_count > 0:
-            logger.warning(f"📏 Skipped {skipped_count} files due to IPFS fetch failures")
-
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
                 files_data = []
                 assignments_data = []
 
-                for cid, filename, file_size, owner in valid_results:
-                    files_data.append((cid, filename, file_size))
-                    assignments_data.append((cid, owner))
+                for item in file_assignments:
+                    files_data.append((item["cid"], item["filename"], 0))
+                    assignments_data.append((item["cid"], item["owner"]))
 
                 if files_data:
                     await conn.executemany(
@@ -263,9 +235,7 @@ class PinningRequestConsumer:
                         pending_data,
                     )
 
-                    logger.info(f"📏 Successfully processed {len(valid_results)} files with valid sizes")
-
-                return len(valid_results)
+                return len(file_assignments)
 
     async def process_pinning_request(self, request_data: dict[str, Any]) -> bool:
         """
