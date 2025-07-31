@@ -2,16 +2,24 @@ import asyncio
 import json
 import logging
 import os
+from json import JSONDecodeError
 from typing import Any
 
 import aio_pika
-from substrateinterface import SubstrateInterface
 
 from app.db.connection import close_db_pool, get_db_pool, init_db_pool
-from app.utils.blockchain_submission import load_validator_keypair, string_to_bounded_vec
 from rabbitmq.pinning_request_consumer import fetch_ipfs_content
 
 logger = logging.getLogger(__name__)
+
+
+def get_cid_version(cid: str) -> int:
+    if cid.startswith("Qm") and len(cid) == 46:
+        return True
+    elif cid.startswith(("b", "z", "f")):  # f for base16
+        return True
+    else:
+        return False
 
 
 def hex_to_string(hex_string: str) -> str:
@@ -25,86 +33,14 @@ def hex_to_string(hex_string: str) -> str:
         ASCII string
     """
     try:
-        return bytes.fromhex(hex_string).decode("utf-8")
+        cid = bytes.fromhex(hex_string).decode("utf-8")
+        if not get_cid_version(cid):  # double encoded
+            return str(bytes.fromhex(cid))
+        else:
+            return cid
     except Exception as e:
         logger.error(f"Error converting hex to string: {e}")
         return hex_string
-
-
-async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]]) -> None:
-    """Calls the update_unpin_and_storage_requests extrinsic on the Substrate node.
-
-    Args:
-        requests (List[Dict[str, Any]]): List of unpin request updates. Each dict should contain:
-            - storage_request_owner: str (SS58 address)
-            - storage_request_file_hash: str (IPFS CID)
-            - file_size: int
-            - user_profile_cid: str (IPFS CID)
-            - miner_pin_requests: List[Dict[str, Any]] with fields:
-                - miner_node_id: str (node ID)
-                - cid: str (IPFS CID)
-                - files_count: int
-                - files_size: int
-
-    Raises:
-        Exception: If the extrinsic submission fails
-    """
-    substrate = None
-
-    try:
-        # Initialize Substrate interface
-        node_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
-        substrate = SubstrateInterface(url=node_url, use_remote_preset=True)
-        logger.info(f"Connected to Substrate node at {node_url}")
-
-        # Check if IpfsPallet exists in metadata
-        metadata = substrate.get_metadata()
-        if "IpfsPallet" not in [p.name for p in metadata.pallets]:
-            raise Exception("IpfsPallet not found in chain metadata!")
-
-        # Load the validator keypair for signing
-        keypair = load_validator_keypair()
-        if not keypair:
-            raise Exception("No validator keypair available for signing")
-
-        # Create keypair from mnemonic
-        logger.info(f"Using account {keypair.ss58_address} for signing unpin confirmation")
-
-        # Format the requests to match the StorageUnpinUpdateRequest structure
-        formatted_requests = []
-        for req in requests:
-            formatted_req = {
-                "storage_request_owner": req["storage_request_owner"],
-                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
-                "file_size": int(req["file_size"]),
-                "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
-            }
-            formatted_requests.append(formatted_req)
-
-        logger.info(f"Formatted {len(formatted_requests)} unpin request(s)")
-
-        # Compose the call
-        call = substrate.compose_call(
-            call_module="IpfsPallet",
-            call_function="update_unpin_and_storage_requests",
-            call_params={"requests": formatted_requests},
-        )
-
-        # Create and sign the extrinsic
-        extrinsic = substrate.create_signed_extrinsic(call, keypair)
-        logger.debug(f"Created extrinsic: {extrinsic}")
-
-        # Submit the extrinsic and wait for finalization
-        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True, wait_for_finalization=True)
-
-        if receipt.is_success:
-            logger.info(f"✅ Unpin confirmation extrinsic successful in block {receipt.block_hash}")
-        else:
-            raise Exception(f"Unpin confirmation extrinsic failed: {receipt.error_message}")
-
-    finally:
-        if substrate:
-            substrate.close()
 
 
 class UnpinRequestConsumer:
@@ -146,10 +82,9 @@ class UnpinRequestConsumer:
             logger.error(f"Failed to connect: {e}")
             raise
 
-    async def _unpin_single_file(self, conn, cid: str, owner: str) -> bool:
+    async def _unpin_single_file(self, cid: str, owner: str, conn):
         """Helper to unpin a single CID and clean up database entries."""
-        logger.info(f"🗑️ UNPIN_FILE: account={account} CID={cid_short} - starting cleanup")
-
+        logger.info(f"UNPINNING FROM DATABASE {cid=} {owner=}")
         # Check if file exists and belongs to this owner
         file_record = await conn.fetchrow(
             """
@@ -163,17 +98,9 @@ class UnpinRequestConsumer:
         )
 
         if not file_record:
-            logger.warning(f"🗑️ UNPIN_FILE: account={account} CID={cid_short} - file not found or not owned by user")
+            logger.warning(f"Did not find {cid=} {owner=} to delete from database")
             return False
 
-        file_size = file_record["size"] or 0
-        assigned_miners = [file_record[f"miner{i}"] for i in range(1, 6) if file_record[f"miner{i}"]]
-
-        logger.info(
-            f"🗑️ UNPIN_FILE: account={account} CID={cid_short} - file size={file_size:,} bytes, assigned_miners={len(assigned_miners)}"
-        )
-
-        # Clean up database entries
         async with conn.transaction():
             # Delete from files table (CASCADE will handle file_assignments)
             await conn.execute("DELETE FROM files WHERE cid = $1", cid)
@@ -193,207 +120,86 @@ class UnpinRequestConsumer:
             # Clean up storage requests if still pending
             await conn.execute("DELETE FROM storage_requests WHERE file_hash = $1 AND owner = $2", cid, owner)
 
-            # Update miner statistics for affected miners
-            for miner_id in assigned_miners:
-                if miner_id:
-                    # Decrement file count and size in miner_stats
-                    await conn.execute(
-                        """
-                        UPDATE miner_stats 
-                        SET 
-                            files_count = GREATEST(0, files_count - 1),
-                            total_size = GREATEST(0, total_size - $1),
-                            updated_at = NOW()
-                        WHERE node_id = $2
-                    """,
-                        file_size,
-                        miner_id,
-                    )
+        logger.info(f"Successfully deleted {cid=} {owner=} from all tables")
 
-                    logger.debug(f"🗑️ UNPIN_FILE: Updated stats for miner {miner_id[:16]}...")
-
-            # Clean up parsed_cids if this was part of a profile
-            await conn.execute("DELETE FROM parsed_cids WHERE cid = $1", cid)
-
-        logger.info(f"✅ UNPIN_FILE_COMPLETE: account={account} CID={cid_short} - file unpinned and cleaned up")
-        return True
-
-    async def _process_manifest_files_parallel(self, manifest_data: list, owner: str) -> int:
+    async def _process_manifest_files_parallel(self, manifest_data: list, owner: str, conn):
         """Process manifest files for unpinning in parallel."""
         if not manifest_data:
-            return 0
-
-        file_cids = []
-
-        for i, file_info in enumerate(manifest_data):
-            if isinstance(file_info, dict):
-                file_cid = file_info.get("cid")
-                if file_cid:
-                    file_cids.append(file_cid)
-                else:
-                    logger.warning(f"Skipping manifest entry {i + 1}: missing 'cid' field")
-
-            elif isinstance(file_info, str):
-                file_cids.append(file_info)
-            else:
-                logger.warning(f"Skipping invalid manifest entry {i + 1}: {file_info}")
-
-        if not file_cids:
-            logger.warning("No valid file CIDs found in manifest")
-            return 0
+            return
 
         # Process all files in parallel with semaphore
-        semaphore = asyncio.Semaphore(20)
-        unpinned_count = 0
+        semaphore = asyncio.Semaphore(3)
 
-        async def unpin_with_semaphore(file_cid: str) -> bool:
+        async def unpin_with_semaphore(cid, owner, conn):
             async with semaphore:
-                async with self.db_pool.acquire() as conn:
-                    return await self._unpin_single_file(conn, file_cid, owner)
+                await self._unpin_single_file(cid, owner, conn)
 
-        logger.info(f"🗑️ Unpinning {len(file_cids)} files from manifest in parallel (max 20 concurrent)")
-        tasks = [unpin_with_semaphore(file_cid) for file_cid in file_cids]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"🗑️ Unpinning {len(manifest_data)} files from {owner=}")
 
-        for result in results:
-            if isinstance(result, bool) and result:
-                unpinned_count += 1
-            elif isinstance(result, Exception):
-                logger.error(f"Error unpinning file: {result}")
+        tasks = [
+            unpin_with_semaphore(
+                item["cid"],
+                item["owner"],
+                conn,
+            )
+            for item in manifest_data
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-        return unpinned_count
-
-    async def process_unpin_request(self, request_data: dict[str, Any]) -> bool:
+    async def process_unpin_request(self, request_data: dict[str, Any]):
         """
         Process an unpin request, handling manifest CIDs from blockchain unpin requests.
         """
         owner = request_data.get("owner")
-        file_hash_hex = request_data.get("file_hash", "")
-        account = owner[:16]  # for logging purposes
+        file_hash_hex = request_data["file_hash"]
         request_id = f"{owner}_{file_hash_hex}"
+        cid = hex_to_string(file_hash_hex)
 
         async with self.db_pool.acquire() as conn:
             # Check if this request has already been processed
-            existing = await conn.fetchrow("SELECT id FROM processed_unpin_requests WHERE request_id = $1", request_id)
-            if existing:
+            if await conn.fetchrow("SELECT id FROM processed_unpin_requests WHERE request_id = $1", request_id):
                 logger.info(f"🔄 ALREADY_PROCESSED: request_id={request_id}... - skipping")
                 return True
 
-        manifest_cid = hex_to_string(file_hash_hex)
-        manifest_id = manifest_cid[:20]
-
-        if not manifest_cid:
-            logger.error(f"❌ UNPIN_REQUEST_ERROR: account={account} - No file_hash found")
-            return False
-
-        files_unpinned = 0
-
-        # ===== UNPIN REQUEST TRACING - STEP 5: PROCESSING UNPIN REQUEST =====
-        logger.info(f"🗑️ UNPIN_REQUEST_START: account={account} CID={manifest_id}...")
-
-        # Try to fetch and parse the manifest to handle multi-file unpinning
-        logger.info(f"🗑️ UNPIN_REQUEST_FETCH: account={account} CID={manifest_id}... - fetching manifest content")
-        manifest_content = await fetch_ipfs_content(manifest_cid)
-
-        if manifest_content:
-            # Successfully fetched manifest content
-            logger.info(
-                f"🗑️ UNPIN_REQUEST_FETCH_SUCCESS: account={account} CID={manifest_id}... - manifest fetched, parsing content"
-            )
-            try:
-                manifest_data = json.loads(manifest_content)
-
-                if isinstance(manifest_data, list):
-                    # Valid manifest format - list of files
-                    logger.info(
-                        f"🗑️ UNPIN_REQUEST_MANIFEST: account={account} CID={manifest_id}... - manifest contains {len(manifest_data)} files"
-                    )
-
-                    # Process all files in parallel
-                    files_unpinned = await self._process_manifest_files_parallel(manifest_data, owner)
-                    logger.info(
-                        f"🗑️ UNPIN_REQUEST_FILES: account={account} CID={manifest_id}... - unpinned {files_unpinned} files from manifest"
-                    )
-
-                    # Also unpin the manifest itself
-                    async with self.db_pool.acquire() as conn:
-                        if await self._unpin_single_file(conn, manifest_cid, owner):
-                            files_unpinned += 1
-
-                elif isinstance(manifest_data, dict):
-                    # Single file object format
-                    logger.info(
-                        f"🗑️ UNPIN_REQUEST_SINGLE: account={account} CID={manifest_id}... - manifest contains single file object"
-                    )
-                    file_cid = manifest_data.get("cid")
-
-                    if file_cid:
-                        logger.info(
-                            f"🗑️ UNPIN_REQUEST_SINGLE: account={account} manifest_CID={manifest_id}... file_CID={file_cid[:20]}..."
-                        )
-                        async with self.db_pool.acquire() as conn:
-                            if await self._unpin_single_file(conn, file_cid, owner):
-                                files_unpinned += 1
-
-                    # Also unpin the manifest itself
-                    async with self.db_pool.acquire() as conn:
-                        if await self._unpin_single_file(conn, manifest_cid, owner):
-                            files_unpinned += 1
-                else:
-                    # Not a JSON object/array, treat as raw file
-                    logger.info(
-                        f"🗑️ UNPIN_REQUEST_RAW: account={account} CID={manifest_id}... - content is not JSON, treating as raw file"
-                    )
-                    async with self.db_pool.acquire() as conn:
-                        if await self._unpin_single_file(conn, manifest_cid, owner):
-                            files_unpinned = 1
-
-            except json.JSONDecodeError:
-                # Not a JSON file, treat manifest CID as a single file
-                logger.info(
-                    f"🗑️ UNPIN_REQUEST_BINARY: account={account} CID={manifest_id}... - not JSON, treating as binary file"
-                )
-                async with self.db_pool.acquire() as conn:
-                    if await self._unpin_single_file(conn, manifest_cid, owner):
-                        files_unpinned = 1
-
-        else:
-            # Could not fetch manifest content, but still try to unpin based on CID
-            logger.warning(
-                f"🗑️ UNPIN_REQUEST_FETCH_FAILED: account={account} CID={manifest_id}... - could not fetch manifest, trying direct unpin"
-            )
-            async with self.db_pool.acquire() as conn:
-                if await self._unpin_single_file(conn, manifest_cid, owner):
-                    files_unpinned = 1
-
-        # Record that we've processed this unpin request
-        async with self.db_pool.acquire() as conn:
-            # ===== UNPIN REQUEST TRACING - STEP 6: STORING request_id IN DATABASE =====
-            logger.info(f"💾 REQUEST_STORE: Storing unpin request data account={account}")
-
-            # Record that we've processed this unpin request
             await conn.execute(
-                """
-                INSERT INTO processed_unpin_requests (request_id, owner, file_hash, files_unpinned)
-                VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING
-            """,
+                "INSERT INTO processed_unpin_requests (request_id, owner, file_hash, status) VALUES ($1, $2, $3, $4)",
                 request_id,
                 owner,
                 file_hash_hex,
-                files_unpinned,
+                "unprocessed",
             )
 
-        # Collect confirmation data for blockchain submission
-        if files_unpinned > 0:
-            confirmation_data = {
-                "storage_request_owner": owner,
-                "storage_request_file_hash": manifest_cid,
-                "file_size": 0,
-            }
-            self.unpin_confirmations.append(confirmation_data)
-        logger.info(
-            f"✅ UNPIN_REQUEST_COMPLETE: account={account} CID={manifest_id if manifest_cid else 'N/A'}... files_unpinned={files_unpinned}"
-        )
+            manifest_data = await fetch_ipfs_content(cid)
+
+            if not manifest_data:
+                logger.warning(f"Could not fetch manifest data for cid={cid} - treating as already processed")
+                return True
+
+            try:
+                logger.info(f"Deserializing {manifest_data[:32]=}")
+                manifest_data = json.loads(manifest_data)
+            except (UnicodeDecodeError, JSONDecodeError) as e:  # it's probably not a manifest, just the cid to unpin
+                logger.error(
+                    f"Failed to decode unpin manifest JSON for request_id={request_id}, cid={cid}: {str(e)[:20]}"
+                )
+                manifest_data = [
+                    {
+                        "cid": cid,
+                        "owner": owner,
+                    }
+                ]
+
+            try:
+                await self._process_manifest_files_parallel(
+                    manifest_data,
+                    owner,
+                    conn,
+                )
+            except Exception as e:
+                logger.exception(f"Failed to process manifest for cid={cid}: {e}")
+                return True
+
+        return True
 
     async def process_message(self, message: aio_pika.IncomingMessage):
         """
@@ -465,8 +271,6 @@ class UnpinRequestConsumer:
     async def close(self):
         """Close all connections."""
         # Submit any remaining confirmations before shutdown
-        await self.submit_unpin_confirmations()
-
         if self.rabbitmq_connection:
             await self.rabbitmq_connection.close()
             logger.info("Closed RabbitMQ connection")

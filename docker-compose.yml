@@ -5,6 +5,7 @@ include:
   - docker/docker-compose.file-assignment-consumer.yml
   - docker/docker-compose.pinning-request-consumer.yml
   - docker/docker-compose.registration-consumer.yml
+  - docker/docker-compose.unpin-request-consumer.yml
   - docker/docker-compose.user-profile-consumer.yml
   - docker/docker-compose.user-profile-reconstruction-consumer.yml
   - docker/docker-compose.miner-profile-reconstruction-consumer.yml

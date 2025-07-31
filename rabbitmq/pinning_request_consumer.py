@@ -59,6 +59,7 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
     """Fetch content from the local IPFS node with external gateway fallback."""
     if not cid:
         return None
+    cid = str(cid)
 
     # Use local IPFS service by default
     if ipfs_node_url is None:
@@ -71,9 +72,9 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(url, timeout=10.0)
+            response = await client.post(url, timeout=7)
             response.raise_for_status()
-            logger.info(f"✅ Successfully fetched content for CID {cid[:16]}... from local IPFS")
+            logger.info(f"✅ Successfully fetched content for CID {cid}... from local IPFS")
             return response.content
         except httpx.HTTPStatusError as e:
             logger.warning(f"IPFS node returned error for CID {cid}: {e}")

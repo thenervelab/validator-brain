@@ -156,22 +156,26 @@ data:
     -- migrate:up
     -- Add epoch tracking table for validator submissions
 
-    CREATE TABLE IF NOT EXISTS epoch_tracking (
-        id INTEGER PRIMARY KEY DEFAULT 1,
-        last_submission_epoch BIGINT NOT NULL DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CREATE TABLE IF NOT EXISTS epoch_tracking
+    (
+        id                    INTEGER PRIMARY KEY DEFAULT 1,
+        last_submission_epoch BIGINT NOT NULL     DEFAULT 0,
+        created_at            TIMESTAMP           DEFAULT CURRENT_TIMESTAMP,
+        updated_at            TIMESTAMP           DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT single_row_only CHECK (id = 1)
     );
 
     -- Insert initial row
-    INSERT INTO epoch_tracking (id, last_submission_epoch) VALUES (1, 0)
+    INSERT INTO epoch_tracking (id, last_submission_epoch)
+    VALUES (1, 0)
     ON CONFLICT (id) DO NOTHING;
 
     -- Add trigger for automatic timestamp updates
     CREATE TRIGGER update_epoch_tracking_timestamp
-    BEFORE UPDATE ON epoch_tracking
-    FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+        BEFORE UPDATE
+        ON epoch_tracking
+        FOR EACH ROW
+    EXECUTE FUNCTION update_timestamp();
 
     -- migrate:down
     DROP TRIGGER IF EXISTS update_epoch_tracking_timestamp ON epoch_tracking;
@@ -180,35 +184,37 @@ data:
     -- migrate:up
     -- Add monitoring tables for performance metrics and validation tracking
 
-    CREATE TABLE IF NOT EXISTS performance_metrics (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        value FLOAT NOT NULL,
-        timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
-        unit VARCHAR(20) DEFAULT '',
-        tags JSONB DEFAULT '{}',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS performance_metrics
+    (
+        id         SERIAL PRIMARY KEY,
+        name       VARCHAR(100) NOT NULL,
+        value      FLOAT        NOT NULL,
+        timestamp  TIMESTAMP    NOT NULL DEFAULT NOW(),
+        unit       VARCHAR(20)           DEFAULT '',
+        tags       JSONB                 DEFAULT '{}',
+        created_at TIMESTAMP             DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS validation_metrics (
-        id SERIAL PRIMARY KEY,
-        validator_id VARCHAR(100) NOT NULL,
-        epoch BIGINT NOT NULL,
-        block_number BIGINT NOT NULL,
-        phase VARCHAR(50) NOT NULL,
-        start_time TIMESTAMP NOT NULL,
-        end_time TIMESTAMP,
-        total_duration_ms INTEGER NOT NULL DEFAULT 0,
-        success BOOLEAN NOT NULL DEFAULT TRUE,
-        error_message TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS validation_metrics
+    (
+        id                SERIAL PRIMARY KEY,
+        validator_id      VARCHAR(100) NOT NULL,
+        epoch             BIGINT       NOT NULL,
+        block_number      BIGINT       NOT NULL,
+        phase             VARCHAR(50)  NOT NULL,
+        start_time        TIMESTAMP    NOT NULL,
+        end_time          TIMESTAMP,
+        total_duration_ms INTEGER      NOT NULL DEFAULT 0,
+        success           BOOLEAN      NOT NULL DEFAULT TRUE,
+        error_message     TEXT,
+        created_at        TIMESTAMP             DEFAULT CURRENT_TIMESTAMP
     );
 
     -- Create indexes for performance
-    CREATE INDEX idx_performance_metrics_name ON performance_metrics(name);
-    CREATE INDEX idx_performance_metrics_timestamp ON performance_metrics(timestamp);
-    CREATE INDEX idx_validation_metrics_validator ON validation_metrics(validator_id);
-    CREATE INDEX idx_validation_metrics_epoch ON validation_metrics(epoch);
+    CREATE INDEX idx_performance_metrics_name ON performance_metrics (name);
+    CREATE INDEX idx_performance_metrics_timestamp ON performance_metrics (timestamp);
+    CREATE INDEX idx_validation_metrics_validator ON validation_metrics (validator_id);
+    CREATE INDEX idx_validation_metrics_epoch ON validation_metrics (epoch);
 
     -- migrate:down
     DROP INDEX IF EXISTS idx_validation_metrics_epoch;
@@ -238,19 +244,20 @@ data:
     TABLE IF EXISTS pending_submissions;"
   20250526000003_add_slashing_table.sql: |-
     -- migrate:up
-    CREATE TABLE IF NOT EXISTS slashing_recommendations (
-        id SERIAL PRIMARY KEY,
-        owner_account_id VARCHAR(64) NOT NULL,
-        reason VARCHAR(100) NOT NULL,
-        details JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        processed BOOLEAN DEFAULT FALSE,
-        processed_at TIMESTAMP NULL
+    CREATE TABLE IF NOT EXISTS slashing_recommendations
+    (
+        id               SERIAL PRIMARY KEY,
+        owner_account_id VARCHAR(64)  NOT NULL,
+        reason           VARCHAR(100) NOT NULL,
+        details          JSONB        NOT NULL,
+        created_at       TIMESTAMP DEFAULT NOW(),
+        processed        BOOLEAN   DEFAULT FALSE,
+        processed_at     TIMESTAMP    NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_slashing_recommendations_owner ON slashing_recommendations(owner_account_id);
-    CREATE INDEX IF NOT EXISTS idx_slashing_recommendations_processed ON slashing_recommendations(processed);
-    CREATE INDEX IF NOT EXISTS idx_slashing_recommendations_created_at ON slashing_recommendations(created_at);
+    CREATE INDEX IF NOT EXISTS idx_slashing_recommendations_owner ON slashing_recommendations (owner_account_id);
+    CREATE INDEX IF NOT EXISTS idx_slashing_recommendations_processed ON slashing_recommendations (processed);
+    CREATE INDEX IF NOT EXISTS idx_slashing_recommendations_created_at ON slashing_recommendations (created_at);
 
     -- migrate:down
     DROP TABLE IF EXISTS slashing_recommendations;
@@ -368,14 +375,72 @@ data:
     pending_miner_profile \nDROP CONSTRAINT IF EXISTS pending_miner_profile_status_check;\n\nALTER
     TABLE pending_miner_profile \nADD CONSTRAINT pending_miner_profile_status_check
     \nCHECK (status IN ('pending', 'published', 'failed', 'submitted', 'needs_reconstruction'));\n\n--
-    migrate:down\nALTER TABLE pending_miner_profile \nDROP CONSTRAINT IF EXISTS
-    pending_miner_profile_status_check;\n\nALTER TABLE pending_miner_profile \nADD
-    CONSTRAINT pending_miner_profile_status_check \nCHECK (status IN ('pending',
-    'published', 'failed', 'submitted'));"
+    migrate:down\nALTER TABLE pending_miner_profile \nDROP CONSTRAINT IF EXISTS pending_miner_profile_status_check;\n\nALTER
+    TABLE pending_miner_profile \nADD CONSTRAINT pending_miner_profile_status_check
+    \nCHECK (status IN ('pending', 'published', 'failed', 'submitted'));"
   20250728000002_add_unique_constraint_to_pending_miner_profile_node_id.sql: "-- migrate:up\nALTER
     TABLE pending_miner_profile \nADD CONSTRAINT pending_miner_profile_node_id_unique
     UNIQUE (node_id);\n\n-- migrate:down\nALTER TABLE pending_miner_profile \nDROP
     CONSTRAINT IF EXISTS pending_miner_profile_node_id_unique;"
+  20250731000000_add_processed_unpin_requests_table.sql: |-
+    -- migrate:up
+    -- Add processed_unpin_requests table to track processed unpin requests and avoid duplicates
+
+    CREATE TABLE IF NOT EXISTS processed_unpin_requests
+    (
+        id             SERIAL PRIMARY KEY,
+        request_id     VARCHAR(255) UNIQUE NOT NULL,
+        owner          VARCHAR(100)        NOT NULL,
+        file_hash      VARCHAR(255),
+        files_unpinned INTEGER   DEFAULT 0,
+        created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Create indexes for better query performance
+    CREATE INDEX IF NOT EXISTS idx_processed_unpin_requests_request_id ON processed_unpin_requests (request_id);
+    CREATE INDEX IF NOT EXISTS idx_processed_unpin_requests_owner ON processed_unpin_requests (owner);
+
+    -- migrate:down
+    DROP TABLE IF EXISTS processed_unpin_requests;
+
+  20250731100000_add_status_to_processed_unpin_requests.sql: |-
+    -- migrate:up
+    -- Add status column to processed_unpin_requests table
+    ALTER TABLE processed_unpin_requests
+        ADD COLUMN status VARCHAR(50) DEFAULT 'unprocessed' CHECK (status IN ('unprocessed', 'processed'));
+
+    -- Create index for better query performance
+    CREATE INDEX idx_processed_unpin_requests_status ON processed_unpin_requests (status);
+
+    -- Update existing records to have 'unprocessed' status
+    UPDATE processed_unpin_requests
+    SET status = 'unprocessed'
+    WHERE status IS NULL;
+
+    -- migrate:down
+    DROP INDEX IF EXISTS idx_processed_unpin_requests_status;
+    ALTER TABLE processed_unpin_requests
+        DROP COLUMN IF EXISTS status;
+
+  20250731110000_increase_processed_unpin_requests_column_sizes.sql: |-
+    -- migrate:up
+    -- Increase column sizes for processed_unpin_requests table to handle longer values
+
+    -- Increase request_id to TEXT (unlimited) since it can be very long with hex-encoded file hashes
+    ALTER TABLE processed_unpin_requests
+        ALTER COLUMN request_id TYPE TEXT;
+
+    -- Increase file_hash to TEXT as well since hex-encoded file hashes can be very long
+    ALTER TABLE processed_unpin_requests
+        ALTER COLUMN file_hash TYPE TEXT;
+
+    -- migrate:down
+    -- Revert to smaller column sizes (data truncation may occur)
+    ALTER TABLE processed_unpin_requests
+        ALTER COLUMN request_id TYPE VARCHAR(255);
+    ALTER TABLE processed_unpin_requests
+        ALTER COLUMN file_hash TYPE VARCHAR(255);
+
 kind: ConfigMap
 metadata:
   creationTimestamp: null

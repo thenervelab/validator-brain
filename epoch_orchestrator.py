@@ -22,6 +22,7 @@ from rabbitmq import (
     node_metrics_processor,
     pinning_request_processor,
     registration_processor,
+    unpin_request_processor,
     user_profile_processor,
     user_profile_reconstruction_processor,
 )
@@ -522,31 +523,26 @@ class EpochOrchestrator:
         logger.info("✅ ALL unassigned pinning requests (new + old unprocessed) and their files have been processed.")
         return True
 
+    async def process_unpinning_requests(self) -> bool:
+        logger.info("Running unpin_request_processor.py")
+        await unpin_request_processor.main()
+        await self.wait_for_queues_empty(
+            ["unpin_request"],
+            300,
+        )
+        return True
+
     async def assign_files(self) -> bool:
         """
         Assign miners to files using the previous ValidatorWorkflow approach.
         Phase 3: File assignment (blocks 36-60)"""
         logger.info("📋 Starting file assignment phase")
 
-        # CRITICAL: Always process pinning requests first to get the latest data
         logger.info("📌 Step 1: Processing pinning requests for new files before assignment...")
-        pinning_success = await self.process_pinning_requests()
-        if pinning_success:
-            logger.info("✅ Pinning requests processed successfully")
+        await self.process_pinning_requests()
 
-            logger.info("⏳ Step 1a: Waiting for pinning request queue to be empty...")
-            pinning_queue_empty = await self.wait_for_queues_empty(["pinning_request"], 300)
-            if pinning_queue_empty:
-                logger.info("✅ Pinning request queue is empty")
-            else:
-                logger.warning("⚠️ Pinning request queue not empty after timeout")
-        else:
-            logger.warning("⚠️ Pinning requests processing failed, assignment may use stale data.")
-
-        # Validate that health checks completed
-        if not self.health_checks_completed:
-            logger.error("❌ Health checks must complete before file assignment")
-            return False
+        logger.info("📌 Step 2: Processing unpinning requests too...")
+        await self.process_unpinning_requests()
 
         try:
             # Create workflow instance

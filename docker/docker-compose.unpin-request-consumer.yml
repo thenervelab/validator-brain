@@ -1,0 +1,28 @@
+services:
+  unpin-request-consumer:
+    profiles: [ "consumers" ]
+    build: ..
+    # Removed container_name to allow scaling
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-substrate_fetcher}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq-substrate:5672/
+      - VALIDATOR_ACCOUNT_ID=${VALIDATOR_ACCOUNT_ID}
+      - VALIDATOR_SEED=${VALIDATOR_SEED}
+      - NODE_URL=${NODE_URL:-wss://rpc.hippius.network}
+      - IPFS_NODE_URL=http://ipfs:5001
+      - DHT_NODE_URL=http://ipfs:5001
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ../:/ipfs-service-validator
+    working_dir: /ipfs-service-validator
+    command: [ "python", "rabbitmq/unpin_request_consumer.py" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      replicas: 10
+    networks:
+      - validator-network

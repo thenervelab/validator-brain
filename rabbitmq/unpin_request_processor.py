@@ -5,8 +5,8 @@ import os
 from typing import Any
 
 import aio_pika
-from substrateinterface import SubstrateInterface
 
+from app.services.substrate_client import substrate_client
 from app.utils.config import NODE_URL
 
 logger = logging.getLogger(__name__)
@@ -25,8 +25,7 @@ class UnpinRequestProcessor:
     def connect_substrate(self):
         """Connect to the substrate chain."""
         logger.info(f"Connecting to substrate at {NODE_URL}")
-        self.substrate = SubstrateInterface(url=NODE_URL)
-        logger.info("Connected to substrate")
+        self.substrate = substrate_client
 
     async def connect_rabbitmq(self):
         """Connect to RabbitMQ and declare the queue."""
@@ -53,20 +52,12 @@ class UnpinRequestProcessor:
         parsed_requests = []
 
         for item in storage_data:
-            # Extract key and value
-            key_data = item[0]
-            value_data = item[1]
-            owner = str(key_data[0])
-
-            request = {
-                "owner": owner,
-                "file_hash": value_data["fileHash"],
-                "selected_validator": str(value_data["selectedValidator"]),
-                "timestamp": asyncio.get_event_loop().time(),
+            unpin_request = {
+                **item,
             }
 
-            parsed_requests.append(request)
-            logger.debug(f"Parsed unpin request: {owner} -> {request['file_hash'][:20]}...")
+            parsed_requests.append(unpin_request)
+            logger.debug(f"Parsed {unpin_request=}")
 
         return parsed_requests
 
@@ -79,39 +70,20 @@ class UnpinRequestProcessor:
         # Connect to database
 
         try:
-            raw_unpin_requests = self.substrate.query_map(
+            unpin_requests = await self.substrate.query_storage_map(
                 module="IpfsPallet",
-                storage_function="UserUnpinRequests",
+                function="UserUnpinRequests",
             )
-            unpin_rows = self.parse_unpin_request_data(raw_unpin_requests)
-            logger.info(f"Parsed {len(unpin_rows)} unpin requests from substrate...")
-            parsed_requests = []
-            request_ids = []
+            logger.info(f"Found {len(unpin_requests)} unpin requests on substrate...")
+            batch = unpin_requests[:50]
 
-            for row in unpin_rows:
-                try:
-                    request = {
-                        "id": row["id"],
-                        "owner": row["owner"],
-                        "file_hash": row["file_hash"],
-                        "selected_validator": row["selected_validator"],
-                        "epoch": row["epoch"],
-                        "timestamp": asyncio.get_event_loop().time(),
-                    }
-                    parsed_requests.append(request)
-                    request_ids.append(row["id"])
-
-                except Exception:
-                    logger.exception("Error processing request row")
-                    continue
-
-            if parsed_requests:
-                logger.info("🔍 UNPIN_DEBUG: Publishing requests to RabbitMQ queue")
-                await self._publish_requests_parallel(parsed_requests)
+            if batch:
+                logger.info(f"🔍 UNPIN_DEBUG: Publishing a batch of {len(batch)} requests to RabbitMQ queue")
+                await self._publish_requests_parallel(batch)
             else:
                 logger.info("🔍 UNPIN_DEBUG: No unprocessed unpin requests to publish")
 
-            logger.info(f"Successfully processed {len(parsed_requests)} unpin requests")
+            logger.info(f"Successfully processed {len(batch)} unpin requests")
 
         except Exception as e:
             logger.error(f"🔍 UNPIN_DEBUG: Error fetching from database: {e}")
@@ -154,7 +126,7 @@ class UnpinRequestProcessor:
             logger.info("Closed RabbitMQ connection")
 
         if self.substrate:
-            self.substrate.close()
+            await self.substrate.disconnect()
             logger.info("Closed substrate connection")
 
 
@@ -163,7 +135,8 @@ async def main():
     processor = UnpinRequestProcessor()
 
     try:
-        # Connect to RabbitMQ only (no substrate connection needed)
+        # Connect to substrate and RabbitMQ
+        processor.connect_substrate()  # This is synchronous, not async
         await processor.connect_rabbitmq()
 
         # Fetch and queue requests from database

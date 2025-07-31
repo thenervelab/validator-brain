@@ -270,13 +270,24 @@ class SubstrateClient:
         if not self.connected:
             await self.connect()
 
+        processed_result = []
+
         # Special handling for UserStorageRequests - fetch entire storage and filter
-        if module == "IpfsPallet" and function == "UserStorageRequests":
+        if module == "IpfsPallet" and function in ("UserStorageRequests",):
             result = await self._fetch_all_storage_and_filter(
                 module,
                 function,
                 block_hash,
             )
+        elif module == "IpfsPallet" and function in ("UserUnpinRequests",):
+            result = self.substrate.query(
+                module,
+                function,
+                block_hash=block_hash,
+            )
+            for item in result:
+                processed_result.append(item.value)
+            return processed_result
         else:
             result = self.substrate.query_map(
                 module,
@@ -284,18 +295,13 @@ class SubstrateClient:
                 block_hash=block_hash,
             )
 
-        processed_result = []
         for key_storage_obj, value_storage_obj in result:
             # Convert ScaleType objects to Python dictionaries where possible
             key = key_storage_obj.value if hasattr(key_storage_obj, "value") else key_storage_obj
-            value = (
-                value_storage_obj.value
-                if hasattr(value_storage_obj, "value")
-                else value_storage_obj
-            )
+            value = value_storage_obj.value if hasattr(value_storage_obj, "value") else value_storage_obj
 
             # Special handling for UserStorageRequests double map keys (like working version)
-            if module == "IpfsPallet" and function == "UserStorageRequests":
+            if module == "IpfsPallet" and function in ("UserStorageRequests", "UserUnpinRequests"):
                 # Handle StorageDoubleMap: key_storage_obj is a tuple (owner_account_id, file_hash)
                 if isinstance(key_storage_obj, (tuple, list)) and len(key_storage_obj) == 2:
                     owner_account_id = str(key_storage_obj[0])  # SS58 address
@@ -396,9 +402,7 @@ class SubstrateClient:
             try:
                 balance = await self.check_user_balance(account_id)
             except Exception as e:
-                logger.error(
-                    f"Failed to check credits for {account_id} because {e}.. reconnecting..."
-                )
+                logger.error(f"Failed to check credits for {account_id} because {e}.. reconnecting...")
                 self.connected = False
                 await self.connect()
                 logger.info("Reconnected...")

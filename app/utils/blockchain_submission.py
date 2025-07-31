@@ -728,6 +728,185 @@ def call_update_pin_check_metrics(miner_metrics: list[dict[str, Any]]) -> bool:
                 pass  # Ignore errors when closing
 
 
+async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]:
+    """
+    Collect unpin requests that need to be submitted to the blockchain for closing.
+
+    Args:
+        db_pool: Database connection pool
+
+    Returns:
+        List of unpin request dictionaries ready for blockchain submission
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            query = """
+            SELECT DISTINCT
+                pur.owner as storage_request_owner,
+                COALESCE(pur.file_hash, '') as storage_request_file_hash,
+                COALESCE(
+                    (SELECT SUM(f.size) 
+                     FROM file_assignments fa 
+                     JOIN files f ON fa.cid = f.cid 
+                     WHERE fa.owner = pur.owner 
+                     AND f.size IS NOT NULL), 
+                    0
+                ) as file_size,
+                COALESCE(
+                    (SELECT pup.cid 
+                     FROM pending_user_profile pup 
+                     WHERE pup.owner = pur.owner 
+                     LIMIT 1), 
+                    ''
+                ) as user_profile_cid
+            FROM processed_unpin_requests pur
+            WHERE pur.status = 'unprocessed'
+            ORDER BY pur.owner
+            """
+
+            rows = await conn.fetch(query)
+
+            unpin_requests = []
+            for row in rows:
+                user = row["storage_request_owner"]
+                logger.info(f"Unpin request processed for {user}, triggering user profile refresh")
+                request = {
+                    "storage_request_owner": user,
+                    "storage_request_file_hash": row["storage_request_file_hash"],
+                    "file_size": row["file_size"] or 0,
+                    "user_profile_cid": row["user_profile_cid"],
+                }
+                unpin_requests.append(request)
+
+            logger.info(f"✅ Collected {len(unpin_requests)} unpin requests to submit to blockchain...")
+
+            # Mark them as processed
+            if unpin_requests:
+                await conn.execute(
+                    """
+                    UPDATE processed_unpin_requests 
+                    SET status = 'processed' 
+                    WHERE status = 'unprocessed'
+                    """
+                )
+                logger.info(f"Marked {len(unpin_requests)} unpin requests as processed")
+
+            return unpin_requests
+
+    except Exception as e:
+        logger.error(f"Error collecting unpin requests for submission: {e}")
+        return []
+
+
+async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]]) -> None:
+    """Calls the update_unpin_and_storage_requests extrinsic on the Substrate node.
+
+    Args:
+        requests (List[Dict[str, Any]]): List of unpin request updates. Each dict should contain:
+            - storage_request_owner: str (SS58 address)
+            - storage_request_file_hash: str (IPFS CID)
+            - file_size: int
+            - user_profile_cid: str (IPFS CID)
+            - miner_pin_requests: List[Dict[str, Any]] with fields:
+                - miner_node_id: str (node ID)
+                - cid: str (IPFS CID)
+                - files_count: int
+                - files_size: int
+
+    Raises:
+        Exception: If the extrinsic submission fails
+    """
+    substrate = None
+
+    try:
+        # Initialize Substrate interface
+        node_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+        substrate = SubstrateInterface(url=node_url, use_remote_preset=True)
+        logger.info(f"Connected to Substrate node at {node_url}")
+
+        # Check if IpfsPallet exists in metadata
+        metadata = substrate.get_metadata()
+        if "IpfsPallet" not in [p.name for p in metadata.pallets]:
+            raise Exception("IpfsPallet not found in chain metadata!")
+
+        # Load the validator keypair for signing
+        keypair = load_validator_keypair()
+        if not keypair:
+            raise Exception("No validator keypair available for signing")
+
+        # Create keypair from mnemonic
+        logger.info(f"Using account {keypair.ss58_address} for signing unpin confirmation")
+
+        # Format the requests to match the StorageUnpinUpdateRequest structure
+        formatted_requests = []
+        for req in requests:
+            formatted_req = {
+                "storage_request_owner": req["storage_request_owner"],
+                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
+                "file_size": int(req["file_size"]),
+                "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
+            }
+            formatted_requests.append(formatted_req)
+
+        logger.info(f"Formatted {len(formatted_requests)} unpin request(s)")
+
+        # Compose the call
+        call = substrate.compose_call(
+            call_module="IpfsPallet",
+            call_function="update_unpin_and_storage_requests",
+            call_params={"requests": formatted_requests},
+        )
+
+        # Create and sign the extrinsic
+        extrinsic = substrate.create_signed_extrinsic(call, keypair)
+        logger.debug(f"Created extrinsic: {extrinsic}")
+
+        # Submit the extrinsic and wait for finalization
+        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True, wait_for_finalization=True)
+
+        if receipt.is_success:
+            logger.info(f"✅ Unpin confirmation extrinsic successful in block {receipt.block_hash}")
+        else:
+            raise Exception(f"Unpin confirmation extrinsic failed: {receipt.error_message}")
+
+    finally:
+        if substrate:
+            substrate.close()
+
+
+async def submit_unpin_requests_to_blockchain(db_pool) -> bool:
+    """
+    Collect and submit unpin requests to the blockchain.
+
+    Args:
+        db_pool: Database connection pool
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        logger.info("🗑️ Collecting and submitting unpin requests to blockchain")
+
+        # Collect unpin requests
+        unpin_requests = await collect_unpin_requests_for_submission(db_pool)
+
+        if not unpin_requests:
+            logger.info("No unpin requests to submit")
+            return True
+
+        logger.info(f"Prepared {len(unpin_requests)} unpin requests for submission")
+
+        # Submit to blockchain
+        await call_update_unpin_and_storage_requests(unpin_requests)
+
+        logger.info("✅ Successfully submitted unpin requests to blockchain")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Error during unpin requests submission: {e}")
+        return False
+
+
 async def submit_health_metrics_to_blockchain(db_pool) -> bool:
     """
     Collect and submit health check metrics to the blockchain.

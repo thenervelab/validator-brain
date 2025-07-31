@@ -307,3 +307,34 @@ spec:
             - configMapRef:
                 name: ipfs-validator-config
           workingDir: /app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unpin-request-consumer
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: unpin-request-consumer
+  template:
+    metadata:
+      labels:
+        app: unpin-request-consumer
+    spec:
+      initContainers:
+        - name: wait-for-services
+          image: busybox:1.35
+          command: [ 'sh', '-c', 'until nc -z postgres-service 5432 && nc -z rabbitmq-service 5672; do echo waiting for services; sleep 5; done' ]
+      containers:
+        - name: consumer
+          image: registry.starkleytech.com/library/ipfs-service-validator
+          imagePullPolicy: Always
+          command: [ "python", "rabbitmq/unpin_request_consumer.py" ]
+          ports:
+            - containerPort: 9796
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: ipfs-validator-config
+          workingDir: /app
