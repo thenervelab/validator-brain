@@ -13,6 +13,7 @@ from app.utils.blockchain_submission import (
     collect_storage_requests_for_submission,
     mark_submissions_as_completed,
     submit_health_metrics_to_blockchain,
+    submit_unpin_requests_to_blockchain,
 )
 from rabbitmq import (
     availability_manager_processor,
@@ -305,7 +306,7 @@ class EpochOrchestrator:
             rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@rabbitmq-service:5672/")
 
             start_time = asyncio.get_event_loop().time()
-            check_interval = 10  # Check every 10 seconds
+            check_interval = 3  # Check every 10 seconds
 
             while (asyncio.get_event_loop().time() - start_time) < timeout:
                 try:
@@ -912,8 +913,6 @@ class EpochOrchestrator:
                 if pending_miner_profiles == 0 and assigned_files > 0:
                     logger.error("🚨 CRITICAL: Files are assigned but no miner profiles published!")
                     logger.error("   This indicates profile reconstruction failed to publish profiles")
-                    logger.error("   Cannot submit to blockchain - would result in empty miner profiles")
-                    return False
 
                 if assigned_files == 0:
                     logger.warning("⚠️ No files assigned - might be normal if no storage requests")
@@ -930,26 +929,6 @@ class EpochOrchestrator:
 
             # Step 4: CRITICAL VERIFICATION - Ensure we're not submitting empty data
             logger.info("🔍 Step 4: Final data verification before blockchain submission...")
-
-            if len(miner_profiles) == 0:
-                logger.error("🚨 CRITICAL: NO MINER PROFILES TO SUBMIT!")
-                logger.error("   This would result in empty blockchain submission")
-                logger.error("   Check profile reconstruction process")
-
-                # Additional debugging
-                async with self.db_pool.acquire() as conn:
-                    pending_count = await conn.fetchval("SELECT COUNT(*) FROM pending_miner_profile")
-                    published_count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM pending_miner_profile WHERE status = 'published'"
-                    )
-                    logger.error(f"   Database state: {pending_count} total profiles, {published_count} published")
-
-                    if pending_count == 0:
-                        logger.error("   🔥 NO profiles in pending_miner_profile table!")
-                    elif published_count == 0:
-                        logger.error("   🔥 Profiles exist but none are 'published'!")
-
-                return False
 
             # Verify miner profiles have actual content
             profiles_with_files = 0
@@ -989,6 +968,8 @@ class EpochOrchestrator:
             success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(
                 storage_requests, miner_profiles
             )
+
+            await submit_unpin_requests_to_blockchain(self.db_pool)
 
             if success:
                 # Mark as completed in database

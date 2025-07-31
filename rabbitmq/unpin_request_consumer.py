@@ -226,30 +226,6 @@ class UnpinRequestConsumer:
                 logger.exception("MESSAGE_ERROR: Error processing message")
                 raise
 
-    async def submit_unpin_confirmations(self):
-        """Submit collected unpin confirmations to blockchain."""
-        if not self.unpin_confirmations:
-            logger.info("No unpin confirmations to submit")
-            return
-
-        try:
-            logger.info(
-                f"🚀 BLOCKCHAIN_SUBMIT: Submitting {len(self.unpin_confirmations)} unpin confirmations to blockchain"
-            )
-
-            # Submit confirmations to blockchain
-            await call_update_unpin_and_storage_requests(self.unpin_confirmations)
-
-            logger.info(
-                f"✅ BLOCKCHAIN_SUBMIT: Successfully submitted {len(self.unpin_confirmations)} unpin confirmations"
-            )
-
-            # Clear the confirmations after successful submission
-            self.unpin_confirmations = []
-
-        except Exception:
-            logger.exception("BLOCKCHAIN_SUBMIT: Failed to submit unpin confirmations:")
-
     async def start_consuming(self):
         """Start consuming messages from the queue."""
         try:
