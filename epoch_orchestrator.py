@@ -1544,15 +1544,10 @@ class EpochOrchestrator:
         # CORRECTED APPROACH: Clean everything and refetch from chain as source of truth
         tables_to_clean = [
             "pinning_requests",
-            # CLEAN: Will be refetched from chain with ALL unassigned requests
-            # 'node_metrics',            # PRESERVE: Only refresh every 300 blocks, not every epoch
             "parsed_cids",
-            # "pending_assignment_file",  # PRESERVE: Don't delete unprocessed file assignments
             "pending_miner_profile",
             "pending_submissions",
             "pending_user_profile",
-            # "processed_pinning_requests",
-            # CLEAN: Will start fresh tracking for this epoch
         ]
 
         try:
@@ -1566,12 +1561,6 @@ class EpochOrchestrator:
                 logger.info("   Previous epoch health data allows validators to skip 3+ hour health checks")
                 logger.info("✅ PRESERVING node_metrics data (only refreshed every 300 blocks)")
                 logger.info("   Node metrics don't change frequently, saving processing overhead")
-
-                # CORRECTED APPROACH: Clean everything and refetch from blockchain as source of truth
-                logger.info("🔄 CLEANING pinning_requests table - will refetch ALL unassigned from chain")
-                logger.info("   Blockchain is source of truth for unprocessed storage requests")
-                logger.info("   This ensures we get ALL unassigned requests regardless of age or original validator")
-
                 for table in tables_to_clean:
                     try:
                         # Delete all records from the table

@@ -156,9 +156,15 @@ class UnpinRequestConsumer:
         cid = hex_to_string(file_hash_hex)
 
         async with self.db_pool.acquire() as conn:
-            # Check if this request has already been processed
-            if await conn.fetchrow("SELECT id FROM processed_unpin_requests WHERE request_id = $1", request_id):
-                logger.info(f"🔄 ALREADY_PROCESSED: request_id={request_id}... - skipping")
+            # Check if this request exists and its status
+            existing_request = await conn.fetchrow("SELECT id, status FROM processed_unpin_requests WHERE request_id = $1", request_id)
+            if existing_request:
+                if existing_request['status'] == 'processed':
+                    # Reset processed requests back to unprocessed (they're appearing on blockchain again)
+                    await conn.execute("UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id)
+                    logger.info(f"🔄 RESET_TO_UNPROCESSED: request_id={request_id}... - blockchain shows it needs resubmission")
+                else:
+                    logger.info(f"🔄 ALREADY_UNPROCESSED: request_id={request_id}... - skipping")
                 return True
 
             await conn.execute(
