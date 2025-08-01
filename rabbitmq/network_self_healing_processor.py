@@ -49,15 +49,31 @@ def connect_to_node(ws_url):
         raise
 
 
-def submit_deregistration_report(substrate, keypair, node_ids):
+async def submit_deregistration_report(substrate, keypair, ipfs_peer_ids):
     """Submit deregistration report transaction."""
-    logger.info(f"deregistration node_ids={node_ids}")
-    formatted_node_ids = [node_id.encode() for node_id in node_ids]
+    logger.info(f"deregistration ipfs_peer_ids={ipfs_peer_ids}")
+
+    # Map IPFS peer IDs to node_ids from registration table
+    db_pool = get_db_pool()
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT node_id FROM registration WHERE ipfs_peer_id = ANY($1::text[])",
+            [node_id.encode() for node_id in ipfs_peer_ids],
+        )
+        substrate_node_ids = [row["node_id"] for row in rows]
+
+    logger.info(f"Mapped {len(ipfs_peer_ids)} IPFS peer IDs to {len(substrate_node_ids)} substrate node IDs")
+
+    if not substrate_node_ids:
+        logger.warning("No substrate node IDs found for the given IPFS peer IDs")
+        return None
+
     call = substrate.compose_call(
         call_module="Registration",
         call_function="submit_deregistration_report",
-        # todo this is the substrate node id not the ipfs one
-        call_params={"node_ids": formatted_node_ids},
+        call_params={
+            "node_ids": substrate_node_ids,
+        },
     )
 
     extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
@@ -72,7 +88,7 @@ def submit_deregistration_report(substrate, keypair, node_ids):
     return receipt
 
 
-def batch_submit(substrate, keypair, node_ids, batch_size=5):
+async def batch_submit(substrate, keypair, node_ids, batch_size=5):
     """Submit deregistration reports in batches."""
     successful_batches = 0
     failed_batches = 0
@@ -84,7 +100,7 @@ def batch_submit(substrate, keypair, node_ids, batch_size=5):
 
         logger.info(f"📦 Processing batch {batch_num}/{total_batches} with {len(batch)} node IDs")
 
-        receipt = submit_deregistration_report(substrate, keypair, batch)
+        receipt = await submit_deregistration_report(substrate, keypair, batch)
 
         if receipt and receipt.is_success:
             successful_batches += 1
@@ -284,7 +300,7 @@ class NetworkSelfHealingProcessor:
                     )
 
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                    successful_batches, failed_batches = batch_submit(hippius_substrate, keypair, clean_node_ids)
+                    successful_batches, failed_batches = await batch_submit(hippius_substrate, keypair, clean_node_ids)
 
                     if successful_batches > 0:
                         logger.info("✅ Hippius deregistration reports submitted successfully")
