@@ -51,8 +51,8 @@ def connect_to_node(ws_url):
 
 def submit_deregistration_report(substrate, keypair, node_ids):
     """Submit deregistration report transaction."""
+    logger.info(f"deregistration node_ids={node_ids}")
     formatted_node_ids = [node_id.encode() for node_id in node_ids]
-    logger.info(f"deregistration {formatted_node_ids=}")
     call = substrate.compose_call(
         call_module="Registration",
         call_function="submit_deregistration_report",
@@ -69,6 +69,33 @@ def submit_deregistration_report(substrate, keypair, node_ids):
         logger.error(f"Hippius deregistration failed: {receipt.error_message}")
 
     return receipt
+
+
+def batch_submit(substrate, keypair, node_ids, batch_size=5):
+    """Submit deregistration reports in batches."""
+    successful_batches = 0
+    failed_batches = 0
+    total_batches = (len(node_ids) + batch_size - 1) // batch_size
+
+    for i in range(0, len(node_ids), batch_size):
+        batch = node_ids[i : i + batch_size]
+        batch_num = (i // batch_size) + 1
+
+        logger.info(f"📦 Processing batch {batch_num}/{total_batches} with {len(batch)} node IDs")
+
+        receipt = submit_deregistration_report(substrate, keypair, batch)
+
+        if receipt and receipt.is_success:
+            successful_batches += 1
+            logger.info(f"✅ Batch {batch_num}/{total_batches} submitted successfully")
+        else:
+            failed_batches += 1
+            logger.error(f"❌ Batch {batch_num}/{total_batches} failed to submit")
+
+    logger.info(
+        f"📊 Batch processing complete: {successful_batches} successful, {failed_batches} failed out of {total_batches} total batches"
+    )
+    return successful_batches, failed_batches
 
 
 async def grace(node_ids) -> None:
@@ -244,20 +271,24 @@ class NetworkSelfHealingProcessor:
                 keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
 
                 if dereged_node_ids:
+                    # Clean and decode node IDs
+                    clean_node_ids = [
+                        n.decode() if isinstance(n, bytes) else n
+                        for n in dereged_node_ids
+                        if (n.decode() if isinstance(n, bytes) else n).startswith("12D3Koo")
+                    ]
+
                     logger.info(
-                        f"Submitting deregistration report to Hippius using account: {keypair.ss58_address} for {len(dereged_node_ids)} node ids"
+                        f"Submitting deregistration report to Hippius using account: {keypair.ss58_address} for {len(clean_node_ids)} node ids"
                     )
+
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                    receipt = submit_deregistration_report(
-                        hippius_substrate,
-                        keypair,
-                        # remove any weird entries and decode bytes to strings
-                        [n.decode() if isinstance(n, bytes) else n for n in dereged_node_ids if (n.decode() if isinstance(n, bytes) else n).startswith("12D3Koo")],
-                    )
-                    if receipt and receipt.is_success:
-                        logger.info("✅ Hippius deregistration report submitted successfully")
-                    else:
-                        logger.error("❌ Failed to submit Hippius deregistration report")
+                    successful_batches, failed_batches = batch_submit(hippius_substrate, keypair, clean_node_ids)
+
+                    if successful_batches > 0:
+                        logger.info("✅ Hippius deregistration reports submitted successfully")
+                    if failed_batches > 0:
+                        logger.error("❌ Some Hippius deregistration reports failed to submit")
                 else:
                     logger.info("No node ids to de-register. All contenders graced this epoch.")
             else:
