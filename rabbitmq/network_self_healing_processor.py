@@ -56,6 +56,7 @@ def submit_deregistration_report(substrate, keypair, node_ids):
     call = substrate.compose_call(
         call_module="Registration",
         call_function="submit_deregistration_report",
+        # todo this is the substrate node id not the ipfs one
         call_params={"node_ids": formatted_node_ids},
     )
 
