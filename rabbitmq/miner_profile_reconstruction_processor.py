@@ -133,10 +133,10 @@ class MinerProfileReconstructionProcessor:
             return files
 
     async def lookup_miner_coldkey(self, node_id: str) -> str:
-        """Lookup coldkey for a miner from the registrations table"""
+        """Lookup coldkey for a miner from the registration table"""
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT coldkey FROM registrations WHERE node_id = $1",
+                "SELECT coldkey FROM registration WHERE node_id = $1",
                 node_id,
             )
             return row["coldkey"] if row else None
