@@ -58,7 +58,7 @@ async def submit_deregistration_report(substrate, keypair, ipfs_peer_ids):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT node_id FROM registration WHERE ipfs_peer_id = ANY($1::text[])",
-            [node_id.encode() for node_id in ipfs_peer_ids],
+            ipfs_peer_ids,
         )
         substrate_node_ids = [row["node_id"] for row in rows]
 
