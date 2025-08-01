@@ -828,18 +828,6 @@ async def call_update_unpin_and_storage_requests(
         # Create keypair from mnemonic
         logger.info(f"Using account {keypair.ss58_address} for signing unpin confirmation")
 
-        # Format the requests to match the StorageUnpinUpdateRequest structure
-        formatted_requests = []
-        for req in requests:
-            formatted_req = {
-                "storage_request_owner": req["storage_request_owner"],
-                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
-                "file_size": int(req["file_size"]),
-                "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
-            }
-            formatted_requests.append(formatted_req)
-            logger.info(f"Adding unpin request for submission {formatted_req}")
-
         # Format miner profiles (same as storage requests)
         formatted_miner_profiles = []
         for i, profile in enumerate(miner_profiles):
@@ -869,6 +857,19 @@ async def call_update_unpin_and_storage_requests(
                 logger.error(f"Profile data: {profile}")
                 continue
 
+        # Format the requests to match the StorageUnpinUpdateRequest structure
+        formatted_requests = []
+        for req in requests:
+            formatted_request = {
+                "storage_request_owner": req["storage_request_owner"],
+                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
+                "file_size": int(req["file_size"]),
+                "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
+                "miner_pin_requests": formatted_miner_profiles,
+            }
+            formatted_requests.append(formatted_request)
+            logger.info(f"Adding unpin request for submission {formatted_request}")
+
         logger.info(f"Formatted {len(formatted_miner_profiles)} miner profiles for unpin submission")
 
         # Compose the call
@@ -877,7 +878,6 @@ async def call_update_unpin_and_storage_requests(
             call_function="update_unpin_and_storage_requests",
             call_params={
                 "requests": formatted_requests,
-                "miner_pin_requests": formatted_miner_profiles,
             },
         )
 
