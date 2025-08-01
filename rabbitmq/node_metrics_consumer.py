@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any
+from typing import Any
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,16 +20,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aio_pika
 from dotenv import load_dotenv
 
-from app.db.connection import get_db_pool, init_db_pool, close_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 
 # Load environment variables
 load_dotenv()
 
-
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Cap values at BIGINT maximum to prevent overflow
@@ -65,7 +62,7 @@ class NodeMetricsConsumer:
         self.db_pool = get_db_pool()
         logger.info("Database connection pool initialized")
 
-    async def store_node_metrics(self, metrics: Dict[str, Any]) -> bool:
+    async def store_node_metrics(self, metrics: dict[str, Any]) -> bool:
         """
         Store node metrics in the database.
 
@@ -89,9 +86,10 @@ class NodeMetricsConsumer:
                     )
 
                     # Insert the new record
-
                     ipfs_repo_size = min(metrics["ipfs_repo_size"], PG_BIGINT_MAX)
                     ipfs_storage_max = min(metrics["ipfs_storage_max"], PG_BIGINT_MAX)
+
+                    logger.info(f"Found miner {metrics['miner_id']} with {ipfs_repo_size=} and {ipfs_storage_max=}")
 
                     if metrics["ipfs_repo_size"] > PG_BIGINT_MAX:
                         logger.warning(
@@ -116,9 +114,7 @@ class NodeMetricsConsumer:
                             """,
                             metrics["miner_id"],
                         )
-                        logger.info(
-                            f"Set miner {metrics['miner_id']} status to inactive due to insufficient storage"
-                        )
+                        logger.info(f"Set miner {metrics['miner_id']} status to inactive due to insufficient storage")
 
                         # Null out file assignments where this miner was assigned so they can be reassigned
                         result = await conn.execute(
@@ -174,9 +170,7 @@ class NodeMetricsConsumer:
             try:
                 # Parse the message body
                 metrics_data = json.loads(message.body.decode())
-                logger.info(
-                    f"Processing metrics for miner {metrics_data.get('miner_id', 'unknown')}"
-                )
+                logger.info(f"Processing metrics for miner {metrics_data.get('miner_id', 'unknown')}")
 
                 # Store the metrics
                 success = await self.store_node_metrics(metrics_data)
