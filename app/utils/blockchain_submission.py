@@ -787,7 +787,7 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
         return []
 
 
-async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]]) -> None:
+async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]) -> None:
     """Calls the update_unpin_and_storage_requests extrinsic on the Substrate node.
 
     Args:
@@ -796,11 +796,11 @@ async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]])
             - storage_request_file_hash: str (IPFS CID)
             - file_size: int
             - user_profile_cid: str (IPFS CID)
-            - miner_pin_requests: List[Dict[str, Any]] with fields:
-                - miner_node_id: str (node ID)
-                - cid: str (IPFS CID)
-                - files_count: int
-                - files_size: int
+        miner_profiles (List[Dict[str, Any]]): List of miner profile updates. Each dict should contain:
+            - miner_node_id: str (node ID)
+            - cid: str (IPFS CID)
+            - files_count: int
+            - files_size: int
 
     Raises:
         Exception: If the extrinsic submission fails
@@ -838,11 +838,45 @@ async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]])
             formatted_requests.append(formatted_req)
             logger.info(f"Adding unpin request for submission {formatted_req}")
 
+        # Format miner profiles (same as storage requests)
+        formatted_miner_profiles = []
+        for i, profile in enumerate(miner_profiles):
+            try:
+                miner_node_id = profile["miner_node_id"]
+                cid = profile["cid"] 
+                files_count = profile["files_count"]
+                files_size = profile["files_size"]
+
+                # Cap files_size at 1TB to prevent overflow
+                if files_size > 1000000000000:
+                    logger.warning(
+                        f"Suspiciously high files_size {files_size} for miner {miner_node_id[:20]}..., capping at 1TB"
+                    )
+                    files_size = 1000000000000
+
+                formatted_profile = {
+                    "miner_node_id": string_to_bounded_vec(miner_node_id),
+                    "cid": string_to_bounded_vec(cid),
+                    "files_count": files_count,
+                    "files_size": files_size,
+                }
+                formatted_miner_profiles.append(formatted_profile)
+
+            except Exception as e:
+                logger.error(f"Error formatting miner profile {i}: {e}")
+                logger.error(f"Profile data: {profile}")
+                continue
+
+        logger.info(f"Formatted {len(formatted_miner_profiles)} miner profiles for unpin submission")
+
         # Compose the call
         call = substrate.compose_call(
             call_module="IpfsPallet",
             call_function="update_unpin_and_storage_requests",
-            call_params={"requests": formatted_requests},
+            call_params={
+                "requests": formatted_requests,
+                "miner_profiles": formatted_miner_profiles,
+            },
         )
 
         # Create and sign the extrinsic
@@ -899,12 +933,13 @@ async def mark_unpin_requests_as_completed(db_pool, unpin_requests: list[dict[st
         return False
 
 
-async def submit_unpin_requests_to_blockchain(db_pool) -> bool:
+async def submit_unpin_requests_to_blockchain(db_pool, miner_profiles: list[dict[str, Any]]) -> bool:
     """
     Collect and submit unpin requests to the blockchain.
 
     Args:
         db_pool: Database connection pool
+        miner_profiles: Pre-collected miner profiles from epoch orchestrator
 
     Returns:
         bool: True if successful, False otherwise
@@ -920,9 +955,10 @@ async def submit_unpin_requests_to_blockchain(db_pool) -> bool:
             return True
 
         logger.info(f"Prepared {len(unpin_requests)} unpin requests for submission")
+        logger.info(f"Using {len(miner_profiles)} pre-collected miner profiles for submission")
 
-        # Submit to blockchain
-        await call_update_unpin_and_storage_requests(unpin_requests)
+        # Submit to blockchain (same pattern as storage requests)
+        await call_update_unpin_and_storage_requests(unpin_requests, miner_profiles)
 
         # Mark as completed only after successful submission
         await mark_unpin_requests_as_completed(db_pool, unpin_requests)

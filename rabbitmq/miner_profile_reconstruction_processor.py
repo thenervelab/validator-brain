@@ -132,6 +132,15 @@ class MinerProfileReconstructionProcessor:
 
             return files
 
+    async def lookup_miner_coldkey(self, node_id: str) -> str:
+        """Lookup coldkey for a miner from the registrations table"""
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT coldkey FROM registrations WHERE node_id = $1",
+                node_id,
+            )
+            return row["coldkey"] if row else None
+
     async def send_to_queue(self, profile_data: dict[str, Any]) -> None:
         """Send profile data to RabbitMQ queue"""
         message_body = json.dumps(profile_data)
@@ -151,9 +160,16 @@ class MinerProfileReconstructionProcessor:
             files = await self.fetch_miner_profile_files(node_id)
             logger.debug(f"Fetched {len(files)} files for miner {node_id}")
 
+            # Lookup coldkey from registrations table
+            coldkey = await self.lookup_miner_coldkey(node_id)
+
             # Calculate file count and total size
             file_count = len(files)
             total_size = sum(file_data.get("size", 0) for file_data in files)
+            
+            # Log total size for this miner with coldkey
+            size_gb = total_size / (1024**3) if total_size > 0 else 0
+            logger.info(f"📊 MINER_PROFILE_SIZE: {node_id} (coldkey: {coldkey}) has {file_count} files totaling {total_size:,} bytes ({size_gb:.2f} GB)")
 
             # Skip miners with no files
             if file_count == 0:

@@ -969,10 +969,14 @@ class EpochOrchestrator:
             logger.info("🚀 Step 5: Submitting to blockchain...")
             logger.info("📤 Initiating blockchain transaction...")
             success, submitted_requests, submitted_profiles = call_update_pin_and_storage_requests(
-                storage_requests, miner_profiles
+                storage_requests,
+                miner_profiles,
             )
 
-            await submit_unpin_requests_to_blockchain(self.db_pool)
+            await submit_unpin_requests_to_blockchain(
+                self.db_pool,
+                miner_profiles,
+            )
 
             if success:
                 # Mark as completed in database
