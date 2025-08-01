@@ -1085,6 +1085,9 @@ class EpochOrchestrator:
             else:
                 logger.error("❌ Non-validator: Health metrics submission failed")
 
+        if self.health_checks_completed and not self.health_scores_processed:
+            await self.network_self_healing_routine()
+
         # PERIODIC DATABASE CLEANUP: Run comprehensive miner records cleanup (every 4 hours)
         # Use block position to determine timing - run at specific intervals to avoid validator interference
         cleanup_interval = (

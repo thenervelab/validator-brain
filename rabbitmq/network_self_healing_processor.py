@@ -251,8 +251,8 @@ class NetworkSelfHealingProcessor:
                     receipt = submit_deregistration_report(
                         hippius_substrate,
                         keypair,
-                        # remove any weird entries
-                        [n for n in dereged_node_ids if n.startswith("12D3Koo")],
+                        # remove any weird entries and decode bytes to strings
+                        [n.decode() if isinstance(n, bytes) else n for n in dereged_node_ids if (n.decode() if isinstance(n, bytes) else n).startswith("12D3Koo")],
                     )
                     if receipt and receipt.is_success:
                         logger.info("✅ Hippius deregistration report submitted successfully")
