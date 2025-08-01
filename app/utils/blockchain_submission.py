@@ -7,7 +7,7 @@ and storage request submissions during validator epochs.
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from substrateinterface import Keypair, SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
@@ -24,7 +24,7 @@ def string_to_bounded_vec(s: str, max_length: int = 256) -> bytes:
     return s.encode("utf-8")[:max_length]
 
 
-def load_validator_keypair() -> Optional[Keypair]:  # noqa: UP045
+def load_validator_keypair() -> Keypair | None:  # noqa: UP045
     """Load validator keypair from environment variable. Supports proxy account configurations."""
     validator_seed = os.getenv("VALIDATOR_SEED")
     expected_account = os.getenv("VALIDATOR_ACCOUNT_ID")
@@ -787,7 +787,9 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
         return []
 
 
-async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]) -> None:
+async def call_update_unpin_and_storage_requests(
+    requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]
+) -> None:
     """Calls the update_unpin_and_storage_requests extrinsic on the Substrate node.
 
     Args:
@@ -843,7 +845,7 @@ async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]],
         for i, profile in enumerate(miner_profiles):
             try:
                 miner_node_id = profile["miner_node_id"]
-                cid = profile["cid"] 
+                cid = profile["cid"]
                 files_count = profile["files_count"]
                 files_size = profile["files_size"]
 
@@ -875,7 +877,7 @@ async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]],
             call_function="update_unpin_and_storage_requests",
             call_params={
                 "requests": formatted_requests,
-                "miner_profiles": formatted_miner_profiles,
+                "miner_pin_requests": formatted_miner_profiles,
             },
         )
 
