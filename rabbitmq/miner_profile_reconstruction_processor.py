@@ -75,14 +75,23 @@ class MinerProfileReconstructionProcessor:
             self.current_block = 0
 
     async def fetch_miner_profiles_to_reconstruct(self) -> list[dict[str, Any]]:
-        """Fetch miner profiles that need to be reconstructed from pending_miner_profile table"""
+        """Fetch ALL miners that have file assignments to reconstruct their profiles"""
         async with self.db_pool.acquire() as conn:
-            # Only get miners explicitly flagged for reconstruction
+            # Get ALL miners that have any file assignments (like user profiles do)
             miners_rows = await conn.fetch(
                 """
-                SELECT DISTINCT node_id
-                FROM pending_miner_profile
-                WHERE node_id IS NOT NULL
+                SELECT DISTINCT miner_id as node_id
+                FROM (
+                    SELECT miner1 as miner_id FROM file_assignments WHERE miner1 IS NOT NULL
+                    UNION
+                    SELECT miner2 as miner_id FROM file_assignments WHERE miner2 IS NOT NULL
+                    UNION
+                    SELECT miner3 as miner_id FROM file_assignments WHERE miner3 IS NOT NULL
+                    UNION
+                    SELECT miner4 as miner_id FROM file_assignments WHERE miner4 IS NOT NULL
+                    UNION
+                    SELECT miner5 as miner_id FROM file_assignments WHERE miner5 IS NOT NULL
+                ) miners
                 ORDER BY node_id
             """
             )
