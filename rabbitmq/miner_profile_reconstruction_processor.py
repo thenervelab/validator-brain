@@ -136,10 +136,10 @@ class MinerProfileReconstructionProcessor:
         """Lookup coldkey for a miner from the registration table"""
         async with self.db_pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT coldkey FROM registration WHERE node_id = $1",
+                "SELECT owner_account FROM registration WHERE node_id = $1",
                 node_id,
             )
-            return row["coldkey"] if row else None
+            return row["owner_account"] if row else None
 
     async def send_to_queue(self, profile_data: dict[str, Any]) -> None:
         """Send profile data to RabbitMQ queue"""
@@ -167,9 +167,9 @@ class MinerProfileReconstructionProcessor:
             file_count = len(files)
             total_size = sum(file_data.get("size", 0) for file_data in files)
             
-            # Log total size for this miner with coldkey
+            # Log total size for this miner with owner account (coldkey)
             size_gb = total_size / (1024**3) if total_size > 0 else 0
-            logger.info(f"📊 MINER_PROFILE_SIZE: {node_id} (coldkey: {coldkey}) has {file_count} files totaling {total_size:,} bytes ({size_gb:.2f} GB)")
+            logger.info(f"📊 MINER_PROFILE_SIZE: {node_id} (owner: {coldkey}) has {file_count} files totaling {total_size:,} bytes ({size_gb:.2f} GB)")
 
             # Skip miners with no files
             if file_count == 0:
