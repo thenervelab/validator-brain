@@ -7,7 +7,7 @@ and storage request submissions during validator epochs.
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from substrateinterface import Keypair, SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
@@ -24,7 +24,7 @@ def string_to_bounded_vec(s: str, max_length: int = 256) -> bytes:
     return s.encode("utf-8")[:max_length]
 
 
-def load_validator_keypair() -> Optional[Keypair]:
+def load_validator_keypair() -> Keypair | None:
     """Load validator keypair from environment variable. Supports proxy account configurations."""
     validator_seed = os.getenv("VALIDATOR_SEED")
     expected_account = os.getenv("VALIDATOR_ACCOUNT_ID")
@@ -968,8 +968,8 @@ async def submit_unpin_requests_to_blockchain(db_pool, miner_profiles: list[dict
         logger.info("✅ Successfully submitted unpin requests to blockchain")
         return True
 
-    except Exception as e:
-        logger.error(f"❌ Error during unpin requests submission: {e}")
+    except Exception:
+        logger.exception("❌ Error during unpin requests submission")
         return False
 
 
