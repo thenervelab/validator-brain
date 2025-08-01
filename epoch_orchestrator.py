@@ -941,9 +941,12 @@ class EpochOrchestrator:
 
             logger.info("📊 Miner profile content analysis:")
             logger.info(f"   - {len(miner_profiles)} total miner profiles")
-            logger.info(
-                f"   - {profiles_with_files} profiles with files ({profiles_with_files / len(miner_profiles) * 100:.1f}%)"
-            )
+            if len(miner_profiles) > 0:
+                logger.info(
+                    f"   - {profiles_with_files} profiles with files ({profiles_with_files / len(miner_profiles) * 100:.1f}%)"
+                )
+            else:
+                logger.info(f"   - {profiles_with_files} profiles with files (0 total profiles)")
             logger.info(f"   - {total_files_in_profiles} total files in all profiles")
 
             if profiles_with_files == 0 and total_files_in_profiles == 0:
