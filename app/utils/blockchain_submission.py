@@ -780,17 +780,6 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
 
             logger.info(f"✅ Collected {len(unpin_requests)} unpin requests to submit to blockchain...")
 
-            # Mark them as processed
-            if unpin_requests:
-                await conn.execute(
-                    """
-                    UPDATE processed_unpin_requests 
-                    SET status = 'processed' 
-                    WHERE status = 'unprocessed'
-                    """
-                )
-                logger.info(f"Marked {len(unpin_requests)} unpin requests as processed")
-
             return unpin_requests
 
     except Exception as e:
@@ -847,8 +836,7 @@ async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]])
                 "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
             }
             formatted_requests.append(formatted_req)
-
-        logger.info(f"Formatted {len(formatted_requests)} unpin request(s)")
+            logger.info(f"Adding unpin request for submission {formatted_req}")
 
         # Compose the call
         call = substrate.compose_call(
@@ -872,6 +860,43 @@ async def call_update_unpin_and_storage_requests(requests: list[dict[str, Any]])
     finally:
         if substrate:
             substrate.close()
+
+
+async def mark_unpin_requests_as_completed(db_pool, unpin_requests: list[dict[str, Any]]) -> bool:
+    """
+    Mark the submitted unpin requests as completed in the database.
+
+    Args:
+        db_pool: Database connection pool
+        unpin_requests: List of submitted unpin requests
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            if unpin_requests:
+                # Get unique request IDs that were successfully submitted
+                request_ids = [
+                    f"{req['storage_request_owner']}_{req['storage_request_file_hash']}" for req in unpin_requests
+                ]
+                await conn.execute(
+                    """
+                    UPDATE processed_unpin_requests 
+                    SET status = 'processed' 
+                    WHERE request_id = ANY($1::text[])
+                    AND status = 'unprocessed'
+                    """,
+                    request_ids,
+                )
+                logger.info(
+                    f"Marked {len(unpin_requests)} unpin requests as processed after successful blockchain submission"
+                )
+            return True
+
+    except Exception as e:
+        logger.error(f"Error marking unpin requests as completed: {e}")
+        return False
 
 
 async def submit_unpin_requests_to_blockchain(db_pool) -> bool:
@@ -898,6 +923,9 @@ async def submit_unpin_requests_to_blockchain(db_pool) -> bool:
 
         # Submit to blockchain
         await call_update_unpin_and_storage_requests(unpin_requests)
+
+        # Mark as completed only after successful submission
+        await mark_unpin_requests_as_completed(db_pool, unpin_requests)
 
         logger.info("✅ Successfully submitted unpin requests to blockchain")
         return True
