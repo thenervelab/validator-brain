@@ -139,7 +139,7 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
     try:
         # CRITICAL: Check timing to avoid late submission errors
         try:
-            temp_substrate = SubstrateInterface(url=os.getenv("NODE_URL", "wss://rpc.hippius.network"))
+            temp_substrate = SubstrateInterface(url=os.environ["NODE_URL"])
             current_epoch, current_block, temp_substrate = get_current_epoch_info(temp_substrate)
             block_position = get_epoch_block_position(current_block)
             temp_substrate.close()
@@ -163,7 +163,7 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
             logger.info("Proceeding with submission anyway...")
 
         # Get node URL from environment
-        node_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+        node_url = os.environ["NODE_URL"]
 
         # Initialize Substrate interface with retry logic
         max_retries = 3
@@ -645,7 +645,7 @@ def call_update_pin_check_metrics(miner_metrics: list[dict[str, Any]]) -> bool:
 
     try:
         # Get node URL from environment
-        node_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+        node_url = os.environ["NODE_URL"]
 
         # Initialize Substrate interface with retry logic
         max_retries = 3
@@ -819,7 +819,7 @@ async def call_update_unpin_and_storage_requests(
 
     try:
         # Initialize Substrate interface
-        node_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+        node_url = os.environ["NODE_URL"]
         substrate = SubstrateInterface(url=node_url, use_remote_preset=True)
         logger.info(f"Connected to Substrate node at {node_url}")
 

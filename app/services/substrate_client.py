@@ -126,7 +126,7 @@ class SubstrateClient:
 
     def __init__(self):
         """Initialize the Substrate client."""
-        self.node_url = os.environ.get("NODE_URL", "wss://rpc.hippius.network")
+        self.node_url = os.environ["NODE_URL"]
         self.substrate = None
         self.connected = False
         self._shutdown_event = asyncio.Event()

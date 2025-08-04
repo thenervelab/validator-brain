@@ -197,7 +197,7 @@ async def compute_deregistration_report(
     )
 
     # Connect to registration network (from NODE_URL env var)
-    registration_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+    registration_url = os.environ["NODE_URL"]
     registration_substrate = SubstrateInterface(
         url=registration_url,
         use_remote_preset=True,

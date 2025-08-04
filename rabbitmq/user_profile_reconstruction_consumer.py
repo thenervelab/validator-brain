@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-Consumer that reconstructs user profiles as JSON and publishes them to a remote IPFS node.
-This consumer processes messages from the reconstruction queue, builds the complete profile JSON,
-and pins it to the remote IPFS node at store.hippius.network.
-"""
-
 import asyncio
 import json
 import logging
@@ -33,7 +27,7 @@ class UserProfileReconstructionConsumer:
     def __init__(self):
         self.rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         self.queue_name = "user_profile_reconstruction"
-        self.remote_ipfs_url = os.getenv("REMOTE_IPFS_URL", "https://store.hippius.network")
+        self.remote_ipfs_url = os.environ["IPFS_NODE_URL"]
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
         self.http_client = None

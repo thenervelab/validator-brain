@@ -87,7 +87,7 @@ Edit your `.env` file with the following required settings:
 export VALIDATOR_ACCOUNT_ID="your_validator_account_id_here"
 
 # Blockchain RPC endpoint (REQUIRED)
-export NODE_URL="wss://rpc.hippius.network"
+export NODE_URL="wss://your_url"
 
 # Database connection (REQUIRED)
 export DATABASE_URL="postgresql://user:password@localhost:5432/substrate_fetcher"

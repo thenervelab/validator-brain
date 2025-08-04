@@ -15,7 +15,8 @@ RABBITMQ_VHOST=/
 RABBITMQ_URL=amqp://admin:admin@localhost:5672/
 
 # substrate
-NODE_URL=wss://rpc.hippius.network
+NODE_URL=wss://your_url
 
 # ipfs
 IPFS_NODE_URL=http://localhost:5001
+DHT_NODE_URL=http://localhost:5001

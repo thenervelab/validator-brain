@@ -29,7 +29,7 @@ class UserProfileReconstructionProcessor:
             "DATABASE_URL",
             "postgresql://user:password@localhost:5432/substrate_fetcher",
         )
-        self.node_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
+        self.node_url = os.environ["NODE_URL"]
         self.queue_name = "user_profile_reconstruction"
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
