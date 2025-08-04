@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 packages = ["db", "app", "substrate_fetcher"]
 
 [project]
-name = "ipfs-service-validator"
+name = "hippius-validator"
 version = "0.0.1"
 description = "IPFS Service Validator for Substrate-based blockchain network (Bittensor/Hippius Network)"
 requires-python = ">=3.9"
