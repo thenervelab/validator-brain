@@ -224,7 +224,7 @@ async def compute_deregistration_report(
 
     primary_nodes = {}
     secondary_nodes = []
-    for node_id, details in primary_nodes_pallet:
+    for node_id, details in primary_nodes_pallet.items():
         if node_id["owner"] in hippius_to_deregister_coldkeys:  # prepare to deregister
             logger.info(f"Found primary {node_id=} ({details['owner']}) to deregister...")
             primary_nodes[node_id] = Node(
