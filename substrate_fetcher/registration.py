@@ -166,19 +166,15 @@ def _fetch_node_relationships(
         return {}
 
 
-class ColdKey(BaseModel):
-    id: str
-
-
 class Node(BaseModel):
     id: str
     ipfs_peer_id: str
-    owner: ColdKey
+    owner: str
     hierarchy: str  # primary / secondary
 
 
 class DeregistrationReport(BaseModel):
-    coldkeys: list[ColdKey]
+    coldkeys: list[str]
     primary_nodes: list[Node]
     linked_nodes: list[Node]
 
