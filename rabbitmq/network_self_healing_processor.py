@@ -53,23 +53,25 @@ async def submit_deregistration_report(substrate, keypair, node_ids):
     """Submit deregistration report transaction."""
     logger.info(f"deregistration node_ids={node_ids}")
 
-    call = substrate.compose_call(
-        call_module="Registration",
-        call_function="submit_deregistration_report",
-        call_params={
-            "node_ids": node_ids,
-        },
-    )
-    extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
+    return None
 
-    receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-
-    if receipt.is_success:
-        logger.info(f"Hippius deregistration successful: Hash {receipt.extrinsic_hash}")
-    else:
-        logger.error(f"Hippius deregistration failed: {receipt.error_message}")
-
-    return receipt
+    # call = substrate.compose_call(
+    #     call_module="Registration",
+    #     call_function="submit_deregistration_report",
+    #     call_params={
+    #         "node_ids": node_ids,
+    #     },
+    # )
+    # extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
+    #
+    # receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+    #
+    # if receipt.is_success:
+    #     logger.info(f"Hippius deregistration successful: Hash {receipt.extrinsic_hash}")
+    # else:
+    #     logger.error(f"Hippius deregistration failed: {receipt.error_message}")
+    #
+    # return receipt
 
 
 async def batch_submit(substrate, keypair, node_ids, batch_size=5):
@@ -84,9 +86,9 @@ async def batch_submit(substrate, keypair, node_ids, batch_size=5):
 
         logger.info(f"📦 Processing batch {batch_num}/{total_batches} with {len(batch)} node IDs")
 
-        receipt = await submit_deregistration_report(substrate, keypair, batch)
+        is_success = await submit_deregistration_report(substrate, keypair, batch)
 
-        if receipt and receipt.is_success:
+        if is_success:
             successful_batches += 1
             logger.info(f"✅ Batch {batch_num}/{total_batches} submitted successfully")
         else:
@@ -155,18 +157,20 @@ class NetworkSelfHealingProcessor:
         """Delete deregistered miners and cleanup orphaned records."""
         if not deregistered_miners:
             return 0
-
+        logger.info(f"Cleaning up {len(deregistered_miners)} from the assigned files and database")
         async with self.db_pool.acquire() as conn:
             total_cleaned = 0
 
             for miner_node_id in deregistered_miners:
+                logger.info(f"Deleting {miner_node_id=} from assignments")
+
                 # Clean up orphaned monitoring records first
                 await conn.execute("DELETE FROM node_metrics WHERE miner_id = $1", miner_node_id)
                 await conn.execute("DELETE FROM file_failures WHERE miner_id = $1", miner_node_id)
                 await conn.execute("DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id)
 
                 # Remove miner from file assignments (set miner columns to NULL)
-                await conn.execute(
+                files_unassigned = await conn.execute(
                     """
                     UPDATE file_assignments SET
                         miner1 = CASE WHEN miner1 = $1 THEN NULL ELSE miner1 END,
@@ -179,6 +183,7 @@ class NetworkSelfHealingProcessor:
                     miner_node_id,
                 )
 
+                logger.info(f"Cleared '{files_unassigned=}' from assignments for {miner_node_id=}")
                 # Delete from registration table
                 result = await conn.execute("DELETE FROM registration WHERE node_id = $1", miner_node_id)
                 if result == "DELETE 1":
