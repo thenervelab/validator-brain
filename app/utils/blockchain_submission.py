@@ -218,7 +218,6 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
         # Format the requests to match the StorageRequestUpdate structure
         formatted_requests = []
         for req in requests:
-            logger.info(f"{req=}")
             formatted_req = {
                 "storage_request_owner": req["storage_request_owner"],
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
@@ -227,7 +226,7 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
             }
             formatted_requests.append(formatted_req)
 
-        logger.info(f"Formatted {len(formatted_requests)} original storage requests (for closing)")
+        logger.info(f"Closing on chain {len(formatted_requests)} storage requests")
 
         # Format miner profiles to match MinerProfileItem structure with enhanced validation
         formatted_miner_profiles = []
@@ -772,7 +771,9 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
             for row in rows:
                 user = row["storage_request_owner"]
                 affected_miners = row["affected_miners"] or []
-                logger.info(f"Unpin request for {user} with {len(affected_miners)} affected miners: {affected_miners}")
+                logger.info(
+                    f"Closing unpin request on chain for {row['cid']=} {user=} {affected_miners=} {row['storage_request_file_hash']=}"
+                )
 
                 unpin_requests.append(
                     {

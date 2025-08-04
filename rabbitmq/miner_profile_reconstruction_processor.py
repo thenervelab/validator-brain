@@ -232,7 +232,7 @@ class MinerProfileReconstructionProcessor:
         total_files = sum(r.get("file_count", 0) for r in successful_results)
         total_size_bytes = sum(r.get("total_size", 0) for r in successful_results)
         total_size_gb = total_size_bytes / (1024**3) if total_size_bytes > 0 else 0
-        
+
         # Calculate averages
         avg_files_per_miner = total_files / successful_profiles if successful_profiles > 0 else 0
         avg_size_per_miner_gb = total_size_gb / successful_profiles if successful_profiles > 0 else 0
@@ -244,7 +244,7 @@ class MinerProfileReconstructionProcessor:
         logger.info(f"   ❌ Failed: {failed_profiles}")
         logger.info(f"   ⏭️ Skipped (no files): {skipped_profiles}")
         logger.info(f"   📋 Total processed: {len(profiles)}")
-        
+
         # Aggregated statistics
         if successful_profiles > 0:
             logger.info("📊 Aggregated miner statistics:")

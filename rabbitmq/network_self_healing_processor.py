@@ -12,7 +12,7 @@ import os
 import sys
 from typing import Any
 
-from substrate_fetcher.registration import get_deregistered_coldkeys
+from substrate_fetcher.registration import compute_deregistration_report
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -49,33 +49,17 @@ def connect_to_node(ws_url):
         raise
 
 
-async def submit_deregistration_report(substrate, keypair, ipfs_peer_ids):
+async def submit_deregistration_report(substrate, keypair, node_ids):
     """Submit deregistration report transaction."""
-    logger.info(f"deregistration ipfs_peer_ids={ipfs_peer_ids}")
-
-    # Map IPFS peer IDs to node_ids from registration table
-    db_pool = get_db_pool()
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT node_id FROM registration WHERE ipfs_peer_id = ANY($1::text[])",
-            ipfs_peer_ids,
-        )
-        substrate_node_ids = [row["node_id"] for row in rows]
-
-    logger.info(f"Mapped {len(ipfs_peer_ids)} IPFS peer IDs to {len(substrate_node_ids)} substrate node IDs")
-
-    if not substrate_node_ids:
-        logger.warning("No substrate node IDs found for the given IPFS peer IDs")
-        return None
+    logger.info(f"deregistration node_ids={node_ids}")
 
     call = substrate.compose_call(
         call_module="Registration",
         call_function="submit_deregistration_report",
         call_params={
-            "node_ids": substrate_node_ids,
+            "node_ids": node_ids,
         },
     )
-
     extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
 
     receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
@@ -113,49 +97,6 @@ async def batch_submit(substrate, keypair, node_ids, batch_size=5):
         f"📊 Batch processing complete: {successful_batches} successful, {failed_batches} failed out of {total_batches} total batches"
     )
     return successful_batches, failed_batches
-
-
-async def grace(node_ids) -> None:
-    """
-    Grace period check for deregistered node_ids.
-    Increments unsuccessful_registration_checks counter and removes nodes
-    that have been checked less than 10 times from the processing list.
-    """
-    if not node_ids:
-        return
-
-    db_pool = get_db_pool()
-    nodes_to_remove = []
-
-    async with db_pool.acquire() as conn:
-        for node_id in list(node_ids):
-            # Insert or update the deregistered node record
-            result = await conn.fetchrow(
-                """
-                INSERT INTO deregistered_node_ids (node_id, unsuccessful_registration_checks, updated_at)
-                VALUES ($1, 1, CURRENT_TIMESTAMP)
-                ON CONFLICT (node_id) 
-                DO UPDATE SET 
-                    unsuccessful_registration_checks = deregistered_node_ids.unsuccessful_registration_checks + 1,
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING unsuccessful_registration_checks
-                """,
-                node_id,
-            )
-
-            check_count = result["unsuccessful_registration_checks"]
-
-            # If less than 10 checks, remove from processing list (grace period)
-            if check_count < 3:
-                nodes_to_remove.append(node_id)
-                logger.info(f"🕐 Gracing node_id {node_id} (check #{check_count}/10)")
-
-    # Remove graced nodes from the processing list
-    for node_id in nodes_to_remove:
-        node_ids.discard(node_id)
-
-    if nodes_to_remove:
-        logger.info(f"🕐 Graced {len(nodes_to_remove)} nodes, {len(node_ids)} remaining for processing")
 
 
 class NetworkSelfHealingProcessor:
@@ -258,40 +199,26 @@ class NetworkSelfHealingProcessor:
             # Connect to RabbitMQ
             await self.connect_rabbitmq()
 
-            bt_client = SubstrateInterface(
-                url="wss://entrypoint-finney.opentensor.ai:443",
-                ss58_format=42,
-            )
-
-            # Connect to registration network (from NODE_URL env var)
-            registration_url = os.getenv("NODE_URL", "wss://rpc.hippius.network")
-            registration_substrate = SubstrateInterface(
-                url=registration_url,
-                use_remote_preset=True,
-            )
-
             # Check for deregistered miners and clean them up
-            dereged_coldkeys = get_deregistered_coldkeys(bt_client, registration_substrate)
+            deregistration = await compute_deregistration_report()
 
-            if dereged_coldkeys:
-                dereged_node_ids = set(sum(dereged_coldkeys.values(), []))
-
-                logger.info(f"🚨 Found {len(dereged_coldkeys)=} and {len(dereged_node_ids)=}")
-                await grace(dereged_node_ids)
-                logger.info(f"{len(dereged_node_ids)=} after grace applied...")
-
-                cleaned_count = await self.cleanup_deregistered_miners(list(dereged_node_ids))
+            if deregistration.coldkeys:
+                primary_node_ids = [miner.id for miner in deregistration.primary_nodes]
+                primary_ipfs_ids = [miner.ipfs_peer_id for miner in deregistration.primary_nodes]
+                secondary_ipfs_ids = [miner.ipfs_peer_id for miner in deregistration.linked_nodes]
+                all_ipfs_ids = set(primary_ipfs_ids + secondary_ipfs_ids)
+                cleaned_count = await self.cleanup_deregistered_miners(list(all_ipfs_ids))
                 logger.info(f"🧹 Cleaned up {cleaned_count} deregistered miners")
 
                 # Submit deregistration report to Hippius blockchain
                 validator_seed = os.getenv("VALIDATOR_SEED")
                 keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
 
-                if dereged_node_ids:
+                if primary_node_ids:
                     # Clean and decode node IDs
                     clean_node_ids = [
                         n.decode() if isinstance(n, bytes) else n
-                        for n in dereged_node_ids
+                        for n in primary_node_ids
                         if (n.decode() if isinstance(n, bytes) else n).startswith("12D3Koo")
                     ]
 
@@ -300,7 +227,11 @@ class NetworkSelfHealingProcessor:
                     )
 
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
-                    successful_batches, failed_batches = await batch_submit(hippius_substrate, keypair, clean_node_ids)
+                    successful_batches, failed_batches = await batch_submit(
+                        hippius_substrate,
+                        keypair,
+                        clean_node_ids,
+                    )
 
                     if successful_batches > 0:
                         logger.info("✅ Hippius deregistration reports submitted successfully")

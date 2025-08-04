@@ -1195,8 +1195,6 @@ class EpochOrchestrator:
                 # Proceed anyway to avoid blocking the validator
                 self.health_scores_processed = True
 
-            await self.network_self_healing_routine()
-
             return
 
         # Phase 3: SEQUENTIAL File Assignment (immediately after self-healing complete)
@@ -1593,9 +1591,11 @@ class EpochOrchestrator:
         CRITICAL: This should run AFTER health checks to use fresh health data.
         Uses only the RabbitMQ-based processor system.
         """
-        logger.info("🛠️ Starting network self-healing routine")
         await network_self_healing_processor.main()
-        await self.wait_for_queues_empty(["network_self_healing"], 300)
+        await self.wait_for_queues_empty(
+            ["network_self_healing"],
+            300,
+        )
 
     async def epoch_cleanup(self) -> bool:
         """
