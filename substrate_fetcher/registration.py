@@ -99,9 +99,11 @@ def _fetch_primary_nodes(registration_substrate: SubstrateInterface) -> dict:
     primary_nodes = {}
     for node_id, node_info in coldkey_reg_data.items():
         if node_info and isinstance(node_info, dict) and "owner" in node_info:
+            logger.info(f"Primary node {node_id=} {node_info=}")
+
             primary_nodes[node_id] = {
                 "owner": node_info["owner"],
-                "ipfs_peer_id": node_info["ipfsNodeId"],
+                "ipfs_peer_id": node_info["ipfs_node_id"],
             }
 
     return primary_nodes
@@ -122,9 +124,11 @@ def _fetch_secondary_nodes(registration_substrate: SubstrateInterface) -> dict:
     primary_nodes = {}
     for node_id, node_info in hotkey_reg_data.items():
         if node_info and isinstance(node_info, dict) and "owner" in node_info:
+            logger.info(f"Secondary node {node_id=} {node_info=}")
+
             primary_nodes[node_id] = {
                 "owner": node_info["owner"],
-                "ipfs_peer_id": node_info["ipfsNodeId"],
+                "ipfs_peer_id": node_info["ipfs_node_id"],
             }
 
     return primary_nodes
