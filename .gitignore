@@ -133,4 +133,4 @@ dmypy.json
 keystore/
 logs/
 validator.log
-.dbmate.schema.yml
+.dbmate.schema.yml.env
