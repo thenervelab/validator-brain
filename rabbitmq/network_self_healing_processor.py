@@ -53,25 +53,29 @@ async def submit_deregistration_report(substrate, keypair, node_ids):
     """Submit deregistration report transaction."""
     logger.info(f"deregistration node_ids={node_ids}")
 
-    return None
+    call = substrate.compose_call(
+        call_module="Registration",
+        call_function="submit_deregistration_report",
+        call_params={
+            "node_ids": node_ids,
+        },
+    )
+    extrinsic = substrate.create_signed_extrinsic(
+        call=call,
+        keypair=keypair,
+    )
 
-    # call = substrate.compose_call(
-    #     call_module="Registration",
-    #     call_function="submit_deregistration_report",
-    #     call_params={
-    #         "node_ids": node_ids,
-    #     },
-    # )
-    # extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
-    #
-    # receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-    #
-    # if receipt.is_success:
-    #     logger.info(f"Hippius deregistration successful: Hash {receipt.extrinsic_hash}")
-    # else:
-    #     logger.error(f"Hippius deregistration failed: {receipt.error_message}")
-    #
-    # return receipt
+    receipt = substrate.submit_extrinsic(
+        extrinsic,
+        wait_for_inclusion=True,
+    )
+
+    if receipt.is_success:
+        logger.info(f"Hippius deregistration successful: Hash {receipt.extrinsic_hash}")
+    else:
+        logger.error(f"Hippius deregistration failed: {receipt.error_message}")
+
+    return receipt.is_success
 
 
 async def batch_submit(substrate, keypair, node_ids, batch_size=5):
