@@ -213,6 +213,7 @@ async def compute_deregistration_report(
     hippius_registered_coldkeys = [item["owner"] for item in primary_nodes_pallet.values()]
     for key in hippius_registered_coldkeys:
         if key not in bittensor_coldkeys:
+            logger.warning(f"Found deregistered cold {key=}")
             hippius_to_deregister_coldkeys.add(key)
 
     # grace the keys for a period
