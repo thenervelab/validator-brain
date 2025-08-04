@@ -772,7 +772,7 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
                 user = row["storage_request_owner"]
                 affected_miners = row["affected_miners"] or []
                 logger.info(
-                    f"Closing unpin request on chain for {row['cid']=} {user=} {affected_miners=} {row['storage_request_file_hash']=}"
+                    f"Closing unpin request on chain for {user=} {affected_miners=} {row['storage_request_file_hash']=}"
                 )
 
                 unpin_requests.append(
@@ -789,8 +789,8 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
 
             return unpin_requests
 
-    except Exception as e:
-        logger.error(f"Error collecting unpin requests for submission: {e}")
+    except Exception:
+        logger.exception("Error collecting unpin requests for submission")
         return []
 
 
