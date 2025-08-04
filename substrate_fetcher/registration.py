@@ -214,7 +214,7 @@ async def compute_deregistration_report(
     links_pallet = _fetch_node_relationships(registration_substrate)
 
     hippius_to_deregister_coldkeys = set()
-    hippius_registered_coldkeys = [item["owner"] for item in primary_nodes_pallet]
+    hippius_registered_coldkeys = [item["owner"] for item in primary_nodes_pallet.values()]
     for key in hippius_registered_coldkeys:
         if key not in bittensor_coldkeys:
             hippius_to_deregister_coldkeys.add(key)
