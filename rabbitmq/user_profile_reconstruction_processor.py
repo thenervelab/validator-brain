@@ -17,10 +17,8 @@ import asyncpg
 from aio_pika import Message
 from substrateinterface import SubstrateInterface
 
-# Setup logging
+from app.utils.config import DEBUG_USER_PROFILES
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -613,7 +611,7 @@ class UserProfileReconstructionProcessor:
                 }
 
                 # Debug logging for specific user ID
-                if owner in ("5EvT2ccmmY6t3q1U3PXwjzwFBjE2KzvWdC6mMsCvBbiBDs55",):
+                if owner in DEBUG_USER_PROFILES:
                     debug_filename = f"/tmp/debug_profile_{owner}_{self.current_block}.json"
                     async with aiofiles.open(debug_filename, "w") as f:
                         await f.write(json.dumps(message_data, indent=2))

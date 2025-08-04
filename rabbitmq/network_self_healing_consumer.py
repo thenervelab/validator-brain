@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, List, Any
+from typing import Any
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +27,7 @@ import aio_pika
 from aio_pika import IncomingMessage
 from dotenv import load_dotenv
 
-from app.db.connection import init_db_pool, close_db_pool, get_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 
 # Load environment variables
 load_dotenv()
@@ -35,9 +35,7 @@ load_dotenv()
 # Setup logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -63,7 +61,7 @@ class NetworkSelfHealingConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def find_healthy_miners(self, exclude_miners: List[str], needed_count: int) -> List[str]:
+    async def find_healthy_miners(self, exclude_miners: list[str], needed_count: int) -> list[str]:
         """
         Find healthy miners to fill empty assignment slots.
 
@@ -76,8 +74,7 @@ class NetworkSelfHealingConsumer:
         """
         async with self.db_pool.acquire() as conn:
             # Get all online storage miners with stats
-            all_miners = await conn.fetch(
-                """
+            all_miners = await conn.fetch("""
                 SELECT 
                     r.node_id,
                     r.status,
@@ -86,14 +83,13 @@ class NetworkSelfHealingConsumer:
                     COALESCE(ms.health_score, 0) as health_score
                 FROM registration r
                 LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
-                WHERE r.status = 'Online'
+                WHERE r.status = 'active'
                 AND r.node_type = 'StorageMiner'
                 ORDER BY 
                     COALESCE(ms.health_score, 0) DESC,
                     COALESCE(ms.total_files_pinned, 0) ASC,
                     r.created_at ASC
-            """
-            )
+            """)
 
             # Filter in Python for better readability
             exclude_set = set(exclude_miners)
@@ -119,24 +115,18 @@ class NetworkSelfHealingConsumer:
                     break
 
             if len(healthy_miners) < needed_count:
-                logger.warning(
-                    f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria"
-                )
-                logger.warning(
-                    f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB"
-                )
+                logger.warning(f"⚠️ Only found {len(healthy_miners)}/{needed_count} healthy miners meeting criteria")
+                logger.warning(f"   Online miners: {len(all_miners)}, Health threshold: 20.0, Capacity limit: 10GB")
                 logger.warning(f"   Excluded miners: {len(exclude_set)}")
 
                 # Additional debugging info
                 offline_count = len([m for m in all_miners if m["health_score"] < 20.0])
                 overloaded_count = len([m for m in all_miners if m["total_size"] >= 10737418240])
-                logger.warning(
-                    f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded"
-                )
+                logger.warning(f"   Miners filtered out: {offline_count} unhealthy, {overloaded_count} overloaded")
 
             return healthy_miners
 
-    async def process_file_healing(self, healing_data: Dict[str, Any]) -> bool:
+    async def process_file_healing(self, healing_data: dict[str, Any]) -> bool:
         """
         Process a file healing task.
 
@@ -150,7 +140,6 @@ class NetworkSelfHealingConsumer:
         owner = healing_data.get("owner")
         filename = healing_data.get("filename", "")
         file_size_bytes = healing_data.get("file_size_bytes", 0)
-        current_miners = healing_data.get("current_miners", [])
 
         if not cid or not owner:
             logger.error(f"Invalid healing data: missing cid or owner. Data: {healing_data}")
@@ -163,14 +152,10 @@ class NetworkSelfHealingConsumer:
                 async with conn.transaction():
                     # 1. Acquire advisory lock for this specific file (prevents parallel processing)
                     cid_hash = hash(cid) % 2147483647  # Convert CID to integer for advisory lock
-                    lock_acquired = await conn.fetchval(
-                        "SELECT pg_try_advisory_xact_lock($1)", cid_hash
-                    )
+                    lock_acquired = await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", cid_hash)
 
                     if not lock_acquired:
-                        logger.info(
-                            f"🔒 File {cid[:16]}... is being processed by another consumer, skipping"
-                        )
+                        logger.info(f"🔒 File {cid[:16]}... is being processed by another consumer, skipping")
                         return True  # Not an error, just skip
 
                     # 2. Get current assignment state (now protected by advisory lock)
@@ -294,13 +279,9 @@ class NetworkSelfHealingConsumer:
                 success = await self.process_file_healing(healing_data)
 
                 if success:
-                    logger.debug(
-                        f"✅ Successfully processed healing for {healing_data.get('cid', 'unknown')}"
-                    )
+                    logger.debug(f"✅ Successfully processed healing for {healing_data.get('cid', 'unknown')}")
                 else:
-                    logger.error(
-                        f"❌ Failed to process healing for {healing_data.get('cid', 'unknown')}"
-                    )
+                    logger.error(f"❌ Failed to process healing for {healing_data.get('cid', 'unknown')}")
 
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to decode message: {e}")

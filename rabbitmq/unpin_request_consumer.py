@@ -85,71 +85,87 @@ class UnpinRequestConsumer:
     async def _unpin_single_file(self, cid: str, owner: str, conn):
         """Helper to unpin a single CID and clean up database entries."""
         logger.info(f"UNPINNING FROM DATABASE {cid=} {owner=}")
-        # Check if file exists and belongs to this owner
+
+        # Get file record and extract affected miners before deletion
         file_record = await conn.fetchrow(
-            """
-            SELECT fa.cid, fa.owner, f.size, fa.miner1, fa.miner2, fa.miner3, fa.miner4, fa.miner5
-            FROM file_assignments fa
-            JOIN files f ON fa.cid = f.cid
-            WHERE fa.cid = $1 AND fa.owner = $2
-        """,
+            """SELECT fa.miner1, fa.miner2, fa.miner3, fa.miner4, fa.miner5
+               FROM file_assignments fa
+               JOIN files f ON fa.cid = f.cid
+               WHERE fa.cid = $1 AND fa.owner = $2""",
             cid,
             owner,
         )
 
         if not file_record:
             logger.warning(f"Did not find {cid=} {owner=} to delete from database")
-            return False
+            return []
 
+        # Extract non-null miner IDs
+        affected_miners = [file_record[f"miner{i}"] for i in range(1, 6) if file_record[f"miner{i}"]]
+
+        logger.info(f"Found {len(affected_miners)} affected miners for {cid=}: {affected_miners}")
+
+        # Delete all related data in single transaction
         async with conn.transaction():
-            # Delete from files table (CASCADE will handle file_assignments)
+            # Delete from files table (CASCADE handles file_assignments)
             await conn.execute("DELETE FROM files WHERE cid = $1", cid)
 
-            # Clean up profile entries
-            await conn.execute("DELETE FROM user_profile WHERE file_hash = $1 AND owner = $2", cid, owner)
-            await conn.execute("DELETE FROM miner_profile WHERE file_hash = $1", cid)
+            # Clean up profile and monitoring data
+            cleanup_queries = [
+                ("DELETE FROM user_profile WHERE file_hash = $1 AND owner = $2", cid, owner),
+                ("DELETE FROM miner_profile WHERE file_hash = $1", cid),
+                ("DELETE FROM pending_assignment_file WHERE cid = $1", cid),
+                ("DELETE FROM pending_user_profile WHERE cid = $1", cid),
+                ("DELETE FROM pending_miner_profile WHERE cid = $1", cid),
+                ("DELETE FROM file_failures WHERE cid = $1", cid),
+                ("DELETE FROM storage_requests WHERE file_hash = $1 AND owner = $2", cid, owner),
+            ]
 
-            # Clean up pending entries
-            await conn.execute("DELETE FROM pending_assignment_file WHERE cid = $1", cid)
-            await conn.execute("DELETE FROM pending_user_profile WHERE cid = $1", cid)
-            await conn.execute("DELETE FROM pending_miner_profile WHERE cid = $1", cid)
-
-            # Clean up monitoring data
-            await conn.execute("DELETE FROM file_failures WHERE cid = $1", cid)
-
-            # Clean up storage requests if still pending
-            await conn.execute("DELETE FROM storage_requests WHERE file_hash = $1 AND owner = $2", cid, owner)
+            for query, *params in cleanup_queries:
+                await conn.execute(query, *params)
 
         logger.info(f"Successfully deleted {cid=} {owner=} from all tables")
+        return affected_miners
 
     async def _process_manifest_files_parallel(self, manifest_data: list, owner: str, conn):
         """Process manifest files for unpinning in parallel."""
         if not manifest_data:
-            return
-
-        # Process all files in parallel with semaphore
-        semaphore = asyncio.Semaphore(3)
-
-        async def unpin_with_semaphore(cid, owner, conn):
-            async with semaphore:
-                await self._unpin_single_file(cid, owner, conn)
+            logger.warning(f"No files to process, empty {manifest_data=}")
+            return []
 
         logger.info(f"🗑️ Unpinning {len(manifest_data)} files from {owner=}")
 
-        tasks = [
-            unpin_with_semaphore(
-                item["cid"],
-                item["owner"],
-                conn,
-            )
-            for item in manifest_data
-        ]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Process files in parallel with semaphore
+        semaphore = asyncio.Semaphore(3)
+
+        async def unpin_with_semaphore(item):
+            async with semaphore:
+                return await self._unpin_single_file(
+                    item["cid"],
+                    item["owner"],
+                    conn,
+                )
+
+        # Execute all unpin operations
+        results = await asyncio.gather(
+            *[unpin_with_semaphore(item) for item in manifest_data],
+            return_exceptions=True,
+        )
+
+        # Collect unique affected miners from successful results
+        all_affected_miners = set()
+        for result in results:
+            if isinstance(result, list):
+                all_affected_miners.update(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Error unpinning file: {result}")
+
+        affected_miners_list = list(all_affected_miners)
+        logger.info(f"🗑️ Total unique affected miners: {len(affected_miners_list)} - {affected_miners_list}")
+        return affected_miners_list
 
     async def process_unpin_request(self, request_data: dict[str, Any]):
-        """
-        Process an unpin request, handling manifest CIDs from blockchain unpin requests.
-        """
+        """Process an unpin request, handling manifest CIDs from blockchain unpin requests."""
         owner = request_data.get("owner")
         file_hash_hex = request_data["file_hash"]
         request_id = f"{owner}_{file_hash_hex}"
@@ -157,53 +173,52 @@ class UnpinRequestConsumer:
 
         async with self.db_pool.acquire() as conn:
             # Check if this request exists and its status
-            existing_request = await conn.fetchrow("SELECT id, status FROM processed_unpin_requests WHERE request_id = $1", request_id)
+            existing_request = await conn.fetchrow(
+                "SELECT id, status FROM processed_unpin_requests WHERE request_id = $1", request_id
+            )
             if existing_request:
-                if existing_request['status'] == 'processed':
-                    # Reset processed requests back to unprocessed (they're appearing on blockchain again)
-                    await conn.execute("UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id)
-                    logger.info(f"🔄 RESET_TO_UNPROCESSED: request_id={request_id}... - blockchain shows it needs resubmission")
+                if existing_request["status"] == "processed":
+                    await conn.execute(
+                        "UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id
+                    )
+                    logger.debug(
+                        f"🔄 RESET_TO_UNPROCESSED: request_id={request_id}... - blockchain resubmission needed"
+                    )
                 else:
-                    logger.info(f"🔄 ALREADY_UNPROCESSED: request_id={request_id}... - skipping")
+                    logger.debug(f"🔄 ALREADY_UNPROCESSED: request_id={request_id}... - skipping")
                 return True
 
-            await conn.execute(
-                "INSERT INTO processed_unpin_requests (request_id, owner, file_hash, status) VALUES ($1, $2, $3, $4)",
-                request_id,
-                owner,
-                file_hash_hex,
-                "unprocessed",
-            )
-
+            # Fetch and parse manifest data
             manifest_data = await fetch_ipfs_content(cid)
-
             if not manifest_data:
                 logger.warning(f"Could not fetch manifest data for cid={cid} - treating as already processed")
                 return True
 
+            # Parse manifest JSON, fallback to single file if parsing fails
+            logger.info(f"Deserializing {manifest_data[:32]=}")
             try:
-                logger.info(f"Deserializing {manifest_data[:32]=}")
                 manifest_data = json.loads(manifest_data)
-            except (UnicodeDecodeError, JSONDecodeError) as e:  # it's probably not a manifest, just the cid to unpin
-                logger.error(
-                    f"Failed to decode unpin manifest JSON for request_id={request_id}, cid={cid}: {str(e)[:20]}"
-                )
-                manifest_data = [
-                    {
-                        "cid": cid,
-                        "owner": owner,
-                    }
-                ]
+            except (UnicodeDecodeError, JSONDecodeError):
+                logger.info(f"Not a JSON manifest for cid={cid}, treating as single file")
+                manifest_data = [{"cid": cid, "owner": owner}]
 
-            try:
-                await self._process_manifest_files_parallel(
-                    manifest_data,
-                    owner,
-                    conn,
-                )
-            except Exception as e:
-                logger.exception(f"Failed to process manifest for cid={cid}: {e}")
-                return True
+            # Process all files and collect affected miners
+            affected_miners = await self._process_manifest_files_parallel(manifest_data, owner, conn)
+
+            # Insert with all data in single transaction
+            await conn.execute(
+                """INSERT INTO processed_unpin_requests 
+                   (request_id, owner, file_hash, cid, affected_miners, status) 
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                request_id,
+                owner,
+                file_hash_hex,
+                cid,
+                affected_miners,
+                "unprocessed",
+            )
+
+            logger.info(f"✅ Processed unpin request {request_id} with {len(affected_miners)} affected miners")
 
         return True
 

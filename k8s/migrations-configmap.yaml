@@ -441,6 +441,43 @@ data:
     ALTER TABLE processed_unpin_requests
         ALTER COLUMN file_hash TYPE VARCHAR(255);
 
+  20250802000000_add_cid_to_processed_unpin_requests.sql: |-
+    -- migrate:up
+    -- Add cid column to processed_unpin_requests table
+
+    ALTER TABLE processed_unpin_requests
+        ADD COLUMN cid TEXT;
+
+    -- Create index for better query performance
+    CREATE INDEX idx_processed_unpin_requests_cid ON processed_unpin_requests (cid);
+
+    -- migrate:down
+    DROP INDEX IF EXISTS idx_processed_unpin_requests_cid;
+    ALTER TABLE processed_unpin_requests
+        DROP COLUMN IF EXISTS cid;
+
+  20250802000001_add_affected_miners_to_processed_unpin_requests.sql: |-
+    -- migrate:up
+    -- Add affected_miners column to processed_unpin_requests table
+
+    ALTER TABLE processed_unpin_requests
+        ADD COLUMN affected_miners TEXT[] DEFAULT '{}';
+
+    -- Create index for better query performance
+    CREATE INDEX idx_processed_unpin_requests_affected_miners ON processed_unpin_requests USING GIN (affected_miners);
+
+    -- migrate:down
+    DROP INDEX IF EXISTS idx_processed_unpin_requests_affected_miners;
+    ALTER TABLE processed_unpin_requests
+        DROP COLUMN IF EXISTS affected_miners;
+
+  20250803175854_add_node_hierarchy_to_registration.sql: |-
+    -- migrate:up
+    ALTER TABLE registration ADD COLUMN node_hierarchy VARCHAR(10) NOT NULL DEFAULT 'main';
+
+    -- migrate:down
+    ALTER TABLE registration DROP COLUMN node_hierarchy;
+
 kind: ConfigMap
 metadata:
   creationTimestamp: null

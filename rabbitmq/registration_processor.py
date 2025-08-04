@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,17 +24,14 @@ import aio_pika
 from dotenv import load_dotenv
 from substrateinterface import SubstrateInterface
 
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 from app.utils.config import NODE_URL
-from app.db.connection import get_db_pool, init_db_pool, close_db_pool
 
 # Load environment variables
 load_dotenv()
 
-
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -83,9 +80,7 @@ class RegistrationProcessor:
             logger.error(f"Error clearing registration table: {e}")
             raise
 
-    def parse_registration_data(
-        self, node_id: str, registration_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def parse_registration_data(self, node_id: str, registration_data: dict[str, Any]) -> Optional[dict[str, Any]]:
         """
         Parse registration data from substrate.
 
@@ -98,20 +93,14 @@ class RegistrationProcessor:
         """
         try:
             # Handle both camelCase and snake_case field names
-            ipfs_node_id = registration_data.get(
-                "ipfsNodeId", registration_data.get("ipfs_node_id")
-            )
+            ipfs_node_id = registration_data.get("ipfsNodeId", registration_data.get("ipfs_node_id"))
             node_type = registration_data.get("nodeType", registration_data.get("node_type"))
             owner = registration_data.get("owner", registration_data.get("owner_account"))
-            registered_at = registration_data.get(
-                "registeredAt", registration_data.get("registered_at")
-            )
+            registered_at = registration_data.get("registeredAt", registration_data.get("registered_at"))
             status = registration_data.get("status", "Online")  # Default to Online if not specified
 
             # Use the nodeId from the data if available, otherwise use the key
-            actual_node_id = registration_data.get(
-                "nodeId", registration_data.get("node_id", node_id)
-            )
+            actual_node_id = registration_data.get("nodeId", registration_data.get("node_id", node_id))
 
             if not all([actual_node_id, ipfs_node_id, node_type, owner, registered_at]):
                 logger.warning(f"Missing required fields for node {node_id}: {registration_data}")
@@ -172,6 +161,7 @@ class RegistrationProcessor:
                     # Add block number to the message
                     parsed_registration["block_number"] = block_number
                     parsed_registration["source"] = "coldkey"
+                    parsed_registration["node_hierarchy"] = "main"
 
                     # Send to queue
                     message_body = json.dumps(parsed_registration).encode()
@@ -214,6 +204,7 @@ class RegistrationProcessor:
                     # Add block number to the message
                     parsed_registration["block_number"] = block_number
                     parsed_registration["source"] = "node"
+                    parsed_registration["node_hierarchy"] = "linked"
 
                     # Send to queue
                     message_body = json.dumps(parsed_registration).encode()
@@ -229,9 +220,7 @@ class RegistrationProcessor:
                     registration_count += 1
                     logger.debug(f"Sent node registration for node {node_id}")
 
-            logger.info(
-                f"Successfully processed {registration_count} registrations at block {block_number}"
-            )
+            logger.info(f"Successfully processed {registration_count} registrations at block {block_number}")
 
         except Exception as e:
             logger.error(f"Error fetching/queuing registrations: {e}")

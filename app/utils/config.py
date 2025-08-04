@@ -9,6 +9,7 @@ dotenv.load_dotenv()
 # Blockchain node URL
 NODE_URL = os.environ.get("NODE_URL", "wss://rpc.hippius.network")
 DEBUG_VALIDATOR = os.getenv("DEBUG_IS_CHOSEN_VALI", False)
+DEBUG_USER_PROFILES = os.getenv("DEBUG_USER_PROFILES", "").replace(" ", "").split(",")
 
 
 def get_ipfs_node_url():

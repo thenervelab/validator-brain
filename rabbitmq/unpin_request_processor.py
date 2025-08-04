@@ -39,35 +39,11 @@ class UnpinRequestProcessor:
 
         logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
 
-    def parse_unpin_request_data(self, storage_data: list[tuple[Any, Any]]) -> list[dict[str, Any]]:
-        """
-        Parse the raw unpin data from substrate into structured format.
-
-        Args:
-            storage_data: Raw data from substrate storage query
-
-        Returns:
-            List of parsed unpin request dictionaries
-        """
-        parsed_requests = []
-
-        for item in storage_data:
-            unpin_request = {
-                **item,
-            }
-
-            parsed_requests.append(unpin_request)
-            logger.debug(f"Parsed {unpin_request=}")
-
-        return parsed_requests
-
     async def fetch_and_queue_requests(self):
         """
         Fetch unprocessed unpin requests from user_unpin_requests table and queue them.
         """
         logger.info("🔍 UNPIN_DEBUG: Starting fetch_and_queue_requests from user_unpin_requests table")
-
-        # Connect to database
 
         try:
             unpin_requests = await self.substrate.query_storage_map(

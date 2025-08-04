@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any
+from typing import Any
 
 # Add parent directory to path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,16 +21,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aio_pika
 from dotenv import load_dotenv
 
-from app.db.connection import get_db_pool, init_db_pool, close_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 
 # Load environment variables
 load_dotenv()
 
-
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +59,7 @@ class RegistrationConsumer:
         self.db_pool = get_db_pool()
         logger.info("Database connection pool initialized")
 
-    async def store_registration(self, registration: Dict[str, Any]) -> bool:
+    async def store_registration(self, registration: dict[str, Any]) -> bool:
         """
         Store registration data in the database.
 
@@ -75,9 +72,7 @@ class RegistrationConsumer:
         # Validate node_id length to prevent "value too long" errors
         node_id = registration.get("node_id", "")
         if len(node_id) > 100:
-            logger.warning(
-                f"Node ID too long ({len(node_id)} chars), skipping registration for node {node_id[:50]}..."
-            )
+            logger.warning(f"Node ID too long ({len(node_id)} chars), skipping registration for node {node_id[:50]}...")
             return False
 
         # Validate other VARCHAR fields
@@ -97,16 +92,12 @@ class RegistrationConsumer:
 
         node_type = registration.get("node_type", "")
         if len(node_type) > 50:
-            logger.warning(
-                f"Node type too long ({len(node_type)} chars), skipping registration for node {node_id}"
-            )
+            logger.warning(f"Node type too long ({len(node_type)} chars), skipping registration for node {node_id}")
             return False
 
         status = registration.get("status", "")
         if len(status) > 20:
-            logger.warning(
-                f"Status too long ({len(status)} chars), skipping registration for node {node_id}"
-            )
+            logger.warning(f"Status too long ({len(status)} chars), skipping registration for node {node_id}")
             return False
 
         try:
@@ -116,8 +107,8 @@ class RegistrationConsumer:
                     """
                     INSERT INTO registration (
                         node_id, ipfs_peer_id, node_type, owner_account, 
-                        registered_at, status, updated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                        registered_at, status, node_hierarchy, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                     ON CONFLICT (node_id) 
                     DO UPDATE SET 
                         ipfs_peer_id = EXCLUDED.ipfs_peer_id,
@@ -125,6 +116,7 @@ class RegistrationConsumer:
                         owner_account = EXCLUDED.owner_account,
                         registered_at = EXCLUDED.registered_at,
                         status = EXCLUDED.status,
+                        node_hierarchy = EXCLUDED.node_hierarchy,
                         updated_at = NOW()
                 """,
                     node_id,
@@ -132,12 +124,11 @@ class RegistrationConsumer:
                     node_type,
                     owner_account,
                     registration["registered_at"],
+                    registration["node_hierarchy"],
                     status,
                 )
 
-                logger.info(
-                    f"Stored registration for node {node_id} (source: {registration.get('source', 'unknown')})"
-                )
+                logger.info(f"Stored registration for node {node_id} (source: {registration.get('source', 'unknown')})")
                 return True
 
         except Exception as e:
@@ -164,9 +155,7 @@ class RegistrationConsumer:
 
                 if not success:
                     # Log error for failed storage but don't requeue
-                    logger.error(
-                        f"Failed to store registration for node {registration_data}, discarding message"
-                    )
+                    logger.error(f"Failed to store registration for node {registration_data}, discarding message")
 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in message: {e}")

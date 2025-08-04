@@ -9,6 +9,7 @@ import logging
 import os
 from typing import Any, Optional
 
+import asyncpg
 from substrateinterface import Keypair, SubstrateInterface
 from substrateinterface.exceptions import SubstrateRequestException
 
@@ -758,7 +759,8 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
                      WHERE pup.owner = pur.owner 
                      LIMIT 1), 
                     ''
-                ) as user_profile_cid
+                ) as user_profile_cid,
+                pur.affected_miners
             FROM processed_unpin_requests pur
             WHERE pur.status = 'unprocessed'
             ORDER BY pur.owner
@@ -769,14 +771,18 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
             unpin_requests = []
             for row in rows:
                 user = row["storage_request_owner"]
-                logger.info(f"Unpin request processed for {user}, triggering user profile refresh")
-                request = {
-                    "storage_request_owner": user,
-                    "storage_request_file_hash": row["storage_request_file_hash"],
-                    "file_size": row["file_size"] or 0,
-                    "user_profile_cid": row["user_profile_cid"],
-                }
-                unpin_requests.append(request)
+                affected_miners = row["affected_miners"] or []
+                logger.info(f"Unpin request for {user} with {len(affected_miners)} affected miners: {affected_miners}")
+
+                unpin_requests.append(
+                    {
+                        "storage_request_owner": user,
+                        "storage_request_file_hash": row["storage_request_file_hash"],
+                        "file_size": row["file_size"] or 0,
+                        "user_profile_cid": row["user_profile_cid"],
+                        "affected_miners": affected_miners,
+                    }
+                )
 
             logger.info(f"✅ Collected {len(unpin_requests)} unpin requests to submit to blockchain...")
 
@@ -788,11 +794,12 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
 
 
 async def call_update_unpin_and_storage_requests(
-    requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]
+    db_pool: asyncpg.Pool, requests: list[dict[str, Any]], miner_profiles: list[dict[str, Any]]
 ) -> None:
     """Calls the update_unpin_and_storage_requests extrinsic on the Substrate node.
 
     Args:
+        db_pool: Database connection pool for querying user profile file sizes
         requests (List[Dict[str, Any]]): List of unpin request updates. Each dict should contain:
             - storage_request_owner: str (SS58 address)
             - storage_request_file_hash: str (IPFS CID)
@@ -828,47 +835,76 @@ async def call_update_unpin_and_storage_requests(
         # Create keypair from mnemonic
         logger.info(f"Using account {keypair.ss58_address} for signing unpin confirmation")
 
-        # Format miner profiles (same as storage requests)
+        # Format miner profiles with validation
         formatted_miner_profiles = []
-        for i, profile in enumerate(miner_profiles):
-            try:
-                miner_node_id = profile["miner_node_id"]
-                cid = profile["cid"]
-                files_count = profile["files_count"]
-                files_size = profile["files_size"]
+        for profile in miner_profiles:
+            miner_node_id = profile["miner_node_id"]
+            files_size = min(profile["files_size"], 1000000000000)  # Cap at 1TB
 
-                # Cap files_size at 1TB to prevent overflow
-                if files_size > 1000000000000:
-                    logger.warning(
-                        f"Suspiciously high files_size {files_size} for miner {miner_node_id[:20]}..., capping at 1TB"
-                    )
-                    files_size = 1000000000000
+            if files_size != profile["files_size"]:
+                logger.warning(
+                    f"Capped files_size for miner {miner_node_id[:20]}... from {profile['files_size']} to 1TB"
+                )
 
-                formatted_profile = {
+            formatted_miner_profiles.append(
+                {
                     "miner_node_id": string_to_bounded_vec(miner_node_id),
-                    "cid": string_to_bounded_vec(cid),
-                    "files_count": files_count,
+                    "cid": string_to_bounded_vec(profile["cid"]),
+                    "files_count": profile["files_count"],
                     "files_size": files_size,
                 }
-                formatted_miner_profiles.append(formatted_profile)
+            )
 
-            except Exception as e:
-                logger.error(f"Error formatting miner profile {i}: {e}")
-                logger.error(f"Profile data: {profile}")
-                continue
+        # Create miner_node_id lookup for faster filtering
+        miner_lookup = {profile["miner_node_id"].decode("utf-8"): profile for profile in formatted_miner_profiles}
 
-        # Format the requests to match the StorageUnpinUpdateRequest structure
+        # Batch query for all user profile file sizes to avoid N+1 problem
+        user_owners = [req["storage_request_owner"] for req in requests]
+        user_profile_sizes = {}
+
+        async with db_pool.acquire() as conn:
+            # Get the most recent file size for each owner in a single query
+            rows = await conn.fetch(
+                """SELECT DISTINCT ON (owner) owner, files_size
+                   FROM pending_user_profile 
+                   WHERE owner = ANY($1::text[])
+                   ORDER BY owner, created_at DESC""",
+                user_owners,
+            )
+            user_profile_sizes = {row["owner"]: row["files_size"] for row in rows}
+
+        # Format requests with filtered miner profiles
         formatted_requests = []
         for req in requests:
-            formatted_request = {
-                "storage_request_owner": req["storage_request_owner"],
-                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
-                "file_size": int(req["file_size"]),
-                "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
-                "miner_pin_requests": formatted_miner_profiles,
-            }
-            formatted_requests.append(formatted_request)
-            logger.info(f"Adding unpin request for submission {formatted_request}")
+            affected_miners = req.get("affected_miners", [])
+
+            # Filter to only affected miners
+            filtered_miner_profiles = [
+                miner_lookup[miner_id] for miner_id in affected_miners if miner_id in miner_lookup
+            ]
+
+            # Get the current user profile total file size after unpin operation
+            storage_request_owner = req["storage_request_owner"]
+            user_profile_file_size = user_profile_sizes.get(storage_request_owner, 0)
+
+            if storage_request_owner not in user_profile_sizes:
+                logger.warning(f"No user profile found for {storage_request_owner}, using file_size 0")
+
+            logger.info(
+                f"Request for {req['storage_request_owner']}: "
+                f"user profile file size: {user_profile_file_size}, "
+                f"filtered to {len(filtered_miner_profiles)} affected miners: {affected_miners}"
+            )
+
+            formatted_requests.append(
+                {
+                    "storage_request_owner": req["storage_request_owner"],
+                    "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
+                    "file_size": int(user_profile_file_size),
+                    "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
+                    "miner_pin_requests": filtered_miner_profiles,
+                }
+            )
 
         logger.info(f"Formatted {len(formatted_miner_profiles)} miner profiles for unpin submission")
 
@@ -899,40 +935,22 @@ async def call_update_unpin_and_storage_requests(
 
 
 async def mark_unpin_requests_as_completed(db_pool, unpin_requests: list[dict[str, Any]]) -> bool:
-    """
-    Mark the submitted unpin requests as completed in the database.
+    """Mark the submitted unpin requests as completed in the database."""
+    if not unpin_requests:
+        return True
 
-    Args:
-        db_pool: Database connection pool
-        unpin_requests: List of submitted unpin requests
+    request_ids = [f"{req['storage_request_owner']}_{req['storage_request_file_hash']}" for req in unpin_requests]
 
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    try:
-        async with db_pool.acquire() as conn:
-            if unpin_requests:
-                # Get unique request IDs that were successfully submitted
-                request_ids = [
-                    f"{req['storage_request_owner']}_{req['storage_request_file_hash']}" for req in unpin_requests
-                ]
-                await conn.execute(
-                    """
-                    UPDATE processed_unpin_requests 
-                    SET status = 'processed' 
-                    WHERE request_id = ANY($1::text[])
-                    AND status = 'unprocessed'
-                    """,
-                    request_ids,
-                )
-                logger.info(
-                    f"Marked {len(unpin_requests)} unpin requests as processed after successful blockchain submission"
-                )
-            return True
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE processed_unpin_requests 
+               SET status = 'processed' 
+               WHERE request_id = ANY($1::text[]) AND status = 'unprocessed'""",
+            request_ids,
+        )
+        logger.info(f"Marked {len(unpin_requests)} unpin requests as processed")
 
-    except Exception as e:
-        logger.error(f"Error marking unpin requests as completed: {e}")
-        return False
+    return True
 
 
 async def submit_unpin_requests_to_blockchain(db_pool, miner_profiles: list[dict[str, Any]]) -> bool:
@@ -960,7 +978,7 @@ async def submit_unpin_requests_to_blockchain(db_pool, miner_profiles: list[dict
         logger.info(f"Using {len(miner_profiles)} pre-collected miner profiles for submission")
 
         # Submit to blockchain (same pattern as storage requests)
-        await call_update_unpin_and_storage_requests(unpin_requests, miner_profiles)
+        await call_update_unpin_and_storage_requests(db_pool, unpin_requests, miner_profiles)
 
         # Mark as completed only after successful submission
         await mark_unpin_requests_as_completed(db_pool, unpin_requests)

@@ -78,8 +78,7 @@ class MinerProfileReconstructionProcessor:
         """Fetch ALL miners that have file assignments to reconstruct their profiles"""
         async with self.db_pool.acquire() as conn:
             # Get ALL miners that have any file assignments (like user profiles do)
-            miners_rows = await conn.fetch(
-                """
+            miners_rows = await conn.fetch("""
                 SELECT DISTINCT miner_id as node_id
                 FROM (
                     SELECT miner1 as miner_id FROM file_assignments WHERE miner1 IS NOT NULL
@@ -93,8 +92,7 @@ class MinerProfileReconstructionProcessor:
                     SELECT miner5 as miner_id FROM file_assignments WHERE miner5 IS NOT NULL
                 ) miners
                 ORDER BY node_id
-            """
-            )
+            """)
 
             return [dict(row) for row in miners_rows]
 
@@ -166,10 +164,9 @@ class MinerProfileReconstructionProcessor:
             # Calculate file count and total size
             file_count = len(files)
             total_size = sum(file_data.get("size", 0) for file_data in files)
-            
-            # Log total size for this miner with owner account (coldkey)
+
+            # Store statistics for later aggregation
             size_gb = total_size / (1024**3) if total_size > 0 else 0
-            logger.info(f"📊 MINER_PROFILE_SIZE: {node_id} (owner: {coldkey}) has {file_count} files totaling {total_size:,} bytes ({size_gb:.2f} GB)")
 
             # Skip miners with no files
             if file_count == 0:
@@ -192,12 +189,12 @@ class MinerProfileReconstructionProcessor:
             # Send to queue
             await self.send_to_queue(message_data)
 
-            logger.info(f"✅ Queued profile for miner {node_id}: {file_count} files, {total_size} bytes")
             return {
                 "status": "success",
                 "node_id": node_id,
                 "file_count": file_count,
                 "total_size": total_size,
+                "size_gb": size_gb,
             }
 
         except Exception as e:
@@ -230,12 +227,32 @@ class MinerProfileReconstructionProcessor:
         failed_profiles = sum(1 for r in results if r["status"] == "failed")
         skipped_profiles = sum(1 for r in results if r["status"] == "skipped")
 
+        # Calculate aggregated statistics for successful profiles
+        successful_results = [r for r in results if r["status"] == "success"]
+        total_files = sum(r.get("file_count", 0) for r in successful_results)
+        total_size_bytes = sum(r.get("total_size", 0) for r in successful_results)
+        total_size_gb = total_size_bytes / (1024**3) if total_size_bytes > 0 else 0
+        
+        # Calculate averages
+        avg_files_per_miner = total_files / successful_profiles if successful_profiles > 0 else 0
+        avg_size_per_miner_gb = total_size_gb / successful_profiles if successful_profiles > 0 else 0
+        avg_size_per_file_mb = (total_size_bytes / total_files) / (1024**2) if total_files > 0 else 0
+
         # Enhanced summary logging
         logger.info("📊 Profile reconstruction summary:")
         logger.info(f"   ✅ Successfully queued: {successful_profiles}")
         logger.info(f"   ❌ Failed: {failed_profiles}")
         logger.info(f"   ⏭️ Skipped (no files): {skipped_profiles}")
         logger.info(f"   📋 Total processed: {len(profiles)}")
+        
+        # Aggregated statistics
+        if successful_profiles > 0:
+            logger.info("📊 Aggregated miner statistics:")
+            logger.info(f"   📁 Total files across all miners: {total_files:,}")
+            logger.info(f"   💾 Total size across all miners: {total_size_bytes:,} bytes ({total_size_gb:.2f} GB)")
+            logger.info(f"   📈 Average files per miner: {avg_files_per_miner:.1f}")
+            logger.info(f"   📈 Average size per miner: {avg_size_per_miner_gb:.2f} GB")
+            logger.info(f"   📈 Average file size: {avg_size_per_file_mb:.2f} MB")
 
         # Log warning if no profiles were successfully queued
         if successful_profiles == 0:
