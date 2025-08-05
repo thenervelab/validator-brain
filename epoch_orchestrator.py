@@ -1039,7 +1039,8 @@ class EpochOrchestrator:
         if not cleanup_success:
             logger.warning("⚠️ Table cleanup failed, but continuing with initialization")
 
-        should_refresh_node_metrics = self.current_block % self.node_metrics_refresh_interval == 0
+        # should_refresh_node_metrics = self.current_block % self.node_metrics_refresh_interval == 0
+        should_refresh_node_metrics = True
 
         # Build tasks list with conditional node metrics refresh
         tasks = [self.refresh_registration_data(), self.refresh_user_profiles()]
