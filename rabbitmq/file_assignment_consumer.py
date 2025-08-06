@@ -1,25 +1,10 @@
 #!/usr/bin/env python3
-"""
-File Assignment Consumer
-
-This consumer processes file assignment tasks from the queue and updates the database
-with the assignments.
-
-The consumer:
-1. Reads assignment messages from the file_assignment_processing queue
-2. Handles both new assignments and reassignments
-3. Updates the file_assignments table with miner assignments (with race condition protection)
-4. Updates the files table with file metadata
-5. Marks pending_assignment_file records as assigned
-6. Handles assignment failures gracefully
-"""
-
 import asyncio
 import json
 import logging
 import os
 import sys
-from typing import Dict, Any
+from typing import Any
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,7 +13,7 @@ import aio_pika
 from aio_pika import IncomingMessage
 from dotenv import load_dotenv
 
-from app.db.connection import init_db_pool, close_db_pool, get_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 
 # Load environment variables
 load_dotenv()
@@ -36,9 +21,7 @@ load_dotenv()
 # Setup logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -64,61 +47,25 @@ class FileAssignmentConsumer:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
             raise
 
-    async def process_new_assignment(self, assignment_data: Dict[str, Any]) -> bool:
-        """
-        Process a new file assignment.
+    async def process_new_assignment(
+        self,
+        assignment_data: dict[str, Any],
+    ) -> bool:
+        cid = assignment_data["cid"]
+        owner = assignment_data["owner"]
+        filename = assignment_data.get("filename", "")
+        file_size_bytes = assignment_data.get("file_size_bytes", 0)
+        assigned_miners = assignment_data.get("assigned_miners", [])
+        pending_file_id = assignment_data.get("pending_file_id")
 
-        CRITICAL FIX: Reject assignments with insufficient miners and don't save NULL assignments.
-        Only save complete assignments with at least minimum required miners.
-        """
-        try:
-            cid = assignment_data["cid"]
-            owner = assignment_data["owner"]
-            filename = assignment_data.get("filename", "")
-            file_size_bytes = assignment_data.get("file_size_bytes", 0)
-            assigned_miners = assignment_data.get("assigned_miners", [])
-            pending_file_id = assignment_data.get("pending_file_id")
+        # Filter out None values from assigned miners
+        valid_miners = [m for m in assigned_miners if m is not None and m.strip()]
 
-            # Filter out None values from assigned miners
-            valid_miners = [m for m in assigned_miners if m is not None and m.strip()]
+        min_required_miners = int(os.getenv("MIN_REQUIRED_MINERS", "3"))
 
-            # CRITICAL VALIDATION: Require minimum miners
-            min_required_miners = int(
-                os.getenv("MIN_REQUIRED_MINERS", "3")
-            )  # Default 3, can be configured
-
-            if len(valid_miners) < min_required_miners:
-                logger.error(
-                    f"❌ REJECTED assignment for file {cid}: Only {len(valid_miners)} valid miners, need minimum {min_required_miners}"
-                )
-                logger.error(f"   File: {filename} ({file_size_bytes:,} bytes)")
-                logger.error(f"   Valid miners: {valid_miners}")
-
-                # Mark pending file as failed with specific error
-                if pending_file_id:
-                    try:
-                        async with self.db_pool.acquire() as conn:
-                            await conn.execute(
-                                """
-                                UPDATE pending_assignment_file
-                                SET status = 'failed', 
-                                    processed_at = CURRENT_TIMESTAMP
-                                WHERE id = $1
-                            """,
-                                pending_file_id,
-                            )
-                    except Exception as e:
-                        logger.error(f"Error marking pending file as failed: {e}")
-
-                return False
-
-            logger.info(
-                f"✅ Processing assignment for file {cid}: {len(valid_miners)} valid miners (≥{min_required_miners} required)"
-            )
-
-        except Exception as e:
-            logger.error(f"Error validating assignment for file {cid}: {e}")
-            return False
+        logger.info(
+            f"✅ Processing assignment for file {cid}: {len(valid_miners)} valid miners (≥{min_required_miners} required)"
+        )
 
         try:
             async with self.db_pool.acquire() as conn:
@@ -219,7 +166,7 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
 
-    async def process_reassignment(self, assignment_data: Dict[str, Any]) -> bool:
+    async def process_reassignment(self, assignment_data: dict[str, Any]) -> bool:
         """
         Process a file reassignment task (filling empty slots).
 
@@ -239,9 +186,7 @@ class FileAssignmentConsumer:
         null_miner_count = assignment_data.get("null_miner_count", 0)  # From enhanced processor
 
         if not cid or not owner or not new_miners:
-            logger.error(
-                f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}"
-            )
+            logger.error(f"Invalid reassignment data: missing cid, owner, or new_miners. Data: {assignment_data}")
             return False
 
         # Enhanced logging for NULL miner fixes
@@ -287,9 +232,7 @@ class FileAssignmentConsumer:
 
                     # Debug: Log current state
                     current_null_count = sum(1 for m in current_list if m is None)
-                    logger.debug(
-                        f"Current assignment state: {current_null_count} NULL slots out of 5"
-                    )
+                    logger.debug(f"Current assignment state: {current_null_count} NULL slots out of 5")
 
                     # 3. Fill empty slots with new miners
                     new_miner_index = 0
@@ -387,7 +330,7 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
 
-    async def process_failing_miner_replacement(self, assignment_data: Dict[str, Any]) -> bool:
+    async def process_failing_miner_replacement(self, assignment_data: dict[str, Any]) -> bool:
         """
         Process a failing miner replacement task.
 
@@ -532,7 +475,7 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
 
-    async def process_rebalancing(self, assignment_data: Dict[str, Any]) -> bool:
+    async def process_rebalancing(self, assignment_data: dict[str, Any]) -> bool:
         """
         Process a file rebalancing task (moving a file from one miner to another).
 
@@ -550,9 +493,7 @@ class FileAssignmentConsumer:
         reason = assignment_data.get("reason", "Network rebalancing")
 
         if not cid or not from_miner or not to_miner:
-            logger.error(
-                f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}"
-            )
+            logger.error(f"Invalid rebalancing data: missing cid, from_miner, or to_miner. Data: {assignment_data}")
             return False
 
         logger.info(
@@ -596,18 +537,14 @@ class FileAssignmentConsumer:
                             # Replace the first occurrence of from_miner with to_miner
                             updated_miners.append(to_miner)
                             found_miner = True
-                            logger.debug(
-                                f"   Replaced {from_miner[:12]}... with {to_miner[:12]}..."
-                            )
+                            logger.debug(f"   Replaced {from_miner[:12]}... with {to_miner[:12]}...")
                         else:
                             # Keep existing miner
                             updated_miners.append(current_miner)
 
                     # 4. Verify the replacement was made
                     if not found_miner:
-                        logger.error(
-                            f"Miner {from_miner} not found in current assignment for file {cid}"
-                        )
+                        logger.error(f"Miner {from_miner} not found in current assignment for file {cid}")
                         logger.error(f"Current miners: {current_list}")
                         return False
 
@@ -616,8 +553,7 @@ class FileAssignmentConsumer:
                     if original_to_count > 0:
                         logger.warning(
                             f"Target miner {to_miner} is already assigned to file {cid} ({original_to_count} times)"
-                        )
-                        # Allow it but log the warning
+                        )  # Allow it but log the warning
 
                     # 6. Update file assignments
                     result = await conn.execute(
@@ -646,9 +582,7 @@ class FileAssignmentConsumer:
 
                     # Flag affected miners for profile reconstruction
                     affected_miners = {from_miner, to_miner}
-                    affected_miners = {
-                        miner for miner in affected_miners if miner
-                    }  # Remove None values
+                    affected_miners = {miner for miner in affected_miners if miner}  # Remove None values
 
                     if affected_miners:
                         await conn.executemany(
@@ -703,7 +637,7 @@ class FileAssignmentConsumer:
             logger.exception("Full traceback:")
             return False
 
-    async def process_assignment(self, assignment_data: Dict[str, Any]) -> bool:
+    async def process_assignment(self, assignment_data: dict[str, Any]) -> bool:
         """
         Process a file assignment task (new, reassignment, failing miner replacement, or rebalancing).
 
@@ -747,12 +681,10 @@ class FileAssignmentConsumer:
                     )
 
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode message: {e}")
-                # Log error and continue processing
+                logger.error(f"Failed to decode message: {e}")  # Log error and continue processing
             except Exception as e:
                 logger.error(f"Error in message handler: {e}")
-                logger.exception("Full traceback:")
-                # Log error and continue processing
+                logger.exception("Full traceback:")  # Log error and continue processing
 
     async def start_consuming(self):
         """Start consuming messages from the queue."""
