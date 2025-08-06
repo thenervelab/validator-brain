@@ -26,6 +26,11 @@ from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 # Load environment variables
 load_dotenv()
 
+
+def string_to_bytes(s: str) -> bytes:
+    """Convert string to bytes for substrate submission."""
+    return s.encode("utf-8")
+
 # Setup logging
 
 # Configure logging
@@ -236,10 +241,12 @@ class NetworkSelfHealingProcessor:
                     )
 
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
+                    # Encode node IDs to bytes for substrate submission
+                    encoded_node_ids = [string_to_bytes(node_id) for node_id in clean_node_ids]
                     successful_batches, failed_batches = await batch_submit(
                         hippius_substrate,
                         keypair,
-                        clean_node_ids,
+                        encoded_node_ids,
                     )
 
                     if successful_batches > 0:
