@@ -83,7 +83,7 @@ class UserProfileReconstructionProcessor:
             # Get available miners with capacity
             available_miners = await conn.fetch(
                 """
-                SELECT 
+                SELECT
                     r.node_id,
                     r.ipfs_peer_id,
                     COALESCE(nm.ipfs_storage_max, 1000000000) as storage_capacity_bytes,
@@ -99,7 +99,7 @@ class UserProfileReconstructionProcessor:
                     ORDER BY miner_id, block_number DESC
                 ) nm ON r.node_id = nm.miner_id
                 LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
-                WHERE r.node_type = 'StorageMiner' 
+                WHERE r.node_type = 'StorageMiner'
                   AND r.status = 'active'
                   AND COALESCE(ms.health_score, 100) >= 70
                 ORDER BY COALESCE(ms.health_score, 100) DESC, r.node_id
@@ -113,7 +113,6 @@ class UserProfileReconstructionProcessor:
 
             # Track assignments for load balancing within this fallback session
             fallback_assignments = {}
-            replicas_per_file = 5
 
             for file_data in unassigned_files:
                 cid = file_data["cid"]

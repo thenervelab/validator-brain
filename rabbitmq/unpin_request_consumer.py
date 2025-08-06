@@ -142,7 +142,7 @@ class UnpinRequestConsumer:
             async with semaphore:
                 return await self._unpin_single_file(
                     item["cid"],
-                    item["owner"],
+                    owner,
                     conn,
                 )
 
