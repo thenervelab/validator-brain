@@ -31,6 +31,7 @@ def string_to_hex(s: str) -> str:
     """Convert string to hex-encoded string for substrate submission."""
     return s.encode("utf-8").hex()
 
+
 # Setup logging
 
 # Configure logging
@@ -83,7 +84,12 @@ async def submit_deregistration_report(substrate, keypair, node_ids):
     return receipt.is_success
 
 
-async def batch_submit(substrate, keypair, node_ids, batch_size=5):
+async def batch_submit(
+    substrate,
+    keypair,
+    node_ids,
+    batch_size=1,
+):
     """Submit deregistration reports in batches."""
     successful_batches = 0
     failed_batches = 0
