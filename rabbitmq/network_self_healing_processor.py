@@ -88,7 +88,7 @@ async def batch_submit(
     substrate,
     keypair,
     node_ids,
-    batch_size=1,
+    batch_size=10,
 ):
     """Submit deregistration reports in batches."""
     successful_batches = 0
