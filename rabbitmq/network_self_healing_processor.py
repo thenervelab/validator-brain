@@ -29,7 +29,9 @@ load_dotenv()
 
 def string_to_hex(s: str) -> str:
     """Convert string to hex-encoded string for substrate submission."""
-    return s.encode("utf-8").hex()
+    # return s.encode("utf-8").hex()
+    # we don't need to hex them
+    return s
 
 
 # Setup logging
