@@ -250,7 +250,7 @@ class NetworkSelfHealingProcessor:
 
                     hippius_substrate = connect_to_node(os.getenv("NODE_URL"))
                     # Convert node IDs to hex-encoded strings for substrate submission
-                    hex_encoded_node_ids = [string_to_hex(node_id) for node_id in clean_node_ids]
+                    hex_encoded_node_ids = [string_to_hex(node_id) for node_id in set(clean_node_ids)]
                     successful_batches, failed_batches = await batch_submit(
                         hippius_substrate,
                         keypair,
