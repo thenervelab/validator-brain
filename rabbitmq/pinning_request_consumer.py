@@ -201,6 +201,7 @@ class PinningRequestConsumer:
                 assignments_data = []
 
                 for item in file_assignments:
+                    logger.info(f"Processing file assignment {cid=} {item['owner']}")
                     cid = item["cid"]
                     filename = item["filename"]
 
