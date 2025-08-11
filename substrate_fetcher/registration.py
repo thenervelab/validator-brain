@@ -69,7 +69,12 @@ def _query_storage_map(substrate: SubstrateInterface, module: str, storage_funct
         return {}
 
 
-def _query_storage_double_map(substrate: SubstrateInterface, module: str, storage_function: str, netuid: int) -> dict:
+def _query_storage_double_map(
+    substrate: SubstrateInterface,
+    module: str,
+    storage_function: str,
+    netuid: int,
+) -> dict:
     """Query all entries in a storage double map for a specific netuid."""
     try:
         result = substrate.query_map(module=module, storage_function=storage_function, params=[netuid])
@@ -78,13 +83,18 @@ def _query_storage_double_map(substrate: SubstrateInterface, module: str, storag
         return {}
 
 
-def _fetch_bittensor_coldkeys(bittensor_substrate: SubstrateInterface, netuid: int = 75) -> set[str]:
+def _fetch_bittensor_coldkeys(
+    bittensor_substrate: SubstrateInterface,
+    netuid: int = 75,
+) -> set[str]:
     """Fetch all registered coldkeys (hotkeys) from Bittensor."""
     uids_data = _query_storage_double_map(bittensor_substrate, "SubtensorModule", "Uids", netuid)
     return set(uids_data.keys())
 
 
-def _fetch_primary_nodes(registration_substrate: SubstrateInterface) -> dict:
+def _fetch_primary_nodes(
+    registration_substrate: SubstrateInterface,
+) -> dict:
     """Fetch primary nodes from Registration.ColdkeyNodeRegistration.
 
     Returns:
@@ -99,7 +109,7 @@ def _fetch_primary_nodes(registration_substrate: SubstrateInterface) -> dict:
     primary_nodes = {}
     for node_id, node_info in coldkey_reg_data.items():
         if node_info and isinstance(node_info, dict) and "owner" in node_info:
-            logger.info(f"Primary node {node_id=} {node_info=}")
+            # logger.info(f"Primary node {node_id=} {node_info=}")
 
             primary_nodes[node_id] = {
                 "owner": node_info["owner"],
@@ -121,17 +131,17 @@ def _fetch_secondary_nodes(registration_substrate: SubstrateInterface) -> dict:
         "NodeRegistration",
     )
 
-    primary_nodes = {}
+    secondary_nodes = {}
     for node_id, node_info in hotkey_reg_data.items():
         if node_info and isinstance(node_info, dict) and "owner" in node_info:
-            logger.info(f"Secondary node {node_id=} {node_info=}")
+            # logger.info(f"Secondary node {node_id=} {node_info=}")
 
-            primary_nodes[node_id] = {
+            secondary_nodes[node_id] = {
                 "owner": node_info["owner"],
                 "ipfs_peer_id": node_info["ipfs_node_id"],
             }
 
-    return primary_nodes
+    return secondary_nodes
 
 
 def _fetch_node_relationships(
