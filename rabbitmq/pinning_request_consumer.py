@@ -24,6 +24,7 @@ import aio_pika
 from dotenv import load_dotenv
 
 from app.db.connection import close_db_pool, get_db_pool, init_db_pool
+from app.utils.config import get_ipfs_node_url
 
 # Load environment variables
 load_dotenv()
@@ -63,8 +64,6 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
 
     # Use local IPFS service by default
     if ipfs_node_url is None:
-        from app.utils.config import get_ipfs_node_url
-
         ipfs_node_url = get_ipfs_node_url()
 
     # Try local IPFS node first
@@ -74,12 +73,12 @@ async def fetch_ipfs_content(cid: str, ipfs_node_url: str = None) -> Optional[by
         try:
             response = await client.post(url, timeout=7)
             response.raise_for_status()
-            logger.info(f"✅ Successfully fetched content for CID {cid}... from local IPFS")
+            logger.info(f"✅ Successfully fetched content for {cid=} from IPFS {url=}")
             return response.content
         except httpx.HTTPStatusError as e:
-            logger.warning(f"IPFS node returned error for CID {cid}: {e}")
+            logger.warning(f"IPFS node returned error for {cid=} {url=}: {e}")
         except httpx.RequestError as e:
-            logger.warning(f"Error fetching CID {cid} from local IPFS: {e}")
+            logger.warning(f"Error fetching {cid=} {url=}: {e}")
     return None
 
 
