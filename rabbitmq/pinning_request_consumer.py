@@ -201,8 +201,17 @@ class PinningRequestConsumer:
                 assignments_data = []
 
                 for item in file_assignments:
-                    files_data.append((item["cid"], item["filename"], 0))
-                    assignments_data.append((item["cid"], item["owner"]))
+                    cid = item["cid"]
+                    filename = item["filename"]
+
+                    # Fetch actual file size from IPFS instead of hardcoding 0
+                    file_size = await fetch_ipfs_file_size(cid)
+                    if file_size is None:
+                        logger.warning(f"Could not fetch size for {cid}, defaulting to 0")
+                        file_size = 0
+
+                    files_data.append((cid, filename, file_size))
+                    assignments_data.append((cid, item["owner"]))
 
                 if files_data:
                     await conn.executemany(
