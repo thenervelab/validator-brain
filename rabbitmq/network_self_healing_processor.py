@@ -179,8 +179,6 @@ class NetworkSelfHealingProcessor:
             total_cleaned = 0
 
             for miner_node_id in deregistered_miners:
-                logger.info(f"Deleting {miner_node_id=} from assignments")
-
                 # Clean up orphaned monitoring records first
                 await conn.execute("DELETE FROM node_metrics WHERE miner_id = $1", miner_node_id)
                 await conn.execute("DELETE FROM file_failures WHERE miner_id = $1", miner_node_id)
@@ -200,12 +198,10 @@ class NetworkSelfHealingProcessor:
                     miner_node_id,
                 )
 
-                logger.info(f"Cleared '{files_unassigned=}' from assignments for {miner_node_id=}")
                 # Delete from registration table
                 result = await conn.execute("DELETE FROM registration WHERE node_id = $1", miner_node_id)
                 if result == "DELETE 1":
                     total_cleaned += 1
-                    logger.info(f"Cleaned up deregistered miner: {miner_node_id}")
 
             return total_cleaned
 
@@ -230,7 +226,7 @@ class NetworkSelfHealingProcessor:
                 secondary_ipfs_ids = [miner.ipfs_peer_id for miner in deregistration.linked_nodes]
                 all_ipfs_ids = set(primary_ipfs_ids + secondary_ipfs_ids)
                 cleaned_count = await self.cleanup_deregistered_miners(list(all_ipfs_ids))
-                logger.info(f"🧹 Cleaned up {cleaned_count} deregistered miners")
+                logger.info(f"🧹 Removed {cleaned_count} file assignments")
 
                 # Submit deregistration report to Hippius blockchain
                 validator_seed = os.getenv("VALIDATOR_SEED")
