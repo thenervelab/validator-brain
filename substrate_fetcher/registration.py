@@ -233,7 +233,7 @@ async def compute_deregistration_report(
     secondary_nodes = []
     for node_id, details in primary_nodes_pallet.items():
         if details["owner"] in hippius_to_deregister_coldkeys:  # prepare to deregister
-            logger.info(f"Found primary {node_id=} ({details['owner']}) to deregister...")
+            # logger.info(f"Found primary {node_id=} ({details['owner']}) to deregister...")
             primary_nodes[node_id] = Node(
                 id=node_id,
                 owner=details["owner"],
@@ -244,7 +244,7 @@ async def compute_deregistration_report(
     for node_id, details in secondary_nodes_pallet.items():
         for parent_node_id, linked_secondary_nodes in links_pallet.items():
             if node_id in linked_secondary_nodes:
-                logger.info(f"Found primary {node_id=} ({details['owner']}) {parent_node_id=} to deregister...")
+                # logger.info(f"Found secondary {node_id=} {parent_node_id=} ({details['owner']}) to unassign from network...")
                 secondary_nodes.append(
                     Node(
                         id=node_id,
