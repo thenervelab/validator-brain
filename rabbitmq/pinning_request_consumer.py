@@ -97,7 +97,7 @@ async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
 
     async with httpx.AsyncClient() as client:
         try:
-            logger.critical(f"Stating {cid=} {stat_url=} {params=}")
+            logger.info(f"Stating {cid=} {stat_url=} {params=}")
             response = await client.post(stat_url, params=params, timeout=10)
             response.raise_for_status()
             stats = response.json()
@@ -105,7 +105,7 @@ async def fetch_ipfs_file_size(cid: str) -> Optional[int]:
             size = stats.get("CumulativeSize")
 
             if size is not None:
-                logger.critical(f"✅ Fetched size for CID {cid[:16]}...: {size:,} bytes (from local IPFS)")
+                logger.info(f"✅ Fetched size for {cid=} {size:,} bytes")
                 return int(size)
             else:
                 logger.warning(f"Could not determine size from files/stat for CID {cid}. Stats: {stats}")
