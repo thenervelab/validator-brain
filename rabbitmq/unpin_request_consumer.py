@@ -191,7 +191,9 @@ class UnpinRequestConsumer:
             # Fetch and parse manifest data
             manifest_data = await fetch_ipfs_content(cid)
             if not manifest_data:
-                logger.warning(f"Could not fetch manifest data for cid={cid} - treating as already processed")
+                logger.warning(
+                    f"Could not fetch manifest data for cid={cid} - treating as already processed {request_data}"
+                )
                 return True
 
             # Parse manifest JSON, fallback to single file if parsing fails
