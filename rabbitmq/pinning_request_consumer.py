@@ -201,9 +201,9 @@ class PinningRequestConsumer:
                 assignments_data = []
 
                 for item in file_assignments:
-                    logger.info(f"Processing file assignment {cid=} {item['owner']}")
                     cid = item["cid"]
                     filename = item["filename"]
+                    logger.info(f"Processing file assignment {cid=} {item['owner']}")
 
                     # Fetch actual file size from IPFS instead of hardcoding 0
                     file_size = await fetch_ipfs_file_size(cid)
