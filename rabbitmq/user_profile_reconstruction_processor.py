@@ -396,23 +396,23 @@ class UserProfileReconstructionProcessor:
 
             users_rows = await conn.fetch(query)
 
-            # Log what we found for debugging
-            for row in users_rows:
-                if row["last_profile_file_count"] > 0:
-                    logger.info(
-                        f"User {row['owner']} needs profile update: "
-                        f"files {row['last_profile_file_count']} -> {row['current_file_count']}, "
-                        f"size {row['last_profile_total_size']} -> {row['current_total_size']}"
-                    )
-                    if row["new_pending_files"] > 0:
-                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
-                else:
-                    logger.info(
-                        f"User {row['owner']} needs initial profile: "
-                        f"{row['current_file_count']} files, {row['current_total_size']} bytes"
-                    )
-                    if row["new_pending_files"] > 0:
-                        logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
+            # # Log what we found for debugging
+            # for row in users_rows:
+            #     if row["last_profile_file_count"] > 0:
+            #         logger.info(
+            #             f"User {row['owner']} needs profile update: "
+            #             f"files {row['last_profile_file_count']} -> {row['current_file_count']}, "
+            #             f"size {row['last_profile_total_size']} -> {row['current_total_size']}"
+            #         )
+            #         if row["new_pending_files"] > 0:
+            #             logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
+            #     else:
+            #         logger.info(
+            #             f"User {row['owner']} needs initial profile: "
+            #             f"{row['current_file_count']} files, {row['current_total_size']} bytes"
+            #         )
+            #         if row["new_pending_files"] > 0:
+            #             logger.info(f"  - Including {row['new_pending_files']} NEW files from storage requests")
 
             return [{"owner": row["owner"]} for row in users_rows]
 
