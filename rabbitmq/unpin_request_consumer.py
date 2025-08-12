@@ -158,11 +158,11 @@ class UnpinRequestConsumer:
         async with self.db_pool.acquire() as conn:
             # Check if this request exists and its status
             existing_request = await conn.fetchrow(
-                "SELECT id, status FROM processed_unpin_requests WHERE request_id = $1",
+                "SELECT * FROM processed_unpin_requests WHERE request_id = $1",
                 request_id,
             )
             if existing_request and existing_request["status"] == "processed":
-                logger.info(f"Found already 'processed' unpin request {existing_request=}, retrying...")
+                logger.info(f"Found already 'processed' unpin request {str(existing_request)}, retrying...")
                 await conn.execute(
                     "UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id
                 )
