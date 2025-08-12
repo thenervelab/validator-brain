@@ -23,21 +23,18 @@ import aio_pika
 import httpx
 from dotenv import load_dotenv
 
-from app.db.connection import get_db_pool, init_db_pool, close_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 from app.utils.config import get_ipfs_node_url
 from substrate_fetcher.ipfs_profile_parser import (
-    parse_user_profile_files,
     bytes_to_ipfs_cid,
+    parse_user_profile_files,
 )
 
 # Load environment variables
 load_dotenv()
 
-
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -52,9 +49,7 @@ class UserProfileConsumer:
             rabbitmq_url: URL of the RabbitMQ server
             ipfs_gateway: URL of the IPFS gateway
         """
-        self.rabbitmq_url = rabbitmq_url or os.getenv(
-            "RABBITMQ_URL", "amqp://admin:admin@localhost:5672/"
-        )
+        self.rabbitmq_url = rabbitmq_url or os.getenv("RABBITMQ_URL", "amqp://admin:admin@localhost:5672/")
         # Use the centralized config for IPFS URL
         self.ipfs_gateway = get_ipfs_node_url()
         self.queue_name = "user_profile"
@@ -122,23 +117,6 @@ class UserProfileConsumer:
         """
         logger.info(f"Processing user profile for {account} with CID {cid}")
 
-        # Check if this CID has already been parsed
-        async with self.db_pool.acquire() as conn:
-            existing = await conn.fetchrow(
-                """
-                SELECT id, file_count, parsed_at 
-                FROM parsed_cids 
-                WHERE cid = $1 AND profile_type = 'user'
-            """,
-                cid,
-            )
-
-            if existing:
-                logger.info(
-                    f"CID {cid} already parsed at {existing['parsed_at']} with {existing['file_count']} files"
-                )
-                return existing["file_count"]
-
         # Fetch profile from IPFS
         profile_data = await self.fetch_from_ipfs(cid)
         if not profile_data:
@@ -163,13 +141,11 @@ class UserProfileConsumer:
                     # Extract file details
                     file_hash_bytes = file_info.get("file_hash")  # This is a byte array
                     file_name = file_info.get("file_name", "unknown")
-                    file_size = file_info.get("file_size_in_bytes", 0)  # Changed from 'size'
+                    file_size = file_info.get("file_size_in_bytes", 0)
                     miner_ids = file_info.get("miner_ids", [])
 
                     if not file_hash_bytes:
-                        logger.warning(
-                            f"File without file_hash in profile for {account}: {file_info}"
-                        )
+                        logger.warning(f"File without file_hash in profile for {account}: {file_info}")
                         continue
 
                     # Convert byte array to CID string, handle both byte arrays and strings
@@ -180,9 +156,7 @@ class UserProfileConsumer:
                         # It's already a string CID
                         file_cid = file_hash_bytes
                     else:
-                        logger.warning(
-                            f"Unknown file_hash type {type(file_hash_bytes)} for {account}"
-                        )
+                        logger.warning(f"Unknown file_hash type {type(file_hash_bytes)} for {account}")
                         continue
 
                     if not file_cid:
@@ -244,30 +218,10 @@ class UserProfileConsumer:
                     processed_count += 1
 
                 except Exception:
-                    logger.exception(
-                        f"Error processing file in profile for {account}, {file_info=}"
-                    )
+                    logger.exception(f"Error processing file in profile for {account=} {file_info=}")
                     continue
 
         logger.info(f"Successfully processed {processed_count} files for {account}")
-
-        # Record that we've parsed this CID
-        async with self.db_pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO parsed_cids (cid, profile_type, file_count, account)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (cid, profile_type) DO UPDATE SET
-                    file_count = EXCLUDED.file_count,
-                    account = EXCLUDED.account,
-                    parsed_at = CURRENT_TIMESTAMP
-            """,
-                cid,
-                "user",
-                processed_count,
-                account,
-            )
-            logger.info(f"Recorded parsed CID {cid} with {processed_count} files")
 
         return processed_count
 
