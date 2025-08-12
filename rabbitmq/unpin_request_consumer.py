@@ -13,15 +13,6 @@ from rabbitmq.pinning_request_consumer import fetch_ipfs_content
 logger = logging.getLogger(__name__)
 
 
-def get_cid_version(cid: str) -> int:
-    if cid.startswith("Qm") and len(cid) == 46:
-        return True
-    elif cid.startswith(("b", "z", "f")):  # f for base16
-        return True
-    else:
-        return False
-
-
 def hex_to_string(hex_string: str) -> str:
     """
     Convert a hex string to its ASCII representation.
@@ -32,15 +23,7 @@ def hex_to_string(hex_string: str) -> str:
     Returns:
         ASCII string
     """
-    try:
-        cid = bytes.fromhex(hex_string).decode("utf-8")
-        if not get_cid_version(cid):  # double encoded
-            return str(bytes.fromhex(cid))
-        else:
-            return cid
-    except Exception as e:
-        logger.error(f"Error converting hex to string: {e}")
-        return hex_string
+    return bytes.fromhex(hex_string).decode("utf-8")
 
 
 class UnpinRequestConsumer:
@@ -170,15 +153,19 @@ class UnpinRequestConsumer:
         file_hash_hex = request_data["file_hash"]
         request_id = f"{owner}_{file_hash_hex}"
         cid = hex_to_string(file_hash_hex)
+        success = True
 
         async with self.db_pool.acquire() as conn:
             # Check if this request exists and its status
             existing_request = await conn.fetchrow(
-                "SELECT id, status FROM processed_unpin_requests WHERE request_id = $1", request_id
+                "SELECT id, status FROM processed_unpin_requests WHERE request_id = $1",
+                request_id,
             )
-            if existing_request:
-                if existing_request["status"] == "processed":
-                    return True
+            if existing_request and existing_request["status"] == "processed":
+                await conn.execute(
+                    "UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id
+                )
+                return success
 
             # Fetch and parse manifest data
             manifest_data = await fetch_ipfs_content(cid)
@@ -190,42 +177,47 @@ class UnpinRequestConsumer:
                 )
 
             if not manifest_data:
-                logger.warning(
+                logger.error(
                     f"Could not fetch manifest data for cid={cid} - treating as already processed {request_data}"
                 )
-                await conn.execute(
-                    "UPDATE processed_unpin_requests SET status = 'processed' WHERE request_id = $1", request_id
-                )
-                return False
+                success = False
 
             # Parse manifest JSON, fallback to single file if parsing fails
             try:
                 manifest_data = json.loads(manifest_data)
             except (UnicodeDecodeError, JSONDecodeError):
-                await conn.execute(
-                    "UPDATE processed_unpin_requests SET status = 'processed' WHERE request_id = $1", request_id
+                logger.error(
+                    f"Could not parse JSON manifest for {cid=} - treating as already processed {request_data=}"
                 )
-                return False
+                success = False
 
-            # Process all files and collect affected miners
-            affected_miners = await self._process_manifest_files_parallel(manifest_data, owner, conn)
+            if success:
+                # Process all files and collect affected miners
+                affected_miners = await self._process_manifest_files_parallel(manifest_data, owner, conn)
+            else:
+                affected_miners = []
 
             # Insert with all data in single transaction
-            await conn.execute(
-                """INSERT INTO processed_unpin_requests 
-                   (request_id, owner, file_hash, cid, affected_miners, status) 
-                   VALUES ($1, $2, $3, $4, $5, $6)""",
-                request_id,
-                owner,
-                file_hash_hex,
-                cid,
-                affected_miners,
-                "unprocessed",
-            )
+            if not existing_request:
+                await conn.execute(
+                    """INSERT INTO processed_unpin_requests
+                       (request_id, owner, file_hash, cid, affected_miners, status)
+                       VALUES ($1, $2, $3, $4, $5, $6)""",
+                    request_id,
+                    owner,
+                    file_hash_hex,
+                    cid,
+                    affected_miners,
+                    "unprocessed",
+                )
+                logger.info(f"Inserted new request, ready for processing {request_data=} {affected_miners=}")
 
-            logger.info(f"✅ Processed unpin request {request_id} with {len(affected_miners)} affected miners")
+            if success:
+                logger.info(f"✅ Processed unpin request {request_id} with {len(affected_miners)} affected miners")
+            else:
+                logger.error(f"Failed to process unpin request {request_data}, closing it...")
 
-        return True
+        return success
 
     async def process_message(self, message: aio_pika.IncomingMessage):
         """
@@ -240,10 +232,9 @@ class UnpinRequestConsumer:
             success = await self.process_unpin_request(data)
 
             if not success:
-                # Reject and requeue if processing failed
-                raise Exception(f"Failed to process unpin request for account {data}")
+                logger.error(f"Failed to process unpin request {data=}, will close")
 
-            logger.info(f"SUCCESS: {data=} processing completed successfully")
+            logger.info(f"SUCCESS: Processed unpin request {data=}")
 
     async def start_consuming(self):
         """Start consuming messages from the queue."""
