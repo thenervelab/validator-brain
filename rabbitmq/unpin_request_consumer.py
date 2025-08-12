@@ -95,13 +95,13 @@ class UnpinRequestConsumer:
 
             # Clean up profile and monitoring data
             cleanup_queries = [
-                ("DELETE FROM user_profile WHERE file_hash = $1 AND owner = $2", cid, owner),
+                ("DELETE FROM user_profile WHERE file_hash = $1 AND owner_account = $2", cid, owner),
                 ("DELETE FROM miner_profile WHERE file_hash = $1", cid),
-                ("DELETE FROM pending_assignment_file WHERE cid = $1", cid),
-                ("DELETE FROM pending_user_profile WHERE cid = $1", cid),
+                ("DELETE FROM pending_assignment_file WHERE cid = $1 AND owner = $2", cid, owner),
+                ("DELETE FROM pending_user_profile WHERE cid = $1 AND owner = $2", cid, owner),
                 ("DELETE FROM pending_miner_profile WHERE cid = $1", cid),
                 ("DELETE FROM file_failures WHERE cid = $1", cid),
-                ("DELETE FROM storage_requests WHERE file_hash = $1 AND owner = $2", cid, owner),
+                ("DELETE FROM storage_requests WHERE file_hash = $1 AND owner_account = $2", cid, owner),
             ]
 
             for query, *params in cleanup_queries:
