@@ -448,9 +448,8 @@ async def collect_storage_requests_for_submission(db_pool) -> list[dict[str, Any
             for row in rows:
                 user = row["storage_request_owner"]
                 if row["storage_request_file_hash"]:
-                    logger.info(f"New storage request processed for {user}, triggering user profile refresh")
-                else:
-                    logger.info(f"Triggering user profile refresh for {user}")
+                    logger.info(f"New storage request processed for {user=} {row=}, triggering user profile refresh")
+
                 request = {
                     "storage_request_owner": user,
                     "storage_request_file_hash": row["storage_request_file_hash"],

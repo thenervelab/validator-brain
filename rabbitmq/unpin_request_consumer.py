@@ -162,6 +162,7 @@ class UnpinRequestConsumer:
                 request_id,
             )
             if existing_request and existing_request["status"] == "processed":
+                logger.info(f"Found already 'processed' unpin request {existing_request=}, retrying...")
                 await conn.execute(
                     "UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id
                 )
