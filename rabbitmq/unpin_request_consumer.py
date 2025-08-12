@@ -173,7 +173,7 @@ class UnpinRequestConsumer:
             if not manifest_data:
                 manifest_data = await fetch_ipfs_content(
                     cid,
-                    ipfs_node_url="https://get.hippius.network",
+                    ipfs_node_url="https://store.hippius.network",
                 )
 
             if not manifest_data:
@@ -194,6 +194,11 @@ class UnpinRequestConsumer:
             if success:
                 # Process all files and collect affected miners
                 affected_miners = await self._process_manifest_files_parallel(manifest_data, owner, conn)
+
+                # If no miners were affected (no valid files found in file_assignments), mark as processed
+                if not affected_miners:
+                    logger.warning(f"No valid files found in file_assignments for {request_id}, marking as processed")
+                    success = False  # This will cause the request to be marked for closing
             else:
                 affected_miners = []
 
