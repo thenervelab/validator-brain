@@ -43,27 +43,17 @@ class UnpinRequestProcessor:
         """
         Fetch unprocessed unpin requests from user_unpin_requests table and queue them.
         """
-        logger.info("🔍 UNPIN_DEBUG: Starting fetch_and_queue_requests from user_unpin_requests table")
+        unpin_requests = await self.substrate.query_storage_map(
+            module="IpfsPallet",
+            function="UserUnpinRequests",
+        )
+        logger.info(f"Found {len(unpin_requests)} unpin requests on substrate...")
+        batch = unpin_requests[:50]
 
-        try:
-            unpin_requests = await self.substrate.query_storage_map(
-                module="IpfsPallet",
-                function="UserUnpinRequests",
-            )
-            logger.info(f"Found {len(unpin_requests)} unpin requests on substrate...")
-            batch = unpin_requests[:50]
+        if batch:
+            await self._publish_requests_parallel(batch)
 
-            if batch:
-                logger.info(f"🔍 UNPIN_DEBUG: Publishing a batch of {len(batch)} requests to RabbitMQ queue")
-                await self._publish_requests_parallel(batch)
-            else:
-                logger.info("🔍 UNPIN_DEBUG: No unprocessed unpin requests to publish")
-
-            logger.info(f"Successfully processed {len(batch)} unpin requests")
-
-        except Exception as e:
-            logger.error(f"🔍 UNPIN_DEBUG: Error fetching from database: {e}")
-            raise
+        logger.info(f"Successfully processed {len(batch)} unpin requests")
 
     async def _publish_requests_parallel(self, requests: list[dict[str, Any]]) -> None:
         semaphore = asyncio.Semaphore(50)
