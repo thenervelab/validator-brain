@@ -185,7 +185,7 @@ class UnpinRequestConsumer:
             # Parse manifest JSON, fallback to single file if parsing fails
             try:
                 manifest_data = json.loads(manifest_data)
-            except (UnicodeDecodeError, JSONDecodeError):
+            except (TypeError, UnicodeDecodeError, JSONDecodeError):
                 logger.error(
                     f"Could not parse JSON manifest for {cid=} - treating as already processed {request_data=}"
                 )
