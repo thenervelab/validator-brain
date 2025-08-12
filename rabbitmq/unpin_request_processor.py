@@ -48,7 +48,7 @@ class UnpinRequestProcessor:
             function="UserUnpinRequests",
         )
         logger.info(f"Found {len(unpin_requests)} unpin requests on substrate...")
-        batch = unpin_requests[:50]
+        batch = unpin_requests
 
         if batch:
             await self._publish_requests_parallel(batch)
