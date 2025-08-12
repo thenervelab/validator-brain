@@ -756,7 +756,7 @@ async def collect_unpin_requests_for_submission(db_pool) -> list[dict[str, Any]]
                     (SELECT pup.cid 
                      FROM pending_user_profile pup 
                      WHERE pup.owner = pur.owner 
-                     LIMIT 1), 
+                     LIMIT 1),
                     ''
                 ) as user_profile_cid,
                 pur.affected_miners
