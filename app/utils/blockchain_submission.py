@@ -863,15 +863,19 @@ async def call_update_unpin_and_storage_requests(
         user_profile_sizes = {}
 
         async with db_pool.acquire() as conn:
-            # Get the most recent file size for each owner in a single query
+            # Calculate actual total file size for each owner from file_assignments
             rows = await conn.fetch(
-                """SELECT DISTINCT ON (owner) owner, files_size
-                   FROM pending_user_profile 
-                   WHERE owner = ANY($1::text[])
-                   ORDER BY owner, created_at DESC""",
+                """SELECT 
+                       fa.owner,
+                       COALESCE(SUM(f.size), 0) as total_file_size
+                   FROM file_assignments fa 
+                   JOIN files f ON fa.cid = f.cid 
+                   WHERE fa.owner = ANY($1::text[])
+                   AND f.size IS NOT NULL
+                   GROUP BY fa.owner""",
                 user_owners,
             )
-            user_profile_sizes = {row["owner"]: row["files_size"] for row in rows}
+            user_profile_sizes = {row["owner"]: row["total_file_size"] for row in rows}
 
         # Format requests with filtered miner profiles
         formatted_requests = []
