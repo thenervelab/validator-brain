@@ -178,31 +178,34 @@ class UnpinRequestConsumer:
             )
             if existing_request:
                 if existing_request["status"] == "processed":
-                    await conn.execute(
-                        "UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id
-                    )
-                    logger.debug(
-                        f"🔄 RESET_TO_UNPROCESSED: request_id={request_id}... - blockchain resubmission needed"
-                    )
-                else:
-                    logger.debug(f"🔄 ALREADY_UNPROCESSED: request_id={request_id}... - skipping")
-                return True
+                    return True
 
             # Fetch and parse manifest data
             manifest_data = await fetch_ipfs_content(cid)
+
+            if not manifest_data:
+                manifest_data = await fetch_ipfs_content(
+                    cid,
+                    ipfs_node_url="https://get.hippius.network",
+                )
+
             if not manifest_data:
                 logger.warning(
                     f"Could not fetch manifest data for cid={cid} - treating as already processed {request_data}"
                 )
-                return True
+                await conn.execute(
+                    "UPDATE processed_unpin_requests SET status = 'processed' WHERE request_id = $1", request_id
+                )
+                return False
 
             # Parse manifest JSON, fallback to single file if parsing fails
-            logger.info(f"Deserializing {manifest_data[:32]=}")
             try:
                 manifest_data = json.loads(manifest_data)
             except (UnicodeDecodeError, JSONDecodeError):
-                logger.info(f"Not a JSON manifest for cid={cid}, treating as single file")
-                manifest_data = [{"cid": cid, "owner": owner}]
+                await conn.execute(
+                    "UPDATE processed_unpin_requests SET status = 'processed' WHERE request_id = $1", request_id
+                )
+                return False
 
             # Process all files and collect affected miners
             affected_miners = await self._process_manifest_files_parallel(manifest_data, owner, conn)
@@ -231,23 +234,16 @@ class UnpinRequestConsumer:
         Args:
             message: The message to process
         """
-        logger.info("🔍 UNPIN_DEBUG: Consumer received message, starting process_message")
         async with message.process():
-            try:
-                data = json.loads(message.body.decode())
+            data = json.loads(message.body.decode())
 
-                logger.info(f"🔍 UNPIN_DEBUG: About to call process_unpin_request for {data}")
-                success = await self.process_unpin_request(data)
+            success = await self.process_unpin_request(data)
 
-                if not success:
-                    # Reject and requeue if processing failed
-                    raise Exception(f"Failed to process unpin request for account {data}")
-                else:
-                    logger.info(f"MESSAGE_SUCCESS: account={data} - processing completed successfully")
+            if not success:
+                # Reject and requeue if processing failed
+                raise Exception(f"Failed to process unpin request for account {data}")
 
-            except Exception:
-                logger.exception("MESSAGE_ERROR: Error processing message")
-                raise
+            logger.info(f"SUCCESS: {data=} processing completed successfully")
 
     async def start_consuming(self):
         """Start consuming messages from the queue."""
@@ -281,28 +277,21 @@ class UnpinRequestConsumer:
 
 async def main():
     """Main entry point for the consumer."""
-    logger.info("🔍 UNPIN_DEBUG: Starting unpin_request_consumer main()")
     consumer = UnpinRequestConsumer()
 
     try:
         # Connect to services
-        logger.info("🔍 UNPIN_DEBUG: Consumer connecting to services")
         await consumer.connect()
 
         # Start consuming
-        logger.info("🔍 UNPIN_DEBUG: Consumer starting to consume messages")
         await consumer.start_consuming()
 
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
-        logger.info("🔍 UNPIN_DEBUG: Consumer received interrupt signal")
     except Exception as e:
         logger.error(f"Consumer error: {e}")
-        logger.info(f"🔍 UNPIN_DEBUG: Consumer exception: {e}")
     finally:
-        logger.info("🔍 UNPIN_DEBUG: Consumer closing connections")
         await consumer.close()
-        logger.info("🔍 UNPIN_DEBUG: unpin_request_consumer main() completed")
 
 
 if __name__ == "__main__":
