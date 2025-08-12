@@ -166,7 +166,6 @@ class UnpinRequestConsumer:
                 await conn.execute(
                     "UPDATE processed_unpin_requests SET status = 'unprocessed' WHERE request_id = $1", request_id
                 )
-                return success
 
             # Fetch and parse manifest data
             manifest_data = await fetch_ipfs_content(cid)
