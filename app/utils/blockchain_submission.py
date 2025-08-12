@@ -897,15 +897,15 @@ async def call_update_unpin_and_storage_requests(
                 f"filtered to {len(filtered_miner_profiles)} affected miners: {affected_miners}"
             )
 
-            formatted_requests.append(
-                {
-                    "storage_request_owner": req["storage_request_owner"],
-                    "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
-                    "file_size": int(user_profile_file_size),
-                    "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
-                    "miner_pin_requests": filtered_miner_profiles,
-                }
-            )
+            formatted_unpin_request = {
+                "storage_request_owner": req["storage_request_owner"],
+                "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
+                "file_size": int(user_profile_file_size),
+                "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
+                "miner_pin_requests": filtered_miner_profiles,
+            }
+            logger.info(f"Parsed and closing {formatted_unpin_request=}")
+            formatted_requests.append(formatted_unpin_request)
 
         logger.info(f"Formatted {len(formatted_miner_profiles)} miner profiles for unpin submission")
 
