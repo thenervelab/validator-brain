@@ -14,8 +14,7 @@ from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from app.db.connection import close_db_pool, init_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 from app.db.models.pending_miner_profile import PendingMinerProfile
 
 # Setup logging
@@ -99,6 +98,16 @@ class MinerProfileReconstructionConsumer:
                     logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
                 else:
                     file_size = correct_file_size
+                    # Update the files table with the correct size to avoid re-fetching next time
+
+                    pool = get_db_pool()
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "UPDATE files SET size = $1 WHERE cid = $2",
+                            correct_file_size,
+                            cid,
+                        )
+                        logger.info(f"Updated files table with correct size {correct_file_size} for {cid=}")
 
         return {
             "created_at": block_number,
