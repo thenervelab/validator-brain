@@ -232,14 +232,17 @@ class NetworkSelfHealingProcessor:
                 validator_seed = os.getenv("VALIDATOR_SEED")
                 keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
 
-                if primary_node_ids:
-                    # Clean and decode node IDs
-                    clean_node_ids = [
-                        n.decode() if isinstance(n, bytes) else n
-                        for n in primary_node_ids
-                        if (n.decode() if isinstance(n, bytes) else n).startswith("12D3Koo")
-                    ]
+                # Clean and decode node IDs
+                all_decoded_ids = [n.decode() if isinstance(n, bytes) else n for n in primary_node_ids]
+                clean_node_ids = [n for n in all_decoded_ids if n.startswith("12D3Koo")]
+                ignored_node_ids = [n for n in all_decoded_ids if not n.startswith("12D3Koo")]
 
+                if ignored_node_ids:
+                    logger.warning(f"Ignoring {len(ignored_node_ids)} invalid node IDs: {ignored_node_ids}")
+
+                logger.info(f"Valid node IDs to deregister: {len(clean_node_ids)} out of {len(primary_node_ids)} total")
+
+                if clean_node_ids:
                     logger.info(
                         f"Submitting deregistration report to Hippius using account: {keypair.ss58_address} for {len(clean_node_ids)} node ids"
                     )

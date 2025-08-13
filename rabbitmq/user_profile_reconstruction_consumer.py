@@ -10,6 +10,7 @@ import aio_pika
 import httpx
 from aio_pika import IncomingMessage
 
+from app.db.connection import get_db_pool
 from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
 
 # Add parent directory to path for imports
@@ -76,6 +77,13 @@ class UserProfileReconstructionConsumer:
                         logger.warning(f"Got invalid {correct_file_size=} for {cid=}, will try again next time")
                     else:
                         file_size = correct_file_size
+                        pool = get_db_pool()
+                        async with pool.acquire() as conn:
+                            await conn.execute(
+                                "UPDATE files SET size = $1 WHERE cid = $2",
+                                correct_file_size,
+                                cid,
+                            )
 
             return {
                 "created_at": block_number,
@@ -203,9 +211,9 @@ class UserProfileReconstructionConsumer:
                         pool = get_db_pool()
                         async with pool.acquire() as conn:
                             await conn.execute(
-                                """UPDATE pending_user_profile 
-                                   SET cid = $1, files_count = $2, files_size = $3, 
-                                       block_number = $4, status = 'published', 
+                                """UPDATE pending_user_profile
+                                   SET cid = $1, files_count = $2, files_size = $3,
+                                       block_number = $4, status = 'published',
                                        published_at = NOW(), created_at = NOW()
                                    WHERE id = $5""",
                                 published_cid,
