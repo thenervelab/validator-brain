@@ -385,6 +385,7 @@ class EpochOrchestrator:
 
         await user_profile_processor.main()
         await self.wait_for_queues_empty(["user_profile"], 300)
+        await user_profile_processor.cleanup_orphaned_files()
 
     async def refresh_miner_profiles(self):
         """Refresh miner profiles data."""
