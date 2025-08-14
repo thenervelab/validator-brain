@@ -190,9 +190,15 @@ class UserProfileConsumer:
                             if exists:
                                 valid_miners.append(miner_id)
 
+                    # Deduplicate miners while preserving order to prevent same miner in multiple slots
+                    valid_miners_unique = []
+                    for miner in valid_miners:
+                        if miner not in valid_miners_unique:
+                            valid_miners_unique.append(miner)
+
                     # Update file_assignments table with only valid miners (empty slots will be reassigned later)
                     # Pad valid_miners to 5 elements
-                    miners_padded = (valid_miners + [None] * 5)[:5]
+                    miners_padded = (valid_miners_unique + [None] * 5)[:5]
 
                     await conn.execute(
                         """
