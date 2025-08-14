@@ -163,6 +163,16 @@ class UserProfileConsumer:
                         logger.warning(f"Failed to convert file_hash to CID for {account}")
                         continue
 
+                    # Track this file as active from chain
+                    await conn.execute(
+                        """
+                        INSERT INTO active_files_from_chain (cid, last_seen)
+                        VALUES ($1, CURRENT_TIMESTAMP)
+                        ON CONFLICT (cid) DO UPDATE SET last_seen = CURRENT_TIMESTAMP
+                        """,
+                        file_cid,
+                    )
+
                     # Insert into files table (skip if exists)
                     await conn.execute(
                         """
@@ -253,8 +263,7 @@ class UserProfileConsumer:
                 await self.process_user_profile(account, cid)
 
             except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                # Log error and continue processing
+                logger.error(f"Error processing message: {e}")  # Log error and continue processing
 
     async def start_consuming(self):
         """Start consuming messages from the queue."""
@@ -273,6 +282,54 @@ class UserProfileConsumer:
         except Exception as e:
             logger.error(f"Error in consumer: {e}")
             raise
+
+    async def cleanup_orphaned_files(self):
+        """
+        Clean up orphaned files that are no longer referenced in any user profiles from chain.
+        This removes files from both 'files' and 'file_assignments' tables that are not
+        present in the active_files_from_chain tracking table.
+        """
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                # Count files before cleanup
+                files_count_before = await conn.fetchval("SELECT COUNT(*) FROM files")
+                assignments_count_before = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
+
+                # Delete orphaned files using efficient NOT EXISTS query
+                deleted_files = await conn.fetchval("""
+                    SELECT FROM files f
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM active_files_from_chain a 
+                        WHERE a.cid = f.cid
+                    )
+                    """)
+
+                for row in deleted_files:
+                    logger.warning(f"About to delete orphan CID from files {row}")
+
+                # Delete orphaned file assignments using efficient NOT EXISTS query
+                deleted_assignments = await conn.fetchval("""
+                    SELECT FROM file_assignments fa
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM active_files_from_chain a 
+                        WHERE a.cid = fa.cid
+                    )
+                    """)
+
+                for row in deleted_assignments:
+                    logger.warning(f"About to delete orphan CID from deleted_assignments {row}")
+
+                # Count files after cleanup
+                files_count_after = await conn.fetchval("SELECT COUNT(*) FROM files")
+                assignments_count_after = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
+
+                files_removed = files_count_before - files_count_after
+                assignments_removed = assignments_count_before - assignments_count_after
+
+                logger.info(
+                    f"Orphaned file cleanup completed: "
+                    f"removed {files_removed} files and {assignments_removed} assignments"
+                )
 
     async def close(self):
         """Close all connections."""
