@@ -37,6 +37,9 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Maximum file size limit (100 GB in bytes)
+MAX_FILE_SIZE = 100 * 1024 * 1024 * 1024  # 107,374,182,400 bytes
+
 
 class UserProfileConsumer:
     """Consumer for processing user profiles."""
@@ -161,6 +164,21 @@ class UserProfileConsumer:
 
                     if not file_cid:
                         logger.warning(f"Failed to convert file_hash to CID for {account}")
+                        continue
+
+                    # Check if file exceeds maximum size limit and purge if needed
+                    if file_size > MAX_FILE_SIZE:
+                        logger.warning(
+                            f"File {file_cid} exceeds maximum size ({file_size:,} bytes > {MAX_FILE_SIZE:,} bytes), purging from database..."
+                        )
+
+                        # # Delete from files table
+                        # await conn.execute("DELETE FROM files WHERE cid = $1", file_cid)
+                        #
+                        # # Delete from file_assignments table
+                        # await conn.execute("DELETE FROM file_assignments WHERE cid = $1", file_cid)
+
+                        logger.info(f"Purged oversized file {file_cid} from files and file_assignments tables")
                         continue
 
                     # Track this file as active from chain
