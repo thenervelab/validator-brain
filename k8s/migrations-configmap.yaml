@@ -362,15 +362,29 @@ data:
     IF EXISTS pending_user_profile_status_check;\n\nALTER TABLE pending_user_profile
     \nADD CONSTRAINT pending_user_profile_status_check \nCHECK (status IN ('pending',
     'published', 'failed')); "
-  20250725000000_create_deregistered_node_ids_table.sql: "-- migrate:up\nCREATE TABLE
-    deregistered_node_ids (\n    node_id TEXT PRIMARY KEY,\n    unsuccessful_registration_checks
-    INTEGER DEFAULT 0 NOT NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n
-    \   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\nCREATE INDEX idx_deregistered_node_ids_checks
-    ON deregistered_node_ids(unsuccessful_registration_checks);\n\n-- migrate:down\nDROP
-    TABLE IF EXISTS deregistered_node_ids;"
+  20250703000000_add_processed_at_to_pending_assignment_file.sql: "-- migrate:up\n--
+    Add processed_at column to pending_assignment_file table\n-- This column is needed
+    by the pinning request consumer\nALTER TABLE pending_assignment_file \nADD COLUMN
+    processed_at TIMESTAMP DEFAULT NULL;\n\n-- Create index for the new column\nCREATE
+    INDEX idx_pending_assignment_file_processed_at ON pending_assignment_file(processed_at);\n\n--
+    migrate:down\nALTER TABLE pending_assignment_file \nDROP COLUMN IF EXISTS processed_at;"
+  20250725000000_create_deregistered_node_ids_table.sql: |-
+    -- migrate:up
+    CREATE TABLE deregistered_node_ids
+    (
+        node_id                          TEXT PRIMARY KEY,
+        unsuccessful_registration_checks INTEGER   DEFAULT 0 NOT NULL,
+        created_at                       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at                       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX idx_deregistered_node_ids_checks ON deregistered_node_ids (unsuccessful_registration_checks);
+
+    -- migrate:down
+    DROP TABLE IF EXISTS deregistered_node_ids;
   20250728000000_make_pending_miner_profile_cid_nullable.sql: "-- migrate:up\nALTER
-    TABLE pending_miner_profile \nALTER COLUMN cid DROP NOT NULL;\n\n-- migrate:down\nALTER
-    TABLE pending_miner_profile \nALTER COLUMN cid SET NOT NULL;"
+    TABLE pending_miner_profile \nALTER COLUMN cid DROP NOT NULL;\n\n-- migrate:down
+    \ \nALTER TABLE pending_miner_profile \nALTER COLUMN cid SET NOT NULL;"
   20250728000001_add_needs_reconstruction_status.sql: "-- migrate:up\nALTER TABLE
     pending_miner_profile \nDROP CONSTRAINT IF EXISTS pending_miner_profile_status_check;\n\nALTER
     TABLE pending_miner_profile \nADD CONSTRAINT pending_miner_profile_status_check
@@ -402,26 +416,14 @@ data:
 
     -- migrate:down
     DROP TABLE IF EXISTS processed_unpin_requests;
-
-  20250731100000_add_status_to_processed_unpin_requests.sql: |-
-    -- migrate:up
-    -- Add status column to processed_unpin_requests table
-    ALTER TABLE processed_unpin_requests
-        ADD COLUMN status VARCHAR(50) DEFAULT 'unprocessed' CHECK (status IN ('unprocessed', 'processed'));
-
-    -- Create index for better query performance
-    CREATE INDEX idx_processed_unpin_requests_status ON processed_unpin_requests (status);
-
-    -- Update existing records to have 'unprocessed' status
-    UPDATE processed_unpin_requests
-    SET status = 'unprocessed'
-    WHERE status IS NULL;
-
-    -- migrate:down
-    DROP INDEX IF EXISTS idx_processed_unpin_requests_status;
-    ALTER TABLE processed_unpin_requests
-        DROP COLUMN IF EXISTS status;
-
+  20250731100000_add_status_to_processed_unpin_requests.sql: "-- migrate:up\n-- Add
+    status column to processed_unpin_requests table\nALTER TABLE processed_unpin_requests
+    \nADD COLUMN status VARCHAR(50) DEFAULT 'unprocessed' CHECK (status IN ('unprocessed',
+    'processed'));\n\n-- Create index for better query performance\nCREATE INDEX idx_processed_unpin_requests_status
+    ON processed_unpin_requests(status);\n\n-- Update existing records to have 'unprocessed'
+    status\nUPDATE processed_unpin_requests SET status = 'unprocessed' WHERE status
+    IS NULL;\n\n-- migrate:down\nDROP INDEX IF EXISTS idx_processed_unpin_requests_status;\nALTER
+    TABLE processed_unpin_requests DROP COLUMN IF EXISTS status;"
   20250731110000_increase_processed_unpin_requests_column_sizes.sql: |-
     -- migrate:up
     -- Increase column sizes for processed_unpin_requests table to handle longer values
@@ -440,7 +442,6 @@ data:
         ALTER COLUMN request_id TYPE VARCHAR(255);
     ALTER TABLE processed_unpin_requests
         ALTER COLUMN file_hash TYPE VARCHAR(255);
-
   20250802000000_add_cid_to_processed_unpin_requests.sql: |-
     -- migrate:up
     -- Add cid column to processed_unpin_requests table
@@ -455,7 +456,6 @@ data:
     DROP INDEX IF EXISTS idx_processed_unpin_requests_cid;
     ALTER TABLE processed_unpin_requests
         DROP COLUMN IF EXISTS cid;
-
   20250802000001_add_affected_miners_to_processed_unpin_requests.sql: |-
     -- migrate:up
     -- Add affected_miners column to processed_unpin_requests table
@@ -470,14 +470,29 @@ data:
     DROP INDEX IF EXISTS idx_processed_unpin_requests_affected_miners;
     ALTER TABLE processed_unpin_requests
         DROP COLUMN IF EXISTS affected_miners;
-
-  20250803175854_add_node_hierarchy_to_registration.sql: |-
+  20250803175854_add_node_hierarchy_to_registration.sql: |+
     -- migrate:up
-    ALTER TABLE registration ADD COLUMN node_hierarchy VARCHAR(10) NOT NULL DEFAULT 'main';
+    ALTER TABLE registration
+        ADD COLUMN node_hierarchy VARCHAR(10) NOT NULL DEFAULT 'main';
 
     -- migrate:down
-    ALTER TABLE registration DROP COLUMN node_hierarchy;
+    ALTER TABLE registration
+        DROP COLUMN node_hierarchy;
 
+  20250814000000_add_active_files_tracking_table.sql: |-
+    -- migrate:up
+    CREATE TABLE IF NOT EXISTS active_files_from_chain
+    (
+        cid       TEXT PRIMARY KEY,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Index for faster lookups during cleanup operations
+    CREATE INDEX IF NOT EXISTS idx_active_files_last_seen ON active_files_from_chain (last_seen);
+
+    -- migrate:down
+    DROP INDEX IF EXISTS idx_active_files_last_seen;
+    DROP TABLE IF EXISTS active_files_from_chain;
 kind: ConfigMap
 metadata:
   creationTimestamp: null

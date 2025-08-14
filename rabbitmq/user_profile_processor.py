@@ -22,6 +22,7 @@ import aio_pika
 from dotenv import load_dotenv
 from substrateinterface import SubstrateInterface
 
+from app.db.connection import get_db_pool, init_db_pool
 from app.utils.config import NODE_URL
 
 # Load environment variables
@@ -51,6 +52,7 @@ class UserProfileProcessor:
         self.rabbitmq_connection = None
         self.rabbitmq_channel = None
         self.rabbitmq_queue = None
+        self.db_pool = None
 
     def connect_substrate(self):
         """Connect to the substrate chain."""
@@ -74,6 +76,16 @@ class UserProfileProcessor:
             logger.info(f"Connected to RabbitMQ and declared queue '{self.queue_name}'")
         except Exception as e:
             logger.error(f"Failed to connect to RabbitMQ: {e}")
+            raise
+
+    async def connect_database(self):
+        """Connect to the database."""
+        try:
+            await init_db_pool()
+            self.db_pool = get_db_pool()
+            logger.info("Connected to database")
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {e}")
             raise
 
     def parse_user_profile_data(self, storage_data: list[list[Any]]) -> list[dict[str, str]]:
@@ -235,6 +247,60 @@ class UserProfileProcessor:
             if self.rabbitmq_connection:
                 await self.rabbitmq_connection.close()
                 logger.info("Closed RabbitMQ connection")
+
+    async def cleanup_orphaned_files(self):
+        """
+        Clean up orphaned files that are no longer referenced in any user profiles from chain.
+        This removes files from both 'files' and 'file_assignments' tables that are not
+        present in the active_files_from_chain tracking table.
+        """
+        if not self.db_pool:
+            await self.connect_database()
+
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                # Count files before cleanup
+                files_count_before = await conn.fetchval("SELECT COUNT(*) FROM files")
+                assignments_count_before = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
+
+                # Delete orphaned files using efficient NOT EXISTS query
+                orphaned_files = await conn.execute("""
+                    SELECT FROM files f
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM active_files_from_chain a 
+                        WHERE a.cid = f.cid
+                    )
+                    """)
+
+                for row in orphaned_files:
+                    logger.info(f"Pruning orphaned {row=} from files")
+
+                # Delete orphaned file assignments using efficient NOT EXISTS query
+                orphaned_file_assignments = await conn.execute("""
+                    SELECT FROM file_assignments fa
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM active_files_from_chain a
+                        WHERE a.cid = fa.cid
+                    )
+                    """)
+                for row in orphaned_file_assignments:
+                    logger.info(f"Pruning orphaned {row=} from file_assignments")
+
+                # Count files after cleanup
+                files_count_after = await conn.fetchval("SELECT COUNT(*) FROM files")
+                assignments_count_after = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
+
+                files_removed = files_count_before - files_count_after
+                assignments_removed = assignments_count_before - assignments_count_after
+
+                logger.info(
+                    f"Orphaned file cleanup completed: "
+                    f"removed {files_removed} files and {assignments_removed} assignments"
+                )
+
+                await conn.execute("DELETE FROM active_files_from_chain")
+
+                logger.info("Dropped all data from active_files_from_chain table")
 
 
 async def main():
