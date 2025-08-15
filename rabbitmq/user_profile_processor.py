@@ -259,7 +259,7 @@ async def cleanup_orphaned_files():
             orphaned_files = await conn.fetch("""
                 SELECT cid FROM files f
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM active_files_from_chain a 
+                    SELECT 1 FROM active_files_from_chain a
                     WHERE a.cid = f.cid
                 )
                 """)
@@ -299,13 +299,16 @@ async def cleanup_orphaned_files():
                 f"Orphaned file cleanup completed: removed {files_removed} files and {assignments_removed} assignments"
             )
 
-            await conn.execute("DELETE FROM active_files_from_chain")
-
-            logger.info("Dropped all data from active_files_from_chain table")
-
 
 async def main():
     """Main entry point for the processor."""
+    # Clear tracking table at start of each run to prevent bloat
+    await init_db_pool()
+    db_pool = get_db_pool()
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM active_files_from_chain")
+        logger.info("Cleared active_files_from_chain table for fresh tracking")
+
     processor = UserProfileProcessor()
     await processor.run_once()
 

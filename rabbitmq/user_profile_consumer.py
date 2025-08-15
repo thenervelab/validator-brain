@@ -167,7 +167,7 @@ class UserProfileConsumer:
                         continue
 
                     # Check if file exceeds maximum size limit and purge if needed
-                    if file_size > MAX_FILE_SIZE:
+                    if int(file_size) > MAX_FILE_SIZE:
                         logger.warning(
                             f"File {file_cid} exceeds maximum size ({file_size:,} bytes > {MAX_FILE_SIZE:,} bytes), purging from database..."
                         )
@@ -301,53 +301,6 @@ class UserProfileConsumer:
             logger.error(f"Error in consumer: {e}")
             raise
 
-    async def cleanup_orphaned_files(self):
-        """
-        Clean up orphaned files that are no longer referenced in any user profiles from chain.
-        This removes files from both 'files' and 'file_assignments' tables that are not
-        present in the active_files_from_chain tracking table.
-        """
-        async with self.db_pool.acquire() as conn:
-            async with conn.transaction():
-                # Count files before cleanup
-                files_count_before = await conn.fetchval("SELECT COUNT(*) FROM files")
-                assignments_count_before = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
-
-                # Delete orphaned files using efficient NOT EXISTS query
-                deleted_files = await conn.fetchval("""
-                    SELECT FROM files f
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM active_files_from_chain a 
-                        WHERE a.cid = f.cid
-                    )
-                    """)
-
-                for row in deleted_files:
-                    logger.warning(f"About to delete orphan CID from files {row}")
-
-                # Delete orphaned file assignments using efficient NOT EXISTS query
-                deleted_assignments = await conn.fetchval("""
-                    SELECT FROM file_assignments fa
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM active_files_from_chain a 
-                        WHERE a.cid = fa.cid
-                    )
-                    """)
-
-                for row in deleted_assignments:
-                    logger.warning(f"About to delete orphan CID from deleted_assignments {row}")
-
-                # Count files after cleanup
-                files_count_after = await conn.fetchval("SELECT COUNT(*) FROM files")
-                assignments_count_after = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
-
-                files_removed = files_count_before - files_count_after
-                assignments_removed = assignments_count_before - assignments_count_after
-
-                logger.info(
-                    f"Orphaned file cleanup completed: "
-                    f"removed {files_removed} files and {assignments_removed} assignments"
-                )
 
     async def close(self):
         """Close all connections."""
