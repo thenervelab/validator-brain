@@ -124,8 +124,8 @@ class RegistrationConsumer:
                     node_type,
                     owner_account,
                     registration["registered_at"],
-                    registration["node_hierarchy"],
                     status,
+                    registration["node_hierarchy"],
                 )
 
                 logger.info(f"Stored registration for node {node_id} (source: {registration.get('source', 'unknown')})")
