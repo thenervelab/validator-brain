@@ -101,7 +101,7 @@ class UserProfileReconstructionProcessor:
                 LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
                 WHERE r.node_type = 'StorageMiner'
                   AND r.status = 'active'
-                  AND COALESCE(ms.health_score, 100) >= 70
+                  AND COALESCE(ms.health_score, 100) >= 50
                 ORDER BY COALESCE(ms.health_score, 100) DESC, r.node_id
                 LIMIT 50
             """
