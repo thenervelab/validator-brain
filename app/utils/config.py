@@ -44,7 +44,7 @@ def get_ipfs_timeout(operation_type="default"):
     """
     timeout_map = {
         "default": int(os.environ.get("IPFS_TIMEOUT_SECONDS", 10)),
-        "ping": int(os.environ.get("IPFS_TIMEOUT_SECONDS", 10)),
+        "ping": int(os.environ.get("IPFS_TIMEOUT_SECONDS", 4)),
         "dht": int(os.environ.get("IPFS_DHT_TIMEOUT_SECONDS", 60)),
         "refs": int(os.environ.get("IPFS_REFS_TIMEOUT_SECONDS", 30)),
         "fetch": int(os.environ.get("IPFS_FETCH_TIMEOUT", 60)),

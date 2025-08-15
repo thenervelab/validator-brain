@@ -109,8 +109,8 @@ class RegistrationConsumer:
                         node_id, ipfs_peer_id, node_type, owner_account, 
                         registered_at, status, node_hierarchy, updated_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                    ON CONFLICT (node_id) 
-                    DO UPDATE SET 
+                    ON CONFLICT (node_id)
+                    DO UPDATE SET
                         ipfs_peer_id = EXCLUDED.ipfs_peer_id,
                         node_type = EXCLUDED.node_type,
                         owner_account = EXCLUDED.owner_account,
