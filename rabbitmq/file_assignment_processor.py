@@ -690,10 +690,10 @@ class FileAssignmentProcessor:
                 empty_slots = sum(1 for m in current_miners if m is None)
                 assigned_miners = [m for m in current_miners if m is not None]
 
-                logger.info(
-                    f"Reassigning file {filename} ({cid[:16]}...) - {empty_slots} empty slots, "
-                    f"currently assigned to {len(assigned_miners)} miners"
-                )
+                # logger.info(
+                #     f"Reassigning file {filename} ({cid[:16]}...) - {empty_slots} empty slots, "
+                #     f"currently assigned to {len(assigned_miners)} miners"
+                # )
 
                 # Select miners for empty slots
                 new_miners = self.select_miners_for_reassignment(
@@ -725,10 +725,10 @@ class FileAssignmentProcessor:
                 await self.queue_assignment_task(assignment_data)
                 successful_reassignments += 1
 
-                logger.info(
-                    f"Successfully queued reassignment for file {cid[:16]}... - "
-                    f"adding {len(new_miners)} miners: {', '.join(new_miners)}"
-                )
+                # logger.info(
+                #     f"Successfully queued reassignment for file {cid[:16]}... - "
+                #     f"adding {len(new_miners)} miners: {', '.join(new_miners)}"
+                # )
 
             except Exception as e:
                 logger.error(f"Error processing reassignment for file {file_info.get('cid', 'unknown')}: {e}")
