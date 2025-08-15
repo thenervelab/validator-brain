@@ -172,11 +172,11 @@ class UserProfileConsumer:
                             f"File {file_cid} exceeds maximum size ({file_size:,} bytes > {MAX_FILE_SIZE:,} bytes), purging from database..."
                         )
 
-                        # # Delete from files table
-                        # await conn.execute("DELETE FROM files WHERE cid = $1", file_cid)
-                        #
-                        # # Delete from file_assignments table
-                        # await conn.execute("DELETE FROM file_assignments WHERE cid = $1", file_cid)
+                        # Delete from files table
+                        await conn.execute("DELETE FROM files WHERE cid = $1", file_cid)
+
+                        # Delete from file_assignments table
+                        await conn.execute("DELETE FROM file_assignments WHERE cid = $1", file_cid)
 
                         logger.info(f"Purged oversized file {file_cid} from files and file_assignments tables")
                         continue
@@ -300,7 +300,6 @@ class UserProfileConsumer:
         except Exception as e:
             logger.error(f"Error in consumer: {e}")
             raise
-
 
     async def close(self):
         """Close all connections."""

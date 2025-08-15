@@ -255,38 +255,26 @@ async def cleanup_orphaned_files():
             files_count_before = await conn.fetchval("SELECT COUNT(*) FROM files")
             assignments_count_before = await conn.fetchval("SELECT COUNT(*) FROM file_assignments")
 
-            # Find orphaned files (DRY RUN - just log what would be deleted)
-            orphaned_files = await conn.fetch("""
-                SELECT cid FROM files f
+            # Delete orphaned files
+            deleted_files_count = await conn.execute("""
+                DELETE FROM files f
                 WHERE NOT EXISTS (
                     SELECT 1 FROM active_files_from_chain a
                     WHERE a.cid = f.cid
                 )
                 """)
 
-            logger.info(f"DRY RUN: Would delete {len(orphaned_files)} orphaned files:")
-            for row in orphaned_files:
-                logger.warning(f"Would delete orphaned file: {row['cid']}")
-
-            # Find orphaned file assignments (DRY RUN - just log what would be deleted)
-            orphaned_file_assignments = await conn.fetch("""
-                SELECT cid, owner FROM file_assignments fa
+            # Delete orphaned file assignments
+            deleted_assignments_count = await conn.execute("""
+                DELETE FROM file_assignments fa
                 WHERE NOT EXISTS (
                     SELECT 1 FROM active_files_from_chain a
                     WHERE a.cid = fa.cid
                 )
                 """)
 
-            logger.info(f"DRY RUN: Would delete {len(orphaned_file_assignments)} orphaned file assignments:")
-            for row in orphaned_file_assignments:
-                logger.warning(f"Would delete orphaned assignment: {row['cid']} (owner: {row['owner']})")
-
-            # DRY RUN: Don't actually delete, just log what would happen
-            logger.info("DRY RUN SUMMARY:")
-            logger.info(f"  - Would delete {len(orphaned_files)} files from 'files' table")
-            logger.info(f"  - Would delete {len(orphaned_file_assignments)} assignments from 'file_assignments' table")
-            logger.info(f"  - Total orphaned entries: {len(orphaned_files) + len(orphaned_file_assignments)}")
-            logger.info("DRY RUN: No actual deletions performed")
+            logger.info(f"Deleted {deleted_files_count} orphaned files from 'files' table")
+            logger.info(f"Deleted {deleted_assignments_count} orphaned assignments from 'file_assignments' table")
 
             # Count files after cleanup
             files_count_after = await conn.fetchval("SELECT COUNT(*) FROM files")
