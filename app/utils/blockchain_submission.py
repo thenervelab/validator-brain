@@ -218,13 +218,16 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
         # Format the requests to match the StorageRequestUpdate structure
         formatted_requests = []
         for req in requests:
+            storage_request_owner = req["storage_request_owner"]
+            file_size = int(req["file_size"])
             formatted_req = {
-                "storage_request_owner": req["storage_request_owner"],
+                "storage_request_owner": storage_request_owner,
                 "storage_request_file_hash": string_to_bounded_vec(req["storage_request_file_hash"]),
-                "file_size": int(req["file_size"]),
+                "file_size": file_size,
                 "user_profile_cid": string_to_bounded_vec(req["user_profile_cid"]),
             }
             formatted_requests.append(formatted_req)
+            logger.info(f"Setting user profile {file_size=} for {storage_request_owner}")
 
         logger.info(f"Closing on chain {len(formatted_requests)} storage requests")
 
@@ -308,13 +311,7 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
                     "files_size": files_size,
                 }
                 formatted_miner_profiles.append(formatted_profile)
-
-                # Log sample profiles for debugging (first 3)
-                if i < 3:
-                    logger.debug(
-                        f"Formatted miner profile {i}: node_id={miner_node_id[:20]}..., "
-                        f"files_count={files_count}, files_size={files_size}"
-                    )
+                logger.info(f"Setting {files_size=} {files_count=} for {miner_node_id=}")
 
             except Exception as e:
                 logger.error(f"Error formatting miner profile {i}: {e}")
@@ -324,12 +321,6 @@ def _submit_single_batch(requests: list[dict[str, Any]], miner_profiles: list[di
         logger.info(
             f"Formatted {len(formatted_miner_profiles)} valid miner profiles (from {len(miner_profiles)} total)"
         )
-
-        if len(formatted_miner_profiles) == 0:
-            logger.error("🚨 CRITICAL: No valid miner profiles after formatting!")
-            logger.error("   This suggests data corruption in miner profile generation")
-            logger.error("   Check the file assignment and profile reconstruction logic")
-            return False
 
         # Validate we have some data to submit
         if len(formatted_requests) == 0 and len(formatted_miner_profiles) == 0:

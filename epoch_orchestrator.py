@@ -27,7 +27,7 @@ from rabbitmq import (
     user_profile_processor,
     user_profile_reconstruction_processor,
 )
-from substrate_fetcher.validator_workflow import ValidatorWorkflow
+from substrate_fetcher.substrate_processor import process_storage_requests
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -547,9 +547,6 @@ class EpochOrchestrator:
         await self.process_unpinning_requests()
 
         try:
-            # Create workflow instance
-            workflow = ValidatorWorkflow(validator_account_id=self.our_validator_account)
-
             # Get individual files from file_assignments (already extracted from manifests by pinning consumer)
             storage_requests = []
             async with self.db_pool.acquire() as conn:
@@ -660,7 +657,7 @@ class EpochOrchestrator:
             (
                 user_profiles,
                 processed_miner_profiles,
-            ) = await workflow.process_storage_requests(
+            ) = await process_storage_requests(
                 storage_requests=storage_requests,
                 miner_profiles=miner_profiles,
                 node_registration=node_registration,
