@@ -101,10 +101,10 @@ class UserProfileConsumer:
                 if response.status_code == 200:
                     return response.content
                 else:
-                    logger.error(f"Failed to fetch CID {cid}: HTTP {response.status_code}")
+                    logger.error(f"Failed to fetch {cid=} {api_url=} ({response.status_code})")
                     return None
             except Exception as e:
-                logger.error(f"Error fetching CID {cid}: {e}")
+                logger.error(f"Error fetching CID {cid=} {api_url=}: {e}")
                 return None
 
     async def process_user_profile(self, account: str, cid: str) -> int:
