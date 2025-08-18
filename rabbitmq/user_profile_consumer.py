@@ -204,25 +204,22 @@ class UserProfileConsumer:
                         datetime.utcnow(),
                     )
 
-                    # Filter out miners that don't exist in registration table
-                    valid_miners = []
-                    for miner_id in miner_ids:
-                        if miner_id:
-                            # Check if miner exists in registration table
-                            exists = await conn.fetchval(
-                                """
-                                SELECT 1 FROM registration WHERE node_id = $1 LIMIT 1
-                            """,
-                                miner_id,
-                            )
-                            if exists:
-                                valid_miners.append(miner_id)
+                    # # Filter out miners that don't exist in registration table
+                    # valid_miners = []
+                    # for miner_id in miner_ids:
+                    #     if miner_id:
+                    #         # Check if miner exists in registration table
+                    #         exists = await conn.fetchval(
+                    #             """
+                    #             SELECT 1 FROM registration WHERE node_id = $1 LIMIT 1
+                    #         """,
+                    #             miner_id,
+                    #         )
+                    #         if exists:
+                    #             valid_miners.append(miner_id)
 
                     # Deduplicate miners while preserving order to prevent same miner in multiple slots
-                    valid_miners_unique = []
-                    for miner in valid_miners:
-                        if miner not in valid_miners_unique:
-                            valid_miners_unique.append(miner)
+                    valid_miners_unique = list(set(miner_ids))
 
                     # Update file_assignments table with only valid miners (empty slots will be reassigned later)
                     # Pad valid_miners to 5 elements
