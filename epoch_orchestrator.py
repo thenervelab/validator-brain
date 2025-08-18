@@ -1137,7 +1137,7 @@ class EpochOrchestrator:
             self.initialization_completed = True
 
         elif self.initialization_completed and not self.health_checks_completed:
-            if block_position <= 25:
+            if block_position <= 50:
                 # EARLY EPOCH: Can start health checks OR use previous data
                 logger.info(f"🏥 VALIDATOR: Health check decision at block {block_position}/99")
 

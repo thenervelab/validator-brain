@@ -284,7 +284,7 @@ class FileAssignmentConsumer:
                     if affected_miners:
                         await conn.executemany(
                             """
-                            INSERT INTO pending_miner_profile (node_id, status, created_at) 
+                            INSERT INTO pending_miner_profile (node_id, status, created_at)
                             VALUES ($1, 'needs_reconstruction', NOW())
                             ON CONFLICT (node_id) DO UPDATE SET 
                                 status = 'needs_reconstruction',

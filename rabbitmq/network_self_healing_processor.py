@@ -185,7 +185,7 @@ class NetworkSelfHealingProcessor:
                 await conn.execute("DELETE FROM miner_availability WHERE miner_id = $1", miner_node_id)
 
                 # Remove miner from file assignments (set miner columns to NULL)
-                files_unassigned = await conn.execute(
+                await conn.execute(
                     """
                     UPDATE file_assignments SET
                         miner1 = CASE WHEN miner1 = $1 THEN NULL ELSE miner1 END,
@@ -222,15 +222,16 @@ class NetworkSelfHealingProcessor:
 
             if deregistration.coldkeys:
                 primary_node_ids = [miner.id for miner in deregistration.primary_nodes]
-                primary_ipfs_ids = [miner.ipfs_peer_id for miner in deregistration.primary_nodes]
-                secondary_ipfs_ids = [miner.ipfs_peer_id for miner in deregistration.linked_nodes]
-                all_ipfs_ids = set(primary_ipfs_ids + secondary_ipfs_ids)
-                cleaned_count = await self.cleanup_deregistered_miners(list(all_ipfs_ids))
-                logger.info(f"🧹 Removed {cleaned_count} file assignments")
+                secondary_node_ids = [miner.id for miner in deregistration.linked_nodes]
+                all_node_ids = set(primary_node_ids + secondary_node_ids)
+                await self.cleanup_deregistered_miners(list(all_node_ids))
+                logger.info(f"Removed file assignments for {len(all_node_ids)=}")
 
                 # Submit deregistration report to Hippius blockchain
-                validator_seed = os.getenv("VALIDATOR_SEED")
-                keypair = Keypair.create_from_mnemonic(validator_seed, ss58_format=42)
+                keypair = Keypair.create_from_mnemonic(
+                    os.environ["VALIDATOR_SEED"],
+                    ss58_format=42,
+                )
 
                 # Clean and decode node IDs
                 all_decoded_ids = [n.decode() if isinstance(n, bytes) else n for n in primary_node_ids]
