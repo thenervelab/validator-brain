@@ -19,7 +19,7 @@ class StorageRequest(BaseModel):
     created_at: str
 
     @classmethod
-    def from_substrate(cls, data):
+    def from_substrate(cls, data) -> "StorageRequest":
         """Create StorageRequest from substrate data tuple format.
 
         Expected format: ((<owner_obj>, <file_hash_obj>), additional_data)
@@ -27,43 +27,18 @@ class StorageRequest(BaseModel):
         and additional_data is either None or a dictionary with metadata.
         """
         # Handle the specific tuple format we've identified from logs
-        if isinstance(data, tuple) and len(data) == 2:
-            key_tuple, additional_data = data
+        key_tuple, metadata = data
+        owner_obj, file_hash_obj = key_tuple
 
-            if isinstance(key_tuple, tuple) and len(key_tuple) == 2:
-                owner_obj, file_hash_obj = key_tuple
+        owner = str(owner_obj.value) if hasattr(owner_obj, "value") else str(owner_obj)
+        file_hash = str(file_hash_obj.value) if hasattr(file_hash_obj, "value") else str(file_hash_obj)
 
-                # Extract string values
-                owner = str(owner_obj.value) if hasattr(owner_obj, "value") else str(owner_obj)
-                file_hash = str(file_hash_obj.value) if hasattr(file_hash_obj, "value") else str(file_hash_obj)
-
-                # Base model with defaults
-                model = cls(owner_account_id=owner, file_hash=file_hash)
-
-                # Add additional data if available
-                if isinstance(additional_data, dict):
-                    if "file_size" in additional_data:
-                        model.file_size = additional_data["file_size"]
-                    elif "total_replicas" in additional_data:
-                        # Estimate size based on replicas
-                        model.file_size = additional_data["total_replicas"] * 1000000
-
-                    if "created_at" in additional_data:
-                        model.created_at = str(additional_data["created_at"])
-
-                return model
-
-        # Handle dictionary format directly
-        if isinstance(data, dict):
-            return cls(
-                owner_account_id=data["owner_account_id"],
-                file_hash=data["file_hash"],
-                file_size=data.get("file_size", 1000000),
-                created_at=str(data.get("created_at", "")),
-            )
-
-        # For other formats, return a simple string representation
-        return cls(owner_account_id="unknown", file_hash=str(data))
+        return cls(
+            owner_account_id=owner,
+            file_hash=file_hash,
+            created_at=str(metadata["created_at"]),
+            file_size=metadata["file_size"],
+        )
 
 
 class MinerProfile(BaseModel):
@@ -92,7 +67,10 @@ class MinerProfile(BaseModel):
                 profile_cid=data.get("profile_cid"),
             )
         # Fallback
-        return cls(node_id=str(data), ipfs_peer_id=str(data))
+        return cls(
+            node_id=str(data),
+            ipfs_peer_id=str(data),
+        )
 
 
 async def process_storage_requests(

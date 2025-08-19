@@ -4,7 +4,48 @@ import json
 import logging
 from typing import Any
 
+import httpx
+
+from app.utils.config import get_ipfs_node_url
+
 logger = logging.getLogger(__name__)
+
+IPFS_URL = get_ipfs_node_url()
+
+
+async def publish_to_ipfs(
+    http_client: httpx.AsyncClient,
+    profile_json: list,
+):
+    try:
+        json_data = json.dumps(
+            profile_json,
+            indent=2,
+        )
+
+        files = {
+            "file": (
+                "user_profile.json",
+                json_data,
+                "application/json",
+            ),
+        }
+
+        response = await http_client.post(
+            f"{IPFS_URL}/api/v0/add",
+            files=files,
+            params={"pin": "true"},
+        )
+
+        response.raise_for_status()
+        cid = response.json()["Hash"]
+        logger.info(f"Successfully published user profile to IPFS: {cid}")
+
+        return cid
+
+    except Exception:
+        logger.exception(f"Error publishing to IPFS {IPFS_URL}:")
+        return None
 
 
 def bytes_to_ipfs_cid(byte_array: list[int]) -> str:

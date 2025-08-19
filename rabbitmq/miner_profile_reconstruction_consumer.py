@@ -11,6 +11,7 @@ import httpx
 from aio_pika import IncomingMessage
 
 from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
+from substrate_fetcher.ipfs_profile_parser import publish_to_ipfs
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -155,35 +156,6 @@ class MinerProfileReconstructionConsumer:
 
         return profile_files
 
-    async def publish_to_ipfs(self, profile_json: list) -> Optional[str]:
-        """Publish the profile JSON to the remote IPFS node"""
-        try:
-            # Convert profile to JSON string
-            json_data = json.dumps(profile_json, indent=2)
-
-            # Prepare the request
-            files = {"file": ("profile.json", json_data, "application/json")}
-
-            # Send to IPFS API
-            response = await self.http_client.post(
-                f"{self.remote_ipfs_url}/api/v0/add",
-                files=files,
-                params={"pin": "true"},
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                cid = result.get("Hash")
-                logger.info(f"Successfully published profile to IPFS: {cid}")
-                return cid
-            else:
-                logger.error(f"Failed to publish to IPFS: {response.status_code} - {response.text}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error publishing to IPFS: {e}")
-            return None
-
     async def process_message(self, message: IncomingMessage) -> None:
         """Process a single message from the queue"""
         async with message.process():
@@ -205,7 +177,10 @@ class MinerProfileReconstructionConsumer:
                 profile_json = await self.reconstruct_profile_json(message_data)
 
                 # Publish to IPFS
-                published_cid = await self.publish_to_ipfs(profile_json)
+                published_cid = await publish_to_ipfs(
+                    self.http_client,
+                    profile_json,
+                )
 
                 if published_cid:
                     # Update or create the pending profile record with the actual IPFS CID
@@ -227,7 +202,8 @@ class MinerProfileReconstructionConsumer:
                         total_size = message_data.get("total_size", 0)
                         block_number = message_data.get("block_number", 0)
                         profile_record = await PendingMinerProfile.create(
-                            cid=published_cid,  # Use the actual IPFS CID
+                            cid=published_cid,
+                            # Use the actual IPFS CID
                             node_id=node_id,
                             files_count=files_count,
                             files_size=total_size,

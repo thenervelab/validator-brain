@@ -3,24 +3,17 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from typing import Any, Optional
 
 import aio_pika
 import httpx
 from aio_pika import IncomingMessage
 
-from app.db.connection import get_db_pool
-from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
-
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from app.db.connection import close_db_pool, init_db_pool
+from app.db.connection import close_db_pool, get_db_pool, init_db_pool
 from app.db.models.pending_user_profile import PendingUserProfile
+from rabbitmq.pinning_request_consumer import fetch_ipfs_file_size
+from substrate_fetcher.ipfs_profile_parser import publish_to_ipfs
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -156,30 +149,33 @@ class UserProfileReconstructionConsumer:
     async def publish_to_ipfs(self, profile_json: list[dict[str, Any]]) -> Optional[str]:
         """Publish the profile JSON to the remote IPFS node"""
         try:
-            # Convert profile to JSON string
-            json_data = json.dumps(profile_json, indent=2)
+            json_data = json.dumps(
+                profile_json,
+                indent=2,
+            )
 
-            # Prepare the request
-            files = {"file": ("user_profile.json", json_data, "application/json")}
+            files = {
+                "file": (
+                    "user_profile.json",
+                    json_data,
+                    "application/json",
+                ),
+            }
 
-            # Send to IPFS API
             response = await self.http_client.post(
                 f"{self.remote_ipfs_url}/api/v0/add",
                 files=files,
                 params={"pin": "true"},
             )
 
-            if response.status_code == 200:
-                result = response.json()
-                cid = result.get("Hash")
-                logger.info(f"Successfully published user profile to IPFS: {cid}")
-                return cid
-            else:
-                logger.error(f"Failed to publish to IPFS: {response.status_code} - {response.text}")
-                return None
+            response.raise_for_status()
+            cid = response.json()["Hash"]
+            logger.info(f"Successfully published user profile to IPFS: {cid}")
 
-        except Exception as e:
-            logger.error(f"Error publishing to IPFS: {e}")
+            return cid
+
+        except Exception:
+            logger.exception(f"Error publishing to IPFS {self.remote_ipfs_url}:")
             return None
 
     async def process_message(self, message: IncomingMessage) -> None:
@@ -197,17 +193,17 @@ class UserProfileReconstructionConsumer:
                 existing = await PendingUserProfile.get_by_owner(owner)
 
                 # Reconstruct the profile JSON
-                profile_json = await self.reconstruct_profile_json(message_data)
+                user_profile = await self.reconstruct_profile_json(message_data)
 
                 # Publish profile to IPFS
-                published_cid = await self.publish_to_ipfs(profile_json)
+                published_cid = await publish_to_ipfs(
+                    self.http_client,
+                    user_profile,
+                )
 
                 if published_cid:
                     # Update or create the pending profile record with the actual IPFS CID
                     if existing:
-                        # Update the existing record with the new IPFS CID
-                        from app.db.connection import get_db_pool
-
                         pool = get_db_pool()
                         async with pool.acquire() as conn:
                             await conn.execute(
@@ -241,7 +237,6 @@ class UserProfileReconstructionConsumer:
 
                     logger.info(f"Successfully processed user profile {profile_cid} -> {published_cid}")
                 else:
-                    # Mark as failed
                     error_msg = "Failed to publish to IPFS"
                     if existing:
                         await existing.mark_failed(error_msg)
