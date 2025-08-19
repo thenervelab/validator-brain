@@ -139,6 +139,9 @@ class UserProfileConsumer:
         # Process each file
         processed_count = 0
         async with self.db_pool.acquire() as conn:
+            # Fetch all registered node IDs once to avoid repeated queries
+            registered_node_ids = set(await conn.fetch("SELECT node_id FROM registration"))
+            registered_node_ids = {row['node_id'] for row in registered_node_ids}
             for file_info in files:
                 try:
                     # Extract file details
@@ -204,22 +207,14 @@ class UserProfileConsumer:
                         datetime.utcnow(),
                     )
 
-                    # # Filter out miners that don't exist in registration table
-                    # valid_miners = []
-                    # for miner_id in miner_ids:
-                    #     if miner_id:
-                    #         # Check if miner exists in registration table
-                    #         exists = await conn.fetchval(
-                    #             """
-                    #             SELECT 1 FROM registration WHERE node_id = $1 LIMIT 1
-                    #         """,
-                    #             miner_id,
-                    #         )
-                    #         if exists:
-                    #             valid_miners.append(miner_id)
+                    # Filter out miners that don't exist in registration table
+                    valid_miners = []
+                    for miner_id in miner_ids:
+                        if miner_id and miner_id in registered_node_ids:
+                            valid_miners.append(miner_id)
 
                     # Deduplicate miners while preserving order to prevent same miner in multiple slots
-                    valid_miners_unique = list(set(miner_ids))
+                    valid_miners_unique = list(set(valid_miners))
 
                     # Update file_assignments table with only valid miners (empty slots will be reassigned later)
                     # Pad valid_miners to 5 elements

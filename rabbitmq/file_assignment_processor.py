@@ -308,7 +308,7 @@ class FileAssignmentProcessor:
         # Apply new miner boost and load balancing penalty
         final_score = base_score * new_miner_boost * load_penalty
 
-        logger.debug(
+        logger.info(
             f"Miner {miner['node_id']}: storage={storage_score:.3f}, files={file_score:.3f}, "
             f"health={health_score:.3f}, days={days_since_registration:.1f}, "
             f"batch_assignments={batch_assignments}, load_penalty={load_penalty:.3f}, "
