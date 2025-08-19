@@ -188,14 +188,6 @@ class UserProfileReconstructionProcessor:
                 # Combine existing miners with newly selected miners
                 combined_miners = existing_miners + selected_miners
 
-                # Debug logging
-                logger.info(
-                    f"Fallback assignment for {cid}: existing={len(existing_miners)}, selected={len(selected_miners)}, combined={len(combined_miners)}"
-                )
-                logger.info(f"  Existing: {existing_miners}")
-                logger.info(f"  Selected: {selected_miners}")
-                logger.info(f"  Combined: {combined_miners}")
-
                 # Update the file_data with combined miners
                 file_data["miner_ids"] = combined_miners
                 file_data["total_replicas"] = len(combined_miners)
@@ -206,15 +198,17 @@ class UserProfileReconstructionProcessor:
 
                 await conn.execute(
                     """
-                    INSERT INTO files (cid, name, size, created_at)
-                    VALUES ($1, $2, $3, NOW())
+                    INSERT INTO files (cid, name, size, created_at, created_at_block)
+                    VALUES ($1, $2, $3, NOW(), $4)
                     ON CONFLICT (cid) DO UPDATE SET
                         name = EXCLUDED.name,
-                        size = EXCLUDED.size
+                        size = EXCLUDED.size,
+                        created_at_block = EXCLUDED.created_at_block
                 """,
                     cid,
                     filename,
                     file_size,
+                    self.current_block,
                 )
 
                 await conn.execute(
