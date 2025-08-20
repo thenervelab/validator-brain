@@ -734,30 +734,17 @@ class EpochOrchestrator:
             logger.error(f"❌ Error during health metrics submission: {e}")
             return False
 
-    async def epoch_initialization(self) -> bool:
+    async def epoch_initialization(self):
         """Perform epoch initialization tasks."""
         logger.info("🚀 Starting epoch initialization")
 
-        # Clean up tables from previous epoch
-        cleanup_success = await self.cleanup_epoch_tables()
-        if not cleanup_success:
-            logger.warning("⚠️ Table cleanup failed, but continuing with initialization")
-
-        # should_refresh_node_metrics = self.current_block % self.node_metrics_refresh_interval == 0
-        should_refresh_node_metrics = True
-
-        # Build tasks list with conditional node metrics refresh
-        tasks = [self.refresh_registration_data(), self.refresh_user_profiles()]
-
-        if should_refresh_node_metrics:
-            logger.info(f"📊 Including node metrics refresh (block {self.current_block} % 300 == 0)")
-            tasks.insert(1, self.refresh_node_metrics())  # Insert after registration
-        else:
-            blocks_until_refresh = self.node_metrics_refresh_interval - (
-                self.current_block % self.node_metrics_refresh_interval
-            )
-            logger.info("📊 Skipping node metrics refresh (using cached data)")
-            logger.info(f"   Current block: {self.current_block}, next refresh in {blocks_until_refresh} blocks")
+        tasks = [
+            self.cleanup_epoch_tables(),
+            self.refresh_registration_data(),
+            self.refresh_user_profiles(),
+            self.refresh_node_metrics(),
+            self.network_self_healing_routine(),
+        ]
 
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -789,9 +776,6 @@ class EpochOrchestrator:
                 logger.info("✅ Non-validator: Health metrics submitted to blockchain")
             else:
                 logger.error("❌ Non-validator: Health metrics submission failed")
-
-        if self.health_checks_completed and not self.health_scores_processed:
-            await self.network_self_healing_routine()
 
         # PERIODIC DATABASE CLEANUP: Run comprehensive miner records cleanup (every 4 hours)
         # Use block position to determine timing - run at specific intervals to avoid validator interference
@@ -1283,12 +1267,7 @@ class EpochOrchestrator:
             logger.error(f"❌ Epoch table cleanup failed: {e}")
             return False
 
-    async def network_self_healing_routine(self) -> bool:
-        """
-        Run network self-healing to fix broken file assignments.
-        CRITICAL: This should run AFTER health checks to use fresh health data.
-        Uses only the RabbitMQ-based processor system.
-        """
+    async def network_self_healing_routine(self):
         await network_self_healing_processor.main()
         await self.wait_for_queues_empty(
             ["network_self_healing"],
