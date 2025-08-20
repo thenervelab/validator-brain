@@ -501,6 +501,13 @@ class EpochOrchestrator:
             logger.exception("Full traceback:")
             return False
 
+    async def process_user_requests(self):
+        logger.info("📌 Processing pinning requests for new files before assignment...")
+        await self.process_pinning_requests()
+
+        logger.info("📌 Processing unpinning requests too...")
+        await self.process_unpinning_requests()
+
     async def process_pinning_requests(self) -> bool:
         """
         Process pinning requests by running the necessary processors and waiting for queues.
@@ -888,6 +895,7 @@ class EpochOrchestrator:
 
         # Dead path, just leave this here for backwards compatibility]
         elif not self.assignment_completed:
+            await self.process_user_requests()
             self.assignment_completed = True
             return
 
