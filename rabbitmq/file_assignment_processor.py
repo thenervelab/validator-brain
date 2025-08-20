@@ -182,11 +182,6 @@ class FileAssignmentProcessor:
                 logger.info(f"   - {len(completely_empty)} completely empty (0/5 miners)")
                 logger.info(f"   - {len(partially_empty)} partially empty (1-4/5 miners)")
 
-                if completely_empty:
-                    logger.info(f"🎯 Prioritizing {len(completely_empty)} completely empty files:")
-                    for file_info in completely_empty[:3]:  # Show first 3
-                        logger.info(f"     {file_info['cid'][:20]}... (all NULL miners)")
-
             return files_with_nulls
 
     async def get_available_miners(self, current_epoch: int) -> list[dict[str, Any]]:
@@ -313,7 +308,7 @@ class FileAssignmentProcessor:
         # Apply new miner boost and load balancing penalty
         final_score = base_score * new_miner_boost * load_penalty
 
-        logger.debug(
+        logger.info(
             f"Miner {miner['node_id']}: storage={storage_score:.3f}, files={file_score:.3f}, "
             f"health={health_score:.3f}, days={days_since_registration:.1f}, "
             f"batch_assignments={batch_assignments}, load_penalty={load_penalty:.3f}, "
@@ -476,7 +471,7 @@ class FileAssignmentProcessor:
         exclude_miners = [m for m in current_miners if m is not None]
 
         # Add 20% safety margin for IPFS overhead, metadata, and growth
-        safety_margin = int(file_size * 0.2)
+        safety_margin = int(file_size * 0.1)
         required_space = file_size + safety_margin
 
         # Filter suitable miners
@@ -689,11 +684,6 @@ class FileAssignmentProcessor:
                 # Count empty slots
                 empty_slots = sum(1 for m in current_miners if m is None)
                 assigned_miners = [m for m in current_miners if m is not None]
-
-                # logger.info(
-                #     f"Reassigning file {filename} ({cid[:16]}...) - {empty_slots} empty slots, "
-                #     f"currently assigned to {len(assigned_miners)} miners"
-                # )
 
                 # Select miners for empty slots
                 new_miners = self.select_miners_for_reassignment(

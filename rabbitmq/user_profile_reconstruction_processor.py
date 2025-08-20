@@ -81,8 +81,7 @@ class UserProfileReconstructionProcessor:
         """
         try:
             # Get available miners with capacity
-            available_miners = await conn.fetch(
-                """
+            available_miners = await conn.fetch("""
                 SELECT
                     r.node_id,
                     r.ipfs_peer_id,
@@ -104,8 +103,7 @@ class UserProfileReconstructionProcessor:
                   AND COALESCE(ms.health_score, 100) >= 50
                 ORDER BY COALESCE(ms.health_score, 100) DESC, r.node_id
                 LIMIT 50
-            """
-            )
+            """)
 
             if not available_miners:
                 logger.error(f"No available miners found for fallback assignment for user {owner}")
@@ -196,18 +194,21 @@ class UserProfileReconstructionProcessor:
 
                 # Insert into file_assignments table
                 miners_padded = (combined_miners + [None] * 5)[:5]
+                logger.info(f"  Miners padded: {miners_padded}")
 
                 await conn.execute(
                     """
-                    INSERT INTO files (cid, name, size, created_at)
-                    VALUES ($1, $2, $3, NOW())
+                    INSERT INTO files (cid, name, size, created_at, created_at_block)
+                    VALUES ($1, $2, $3, NOW(), $4)
                     ON CONFLICT (cid) DO UPDATE SET
                         name = EXCLUDED.name,
-                        size = EXCLUDED.size
+                        size = EXCLUDED.size,
+                        created_at_block = EXCLUDED.created_at_block
                 """,
                     cid,
                     filename,
                     file_size,
+                    self.current_block,
                 )
 
                 await conn.execute(

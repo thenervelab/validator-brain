@@ -115,7 +115,7 @@ class PinningRequestProcessor:
                         }
 
                         parsed_requests.append(request)
-                        logger.debug(f"Parsed storage request: {owner} -> {request_hash}")
+                        logger.info(f"Parsed storage request: {owner} -> {request_hash}")
                     else:
                         logger.warning(f"Invalid value format for key {key_data}")
                 else:

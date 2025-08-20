@@ -157,7 +157,7 @@ class FileAssignmentConsumer:
                         )
 
                     logger.info(
-                        f"✅ Successfully assigned file {cid[:16]}... to {len(valid_miners)} miners: {', '.join(valid_miners)}"
+                        f"✅ Successfully assigned {cid=} to {len(valid_miners)} miners: {', '.join(valid_miners)}"
                     )
                     return True
 

@@ -5,7 +5,6 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
 
 from app.utils.blockchain_submission import (
     call_update_pin_and_storage_requests,
@@ -16,7 +15,6 @@ from app.utils.blockchain_submission import (
     submit_unpin_requests_to_blockchain,
 )
 from rabbitmq import (
-    availability_manager_processor,
     file_assignment_processor,
     miner_profile_reconstruction_processor,
     network_self_healing_processor,
@@ -27,7 +25,6 @@ from rabbitmq import (
     user_profile_processor,
     user_profile_reconstruction_processor,
 )
-from substrate_fetcher.validator_workflow import ValidatorWorkflow
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -534,300 +531,6 @@ class EpochOrchestrator:
         )
         return True
 
-    async def assign_files(self) -> bool:
-        """
-        Assign miners to files using the previous ValidatorWorkflow approach.
-        Phase 3: File assignment (blocks 36-60)"""
-        logger.info("📋 Starting file assignment phase")
-
-        logger.info("📌 Step 1: Processing pinning requests for new files before assignment...")
-        await self.process_pinning_requests()
-
-        logger.info("📌 Step 2: Processing unpinning requests too...")
-        await self.process_unpinning_requests()
-
-        try:
-            # Create workflow instance
-            workflow = ValidatorWorkflow(validator_account_id=self.our_validator_account)
-
-            # Get individual files from file_assignments (already extracted from manifests by pinning consumer)
-            storage_requests = []
-            async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch("""
-                    SELECT 
-                        fa.owner, 
-                        fa.cid as file_hash,  -- Use individual file CID, not manifest CID
-                        f.name as file_name,
-                        f.size as file_size,
-                        3 as total_replicas,  -- Default replica count
-                        fa.created_at,
-                        pr.request_hash as original_request_hash  -- Get original storage request hash
-                    FROM file_assignments fa
-                    LEFT JOIN files f ON fa.cid = f.cid
-                    LEFT JOIN pinning_requests pr ON fa.owner = pr.owner  -- Join to get original request hash
-                    WHERE (fa.miner1 IS NULL OR fa.miner2 IS NULL OR fa.miner3 IS NULL 
-                       OR fa.miner4 IS NULL OR fa.miner5 IS NULL)  -- Any missing assignments
-                    ORDER BY fa.created_at ASC
-                """)
-
-                for row in rows:
-                    # Convert to the format expected by ValidatorWorkflow (using file CID as request_hash)
-                    storage_request = (
-                        (
-                            row["owner"],
-                            row["file_hash"],
-                        ),  # Use file CID as unique identifier
-                        {
-                            "file_hash": row["file_hash"],  # Individual file CID
-                            "file_name": row["file_name"],
-                            "file_size": row["file_size"] or 0,
-                            # Handle NULL sizes
-                            "total_replicas": row["total_replicas"],
-                            "created_at": row["created_at"],
-                        },
-                    )
-                    storage_requests.append(storage_request)
-
-            # Get miner profiles from database
-            miner_profiles = []
-            async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch("""
-                    SELECT 
-                        r.node_id, 
-                        r.ipfs_peer_id, 
-                        r.owner_account,
-                        GREATEST(0, COALESCE(nm.ipfs_storage_max, 0) - COALESCE(nm.ipfs_repo_size, 0)) as storage_capacity_bytes,
-                        COALESCE(ms.total_files_pinned, 0) as total_files_pinned,
-                        COALESCE(ms.total_files_size_bytes, 0) as total_files_size_bytes,
-                        COALESCE(ms.health_score, 100) as health_score
-                    FROM registration r
-                    LEFT JOIN miner_stats ms ON r.node_id = ms.node_id
-                    LEFT JOIN (
-                        SELECT DISTINCT ON (miner_id)
-                            miner_id,
-                            ipfs_storage_max,
-                            ipfs_repo_size
-                        FROM node_metrics
-                        ORDER BY miner_id, block_number DESC
-                    ) nm ON r.node_id = nm.miner_id
-                    WHERE r.node_type = 'StorageMiner' 
-                    AND r.status = 'active'
-                    AND COALESCE(ms.health_score, 100) >= 1.0
-                    AND COALESCE(nm.ipfs_storage_max, 0) >= 2199023255552
-                    ORDER BY COALESCE(ms.health_score, 100) DESC
-                """)
-
-                # DEBUG LOGGING: Print raw miner profiles from DB
-                logger.info(f"DEBUG: Raw miner profiles from DB: {len(rows)} miners")
-
-                for row in rows:
-                    # Convert to the format expected by ValidatorWorkflow
-                    miner_profile = {
-                        "node_id": row["node_id"],
-                        "ipfs_peer_id": row["ipfs_peer_id"],
-                        "owner_account": row["owner_account"],
-                        "storage_capacity_bytes": row["storage_capacity_bytes"],
-                        "total_files_pinned": row["total_files_pinned"],
-                        "total_files_size_bytes": row["total_files_size_bytes"],
-                        "health_score": row["health_score"],
-                    }
-                    miner_profiles.append(miner_profile)
-
-                logger.info(f"⛏️ Found {len(miner_profiles)} available miners")
-
-            # Get node registration data
-            node_registration = []
-            async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch("""
-                    SELECT node_id, ipfs_peer_id
-                    FROM registration 
-                    WHERE node_type = 'StorageMiner' AND status = 'active'
-                """)
-
-                for row in rows:
-                    # Convert to expected format
-                    node_reg = type(
-                        "NodeReg",
-                        (),
-                        {
-                            "node_id": row["node_id"],
-                            "ipfs_node_id": row["ipfs_peer_id"],
-                        },
-                    )()
-                    node_registration.append(node_reg)
-
-            # Process individual files using ValidatorWorkflow
-            (
-                user_profiles,
-                processed_miner_profiles,
-            ) = await workflow.process_storage_requests(
-                storage_requests=storage_requests,
-                miner_profiles=miner_profiles,
-                node_registration=node_registration,
-            )
-
-            logger.info("✅ ValidatorWorkflow completed:")
-            logger.info(f"   📝 Generated {len(user_profiles)} user profile entries")
-            logger.info(f"   ⛏️ Generated {len(processed_miner_profiles)} miner profile entries")
-
-            # Update file_assignments with all 5 miners at once using bulk UPDATE
-            logger.info("💾 Step 3c: Updating file assignments in database...")
-            logger.info(f"💾 Bulk updating {len(user_profiles)} file assignments with all 5 miners...")
-
-            # Prepare bulk data for all 5 miners at once
-            bulk_data = []
-            for profile in user_profiles:
-                file_cid = profile["file_hash"]
-                owner = profile["user_id"]
-                assigned_miners = profile.get("assigned_miners", [])
-
-                # Assign miners to miner1, miner2, miner3, miner4, miner5 slots
-                miner_slots = [None] * 5
-                for i, miner_id in enumerate(assigned_miners[:5]):  # Max 5 miners
-                    miner_slots[i] = miner_id
-
-                bulk_data.append(
-                    (
-                        file_cid,
-                        owner,
-                        miner_slots[0],
-                        miner_slots[1],
-                        miner_slots[2],
-                        miner_slots[3],
-                        miner_slots[4],
-                    )
-                )
-
-            async with self.db_pool.acquire() as conn:
-                async with conn.transaction():
-                    logger.info(f"💾 {len(bulk_data)} assignments updated with all 5 miners")
-
-                    # Flag all affected miners for profile reconstruction
-                    affected_miners = set()
-                    for _, _, miner1, miner2, miner3, miner4, miner5 in bulk_data:
-                        for miner in [miner1, miner2, miner3, miner4, miner5]:
-                            if miner:
-                                affected_miners.add(miner)
-
-                    if affected_miners:
-                        logger.info(f"🏷️ Flagging {len(affected_miners)} miners for profile reconstruction")
-                        await conn.executemany(
-                            """
-                            INSERT INTO pending_miner_profile (node_id, status, created_at) 
-                            VALUES ($1, 'needs_reconstruction', NOW())
-                            ON CONFLICT (node_id) DO UPDATE SET 
-                                status = 'needs_reconstruction',
-                                created_at = NOW()
-                            """,
-                            [(miner_id,) for miner_id in affected_miners],
-                        )
-
-                    # Also store in storage_requests table for blockchain submission
-                    await conn.execute("DELETE FROM storage_requests")
-
-                    # Pre-process storage_requests data for bulk insert
-                    storage_bulk_data = []
-                    for profile in user_profiles:
-                        owner = profile["user_id"]
-                        assigned_miners = profile.get("assigned_miners", [])
-
-                        # Convert created_at (datetime) to Unix timestamp
-                        created_at_value = profile.get("created_at", 0)
-                        if hasattr(created_at_value, "timestamp"):
-                            # It's a datetime object, convert to Unix timestamp
-                            timestamp = int(created_at_value.timestamp())
-                        elif isinstance(created_at_value, str):
-                            # It's a datetime string, parse and convert
-                            try:
-                                dt = datetime.fromisoformat(created_at_value.replace("Z", "+00:00"))
-                                timestamp = int(dt.timestamp())
-                            except:
-                                timestamp = 0
-                        elif isinstance(created_at_value, (int, float)):
-                            # Already a timestamp
-                            timestamp = int(created_at_value)
-                        else:
-                            # Default to current time
-                            import time
-
-                            timestamp = int(time.time())
-
-                        storage_bulk_data.append(
-                            (
-                                owner,
-                                profile["file_hash"],
-                                profile.get("file_name", ""),
-                                profile["file_size_in_bytes"],
-                                len(assigned_miners),
-                                timestamp,
-                                # last_charged_at
-                                timestamp,  # created_at
-                                assigned_miners,
-                                self.our_validator_account,
-                                "assigned",
-                            )
-                        )
-
-                    # Bulk insert storage requests for blockchain submission
-                    if storage_bulk_data:
-                        await conn.executemany(
-                            """
-                            INSERT INTO storage_requests 
-                            (owner_account, file_hash, file_name, file_size_bytes, 
-                             total_replicas, last_charged_at, created_at, miner_ids, 
-                             selected_validator, status)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                            ON CONFLICT (owner_account, file_hash) 
-                            DO UPDATE SET
-                                file_name = EXCLUDED.file_name,
-                                file_size_bytes = EXCLUDED.file_size_bytes,
-                                total_replicas = EXCLUDED.total_replicas,
-                                last_charged_at = EXCLUDED.last_charged_at,
-                                miner_ids = EXCLUDED.miner_ids,
-                                selected_validator = EXCLUDED.selected_validator,
-                                status = EXCLUDED.status,
-                                updated_at = CURRENT_TIMESTAMP
-                        """,
-                            storage_bulk_data,
-                        )
-
-                    logger.info(f"💾 Updated {len(bulk_data)} individual file assignments")
-                    logger.info(
-                        f"💾 Created {len(storage_bulk_data)} storage request entries for blockchain submission"
-                    )
-
-            # CRITICAL ENHANCEMENT: Verify no unassigned files remain before declaring success
-            logger.info("🔍 Step 4: Verifying assignment completion...")
-            async with self.db_pool.acquire() as conn:
-                unassigned_count = await conn.fetchval("""
-                    SELECT COUNT(*) FROM file_assignments 
-                    WHERE miner1 IS NULL AND miner2 IS NULL AND miner3 IS NULL 
-                      AND miner4 IS NULL AND miner5 IS NULL
-                """)
-
-                if unassigned_count > 0:
-                    logger.warning(f"⚠️ Found {unassigned_count} files still unassigned after assignment process")
-                    logger.warning(
-                        "   This suggests assignment process was incomplete"
-                    )  # Don't return False immediately - might be files with no available miners
-                else:
-                    logger.info("✅ All files have been assigned to miners")
-
-            logger.info("✅ Individual file assignment completed successfully with ValidatorWorkflow")
-            logger.info("🎯 File assignments ready for profile reconstruction")
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Error during ValidatorWorkflow file assignment: {e}")
-            logger.exception("Full traceback:")
-            return False
-
-    async def run_availability_maintenance(self) -> bool:
-        """Run file availability maintenance to handle empty assignments and failures."""
-        logger.info("🛠️ Running file availability maintenance")
-
-        await availability_manager_processor.main()
-
     async def reconstruct_profiles(self) -> bool:
         """
         Reconstruct user and miner profiles from file assignments.
@@ -1031,30 +734,17 @@ class EpochOrchestrator:
             logger.error(f"❌ Error during health metrics submission: {e}")
             return False
 
-    async def epoch_initialization(self) -> bool:
+    async def epoch_initialization(self):
         """Perform epoch initialization tasks."""
         logger.info("🚀 Starting epoch initialization")
 
-        # Clean up tables from previous epoch
-        cleanup_success = await self.cleanup_epoch_tables()
-        if not cleanup_success:
-            logger.warning("⚠️ Table cleanup failed, but continuing with initialization")
-
-        # should_refresh_node_metrics = self.current_block % self.node_metrics_refresh_interval == 0
-        should_refresh_node_metrics = True
-
-        # Build tasks list with conditional node metrics refresh
-        tasks = [self.refresh_registration_data(), self.refresh_user_profiles()]
-
-        if should_refresh_node_metrics:
-            logger.info(f"📊 Including node metrics refresh (block {self.current_block} % 300 == 0)")
-            tasks.insert(1, self.refresh_node_metrics())  # Insert after registration
-        else:
-            blocks_until_refresh = self.node_metrics_refresh_interval - (
-                self.current_block % self.node_metrics_refresh_interval
-            )
-            logger.info("📊 Skipping node metrics refresh (using cached data)")
-            logger.info(f"   Current block: {self.current_block}, next refresh in {blocks_until_refresh} blocks")
+        tasks = [
+            self.cleanup_epoch_tables(),
+            self.refresh_registration_data(),
+            self.refresh_user_profiles(),
+            self.refresh_node_metrics(),
+            self.network_self_healing_routine(),
+        ]
 
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1086,9 +776,6 @@ class EpochOrchestrator:
                 logger.info("✅ Non-validator: Health metrics submitted to blockchain")
             else:
                 logger.error("❌ Non-validator: Health metrics submission failed")
-
-        if self.health_checks_completed and not self.health_scores_processed:
-            await self.network_self_healing_routine()
 
         # PERIODIC DATABASE CLEANUP: Run comprehensive miner records cleanup (every 4 hours)
         # Use block position to determine timing - run at specific intervals to avoid validator interference
@@ -1199,16 +886,9 @@ class EpochOrchestrator:
 
             return
 
-        # Phase 3: SEQUENTIAL File Assignment (immediately after self-healing complete)
+        # Dead path, just leave this here for backwards compatibility]
         elif not self.assignment_completed:
-            logger.info(f"📋 Starting file assignment at block {block_position}/99")
-            success = await self.assign_files()
-            if success:
-                self.assignment_completed = True
-                logger.info("✅ File assignment completed - starting profiles next")
-            else:
-                logger.error("❌ File assignment failed - marking complete to prevent infinite loop")
-                self.assignment_completed = True
+            self.assignment_completed = True
             return
 
         # Phase 4: SEQUENTIAL Profile Reconstruction
@@ -1587,12 +1267,7 @@ class EpochOrchestrator:
             logger.error(f"❌ Epoch table cleanup failed: {e}")
             return False
 
-    async def network_self_healing_routine(self) -> bool:
-        """
-        Run network self-healing to fix broken file assignments.
-        CRITICAL: This should run AFTER health checks to use fresh health data.
-        Uses only the RabbitMQ-based processor system.
-        """
+    async def network_self_healing_routine(self):
         await network_self_healing_processor.main()
         await self.wait_for_queues_empty(
             ["network_self_healing"],

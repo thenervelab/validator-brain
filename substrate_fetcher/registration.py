@@ -134,8 +134,6 @@ def _fetch_secondary_nodes(registration_substrate: SubstrateInterface) -> dict:
     secondary_nodes = {}
     for node_id, node_info in hotkey_reg_data.items():
         if node_info and isinstance(node_info, dict) and "owner" in node_info:
-            # logger.info(f"Secondary node {node_id=} {node_info=}")
-
             secondary_nodes[node_id] = {
                 "owner": node_info["owner"],
                 "ipfs_peer_id": node_info["ipfs_node_id"],
@@ -221,41 +219,40 @@ async def compute_deregistration_report(
 
     hippius_to_deregister_coldkeys = set()
     hippius_registered_coldkeys = [item["owner"] for item in primary_nodes_pallet.values()]
+
     for key in hippius_registered_coldkeys:
         if key not in bittensor_coldkeys:
             logger.warning(f"Found deregistered cold {key=}")
             hippius_to_deregister_coldkeys.add(key)
 
     # grace the keys for a period
-    hippius_to_deregister_coldkeys = await grace(hippius_to_deregister_coldkeys)
+    hippius_to_deregister_coldkeys = await grace(
+        hippius_to_deregister_coldkeys,
+    )
 
     primary_nodes = {}
     secondary_nodes = []
-    for node_id, details in primary_nodes_pallet.items():
-        if details["owner"] in hippius_to_deregister_coldkeys:  # prepare to deregister
-            # logger.info(f"Found primary {node_id=} ({details['owner']}) to deregister...")
-            primary_nodes[node_id] = Node(
-                id=node_id,
-                owner=details["owner"],
-                ipfs_peer_id=details["ipfs_peer_id"],
-                hierarchy="main",
-            )
+    for primary_node_id, meta in primary_nodes_pallet.items():
+        if meta["owner"] not in hippius_to_deregister_coldkeys:
+            # this is a registered key, all good
+            continue
 
-    for node_id, details in secondary_nodes_pallet.items():
-        for parent_node_id, linked_secondary_nodes in links_pallet.items():
-            if node_id in linked_secondary_nodes:
-                # logger.info(f"Found secondary {node_id=} {parent_node_id=} ({details['owner']}) to unassign from network...")
-                secondary_nodes.append(
-                    Node(
-                        id=node_id,
-                        owner=details["owner"],
-                        ipfs_peer_id=details["ipfs_peer_id"],
-                        hierarchy="linked",
-                    )
+        primary_nodes[primary_node_id] = Node(
+            id=primary_node_id,
+            owner=meta["owner"],
+            ipfs_peer_id=meta["ipfs_peer_id"],
+            hierarchy="main",
+        )
+
+        for linked_node_id in links_pallet.get(primary_node_id, ()):
+            secondary_nodes.append(
+                Node(
+                    id=primary_node_id,
+                    owner=secondary_nodes_pallet[linked_node_id]["owner"],
+                    ipfs_peer_id=secondary_nodes_pallet[linked_node_id]["ipfs_peer_id"],
+                    hierarchy="linked",
                 )
-                break
-        else:
-            logger.warning(f"No primary node detected for secondary (linked) {node_id=} {details}")
+            )
 
     logger.info("Computed deregistration report:")
     logger.info(f"{len(hippius_to_deregister_coldkeys)=}")

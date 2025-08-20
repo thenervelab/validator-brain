@@ -101,10 +101,10 @@ class UserProfileConsumer:
                 if response.status_code == 200:
                     return response.content
                 else:
-                    logger.error(f"Failed to fetch CID {cid}: HTTP {response.status_code}")
+                    logger.error(f"Failed to fetch {cid=} {api_url=} ({response.status_code})")
                     return None
             except Exception as e:
-                logger.error(f"Error fetching CID {cid}: {e}")
+                logger.error(f"Error fetching CID {cid=} {api_url=}: {e}")
                 return None
 
     async def process_user_profile(self, account: str, cid: str) -> int:
@@ -139,6 +139,9 @@ class UserProfileConsumer:
         # Process each file
         processed_count = 0
         async with self.db_pool.acquire() as conn:
+            # Fetch all registered node IDs once to avoid repeated queries
+            registered_node_ids = set(await conn.fetch("SELECT node_id FROM registration"))
+            registered_node_ids = {row['node_id'] for row in registered_node_ids}
             for file_info in files:
                 try:
                     # Extract file details
@@ -207,22 +210,11 @@ class UserProfileConsumer:
                     # Filter out miners that don't exist in registration table
                     valid_miners = []
                     for miner_id in miner_ids:
-                        if miner_id:
-                            # Check if miner exists in registration table
-                            exists = await conn.fetchval(
-                                """
-                                SELECT 1 FROM registration WHERE node_id = $1 LIMIT 1
-                            """,
-                                miner_id,
-                            )
-                            if exists:
-                                valid_miners.append(miner_id)
+                        if miner_id and miner_id in registered_node_ids:
+                            valid_miners.append(miner_id)
 
                     # Deduplicate miners while preserving order to prevent same miner in multiple slots
-                    valid_miners_unique = []
-                    for miner in valid_miners:
-                        if miner not in valid_miners_unique:
-                            valid_miners_unique.append(miner)
+                    valid_miners_unique = list(set(valid_miners))
 
                     # Update file_assignments table with only valid miners (empty slots will be reassigned later)
                     # Pad valid_miners to 5 elements
